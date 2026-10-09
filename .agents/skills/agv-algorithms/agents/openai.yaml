@@ -1,0 +1,4 @@
+interface:
+  display_name: "AGV Routing and Coordination"
+  short_description: "Tìm đường và điều phối hai robot trong bản đồ kho"
+  default_prompt: "Dùng $agv-algorithms để thiết kế hoặc kiểm chứng thuật toán tìm đường và điều phối theo yêu cầu AGV."

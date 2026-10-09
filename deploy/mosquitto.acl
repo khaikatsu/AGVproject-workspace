@@ -1,0 +1,30 @@
+# Username moi xe phai bang ROBOT_ID. Patterns ap dung cho moi user.
+pattern write agv/%u/telemetry
+pattern write agv/%u/ack
+pattern write agv/%u/mutex_request
+pattern write agv/%u/mutex_ack
+pattern write agv/%u/mutex_release
+pattern write agv/%u/obstacle
+pattern write agv/%u/error
+pattern write agv/%u/charging_done
+pattern write agv/%u/status
+pattern read agv/%u/command
+pattern read agv/%u/mutex_grant
+user 01
+topic read agv/server/heartbeat
+user 02
+topic read agv/server/heartbeat
+
+user core
+topic read agv/+/telemetry
+topic read agv/+/ack
+topic read agv/+/mutex_request
+topic read agv/+/mutex_ack
+topic read agv/+/mutex_release
+topic read agv/+/obstacle
+topic read agv/+/error
+topic read agv/+/charging_done
+topic read agv/+/status
+topic write agv/+/command
+topic write agv/+/mutex_grant
+topic write agv/server/heartbeat

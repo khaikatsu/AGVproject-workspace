@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "AGV core (workspace root)",
+      "type": "cppdbg",
+      "request": "launch",
+      "preLaunchTask": "Build AGV core",
+      "program": "${workspaceFolder}/build/agv_core.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        { "name": "AGV_CORE_WS_HOST", "value": "127.0.0.1" }
+      ],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "C:/msys64/ucrt64/bin/gdb.exe"
+    }
+  ]
+}

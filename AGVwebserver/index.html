@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hệ thống Giám sát AGV</title>
+  <style>
+    :root {
+      --bg-main: #0B0F19;
+      --bg-panel: #151A28;
+      --bg-card: #1E2536;
+      --text-main: #E2E8F0;
+      --text-muted: #94A3B8;
+      --border-color: #2D3748;
+      --accent-blue: #3B82F6;
+      --accent-blue-hover: #2563EB;
+      --status-ok: #10B981;
+      --status-warn: #F59E0B;
+      --status-error: #EF4444;
+      --status-idle: #10B981;
+      --status-working: #3B82F6;
+      --status-offline: #64748B;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg-main);
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+    }
+
+    #topbar {
+      height: 56px;
+      padding: 0 20px;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border-color);
+      flex-shrink: 0;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      z-index: 10;
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 0.5px;
+      margin-right: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-title::before {
+      content: "";
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      background: var(--accent-blue);
+      border-radius: 50%;
+    }
+
+    #topbar input {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      width: 240px;
+    }
+
+    #topbar input:focus {
+      outline: none;
+      border-color: var(--accent-blue);
+    }
+
+    button {
+      font-family: inherit;
+      color: #fff;
+      transition: background-color 0.15s ease, opacity 0.15s ease, transform 0.05s ease;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    #topbar button,
+    .btn {
+      background: var(--accent-blue);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    #topbar button:hover,
+    .btn:hover {
+      background: var(--accent-blue-hover);
+    }
+
+    .status-indicator {
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-indicator::before {
+      content: "";
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .status-indicator.ok {
+      color: var(--status-ok);
+    }
+
+    .status-indicator.ok::before {
+      background: var(--status-ok);
+      box-shadow: 0 0 8px var(--status-ok);
+    }
+
+    .status-indicator.bad {
+      color: var(--status-error);
+    }
+
+    .status-indicator.bad::before {
+      background: var(--status-error);
+    }
+
+    #main-container {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    #left-panel {
+      width: 320px;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    #center-panel {
+      flex: 2;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      background: var(--bg-main);
+      min-width: 0;
+    }
+
+    #right-panel {
+      width: 380px;
+      background: var(--bg-panel);
+      border-left: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    #selectionBar {
+      padding: 10px 20px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border-color);
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+      z-index: 5;
+    }
+
+    #selectionBar.idle {
+      color: var(--text-muted);
+    }
+
+    #selectionBar.picking {
+      color: var(--status-warn);
+      font-weight: 600;
+    }
+
+    #selectionBar button {
+      background: #334155;
+      color: #fff;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    svg {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at center, #111827 0%, #0B0F19 100%);
+    }
+
+    .node-label {
+      font-size: 13px;
+      fill: var(--text-main);
+      font-family: monospace;
+      pointer-events: none;
+    }
+
+    .edge {
+      stroke: #334155;
+      stroke-width: 3;
+      marker-end: url(#arrow);
+    }
+
+    .agv-group {
+      cursor: pointer;
+      transition: transform 0.65s linear;
+    }
+
+    .agv {
+      fill: var(--status-warn);
+      stroke: #000;
+      stroke-width: 2px;
+      rx: 4px;
+      ry: 4px;
+      transition: fill 0.3s ease;
+    }
+
+    .agv-label {
+      font-size: 14px;
+      fill: var(--status-warn);
+      font-weight: bold;
+    }
+
+    .node-clickable {
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .node-clickable:hover {
+      stroke: #fff;
+      stroke-width: 2px;
+    }
+
+    .node-selected {
+      stroke: var(--status-warn);
+      stroke-width: 3px;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.6;
+      }
+
+      100% {
+        opacity: 1;
+      }
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      margin: 16px;
+      padding: 16px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .card.compact {
+      margin: 8px 16px;
+      padding: 12px 16px;
+    }
+
+    .card-header {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      padding: 8px 10px;
+      color: var(--text-muted);
+      font-weight: 600;
+      border-bottom: 2px solid var(--border-color);
+      background: rgba(0, 0, 0, 0.1);
+    }
+
+    td {
+      padding: 10px;
+      border-bottom: 1px solid var(--border-color);
+      color: var(--text-main);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .form-group {
+      margin-bottom: 10px;
+    }
+
+    .form-group input,
+    .form-group select,
+    input.form-group,
+    select.form-group {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 12px;
+      background: #0B0F19;
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus,
+    input.form-group:focus,
+    select.form-group:focus {
+      outline: none;
+      border-color: var(--accent-blue);
+    }
+
+    .row-btn {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .row-btn button {
+      flex: 1;
+    }
+
+    .btn-danger {
+      background: #DC2626;
+    }
+
+    .btn-danger:hover {
+      background: #B91C1C;
+    }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+    }
+
+    .btn-outline:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .btn-mini {
+      color: #fff;
+    }
+
+    .btn-mini:hover {
+      opacity: 0.85;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge.priority {
+      background: rgba(245, 158, 11, 0.2);
+      color: var(--status-warn);
+      border: 1px solid var(--status-warn);
+    }
+
+    .state-IDLE {
+      color: var(--status-idle);
+      font-weight: 600;
+    }
+
+    .state-WORKING {
+      color: var(--status-working);
+      font-weight: 600;
+    }
+
+    .state-CHARGING,
+    .state-CHARGING_EN_ROUTE {
+      color: var(--status-warn);
+      font-weight: 600;
+    }
+
+    .state-BLOCKED,
+    .state-ERROR {
+      color: var(--status-error);
+      font-weight: 600;
+    }
+
+    .state-OFFLINE {
+      color: #94A3B8;
+      font-weight: 600;
+    }
+
+    .log-list {
+      max-height: 180px;
+      overflow-y: auto;
+      font-size: 12px;
+    }
+
+    .log-item {
+      padding: 6px 0;
+      border-bottom: 1px dashed var(--border-color);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .log-item.kpi-row {
+      cursor: pointer;
+      padding: 6px 6px;
+      border-radius: 4px;
+      transition: background-color 0.15s;
+    }
+
+    .log-item.kpi-row:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .log-item.kpi-row.active {
+      background: rgba(59, 130, 246, 0.18);
+    }
+
+    .log-item:last-child {
+      border-bottom: none;
+    }
+
+    .log-time {
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--bg-panel);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #64748B;
+    }
+
+    #kpiAlertBar {
+      background: rgba(239, 68, 68, 0.1);
+      color: #FCA5A5;
+      padding: 10px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+      display: none;
+    }
+
+    /* MOI: khu vuc thong bao "toast" goc tren-phai, hien khi server thuc hien xong 1 hanh dong */
+    #toastContainer {
+      position: fixed;
+      top: 66px;
+      right: 16px;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-width: 360px;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-left: 4px solid var(--accent-blue);
+      color: var(--text-main);
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+      animation: toastIn 0.2s ease-out;
+      pointer-events: auto;
+    }
+
+    .toast.ok {
+      border-left-color: var(--status-ok);
+    }
+
+    .toast.error {
+      border-left-color: var(--status-error);
+    }
+
+    .toast.warn {
+      border-left-color: var(--status-warn);
+    }
+
+    .toast-time {
+      color: var(--text-muted);
+      font-size: 10px;
+      margin-top: 2px;
+    }
+
+    @keyframes toastIn {
+      from {
+        opacity: 0;
+        transform: translateX(20px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    .btn-mini {
+      padding: 3px 8px;
+      font-size: 11px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:disabled {opacity:0.4; cursor:not-allowed;}
+    small {color:var(--text-muted);font-size:10px;overflow-wrap:anywhere;}
+    td {overflow-wrap:anywhere;}
+    .robot-error {font-size:10px;max-width:130px;margin-top:4px;}
+    .edge-label {fill:#94A3B8;font-size:11px;paint-order:stroke;stroke:#0B0F19;stroke-width:3px;}
+    .utilization-bar {display:flex;height:10px;overflow:hidden;border-radius:5px;background:#0B0F19;}
+    #left-panel {width:400px;flex-shrink:0;}
+    #right-panel {width:340px;flex-shrink:0;}
+    #dataFreshness {font-size:11px;color:var(--text-muted);padding:8px 16px;}
+    #mapTitle {font-size:13px;padding:8px 16px;color:#CBD5E1;}
+    .form-grid {display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;}
+    .form-grid input,.form-grid select {width:100%;min-width:0;box-sizing:border-box;padding:7px;background:var(--bg-card);color:var(--text-main);border:1px solid var(--border-color);border-radius:4px;}
+    .history-scroll {max-height:260px;overflow:auto;}
+    #kpiHistoryBox button {display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--text-main);cursor:pointer;}
+    #fleetTable {table-layout:fixed;font-size:12px;}
+    #fleetTable th,#fleetTable td {padding:6px;}
+    #fleetTable th:nth-child(1) {width:32px;}
+    #fleetTable th:nth-child(2) {width:54px;}
+    #fleetTable th:nth-child(3) {width:34px;}
+    #fleetTable th:nth-child(5) {width:54px;}
+    #fleetTable td:nth-child(1),#fleetTable td:nth-child(3),#fleetTable button {white-space:nowrap;}
+    #fleetTable button {padding:4px;font-size:11px;}
+    #toastContainer {top:auto;bottom:16px;max-width:320px;}
+    #systemLogBox .log-item {display:block;overflow-wrap:anywhere;}
+    @media(max-width:1100px) {html,body {height:auto;min-height:100%;overflow:auto;} #topbar {height:auto;min-height:56px;flex-wrap:wrap;padding:10px;} #topbar>div:last-child {flex-wrap:wrap;} #main-container {display:grid;grid-template-columns:minmax(300px,1fr) minmax(300px,1fr);overflow:visible;} #center-panel {grid-column:1 / -1;grid-row:1;min-height:560px;} #left-panel,#right-panel {width:auto;overflow:visible;} }
+    @media(max-width:680px) {#main-container {display:flex;flex-direction:column;} #center-panel {min-height:480px;order:-1;} #topbar input {width:210px;} #mapPreviewSvg {height:350px;} #toastContainer {left:8px;right:8px;bottom:8px;max-width:none;} }
+  </style>
+  <link rel="stylesheet" href="/dashboard-layout.css?v=20261008-core-mode">
+</head>
+
+<body data-view="overview" data-map-expanded="true">
+  <header id="topbar">
+    <div class="brand-lockup">
+      <span class="brand-mark" aria-hidden="true">AGV</span>
+      <div><div class="brand-title">Trung tâm điều phối</div><div class="brand-subtitle">Kho AGV · Hai xe tự hành</div></div>
+    </div>
+    <div class="header-status" aria-label="Trạng thái kết nối">
+      <span id="status" class="status-indicator bad">Web: Đang kết nối</span>
+      <span id="agvLinkStatus" class="status-indicator bad">Core: Đang chờ</span>
+      <span id="mqttStatus" class="status-indicator bad">MQTT: Đang chờ</span>
+    </div>
+    <details id="connectionSettings" class="connection-settings">
+      <summary>Thiết lập kết nối</summary>
+      <div class="connection-popover">
+        <button id="logoutBtn" class="btn btn-outline" hidden onclick="logout()">Đăng xuất</button>
+        <label for="wsUrl">Địa chỉ WebSocket</label>
+        <input id="wsUrl" value="ws://localhost:3000/ws" spellcheck="false" autocomplete="off">
+        <button class="btn" onclick="connect()">Kết nối lại</button>
+        <small>Web tự kết nối lại khi mất liên kết.</small>
+      </div>
+    </details>
+  </header>
+  <nav id="workspaceNav" aria-label="Khu vực làm việc">
+    <button type="button" data-view-target="overview" aria-current="page">Tổng quan</button>
+    <button type="button" data-view-target="tasks">Nhiệm vụ</button>
+    <button type="button" data-view-target="map">Bản đồ</button>
+    <button type="button" data-view-target="reports">Báo cáo</button>
+  </nav>
+  <div id="kpiAlertBar" role="alert"></div>
+  <section id="overviewStats" aria-label="Tóm tắt vận hành">
+    <div class="stat-card"><span class="stat-label">Đội xe</span><strong id="summaryFleet">0 / 2</strong><small id="summaryFleetDetail">Chờ telemetry</small></div>
+    <div class="stat-card"><span class="stat-label">Nhiệm vụ</span><strong id="summaryTasks">0</strong><small id="summaryTasksDetail">Chưa có nhiệm vụ</small></div>
+    <div class="stat-card"><span class="stat-label">Vùng chung</span><strong id="summaryZones">0 / 0</strong><small id="summaryZonesDetail">Chưa có bản đồ</small></div>
+    <div class="stat-card"><span class="stat-label">Ca làm việc</span><strong id="summaryShift">Đang chờ</strong><small id="summaryShiftDetail">Chờ core xác nhận</small></div>
+  </section>
+  <div id="toastContainer" aria-live="polite"></div>
+  <main id="main-container">
+    <aside id="left-panel" aria-label="Đội xe và nhật ký">
+      <section class="card compact panel-card" data-views="overview tasks">
+        <div class="card-header">Đội xe <span class="card-caption">RFID gần nhất</span></div>
+        <div class="table-wrap"><table id="fleetTable"><thead><tr><th>Xe</th><th>Vị trí</th><th>Pin</th><th>Trạng thái</th><th></th></tr></thead><tbody></tbody></table></div>
+      </section>
+      <section class="card compact panel-card" data-views="overview tasks">
+        <div class="card-header">Đơn hàng kho</div>
+        <div id="orderList" class="order-list" aria-live="polite">Chưa có đơn hàng</div>
+      </section>
+      <section class="card compact panel-card" data-views="overview tasks">
+        <div class="card-header">Hàng đợi <span class="card-caption">Ưu tiên · FIFO</span></div>
+        <div class="table-wrap"><table id="taskTable"><thead><tr><th>Đích đến</th><th>Ưu tiên</th><th></th></tr></thead><tbody></tbody></table></div>
+      </section>
+      <section class="card compact panel-card" data-views="tasks reports">
+        <div class="card-header">Nhiệm vụ và kết quả</div>
+        <div class="history-scroll"><table id="taskHistoryTable"><thead><tr><th>ID</th><th>Đích</th><th>Xe</th><th>Trạng thái</th></tr></thead><tbody></tbody></table></div>
+      </section>
+      <section id="robotHistoryPanel" class="card compact panel-card" data-views="tasks" hidden>
+        <div class="card-header"><span id="robotHistoryTitle">Lịch sử xe</span><button class="btn-outline" onclick="document.getElementById('robotHistoryPanel').hidden=true">Đóng</button></div>
+        <div class="history-scroll"><table id="robotHistoryTable"><thead><tr><th>Thời gian</th><th>Node</th><th>Pin</th><th>Trạng thái</th></tr></thead><tbody></tbody></table></div>
+      </section>
+      <section class="card compact panel-card" data-views="overview map">
+        <div class="card-header">Vùng giao nhau</div>
+        <div class="table-wrap"><table id="mutexTable"><thead><tr><th>RFID</th><th>Đang giữ</th><th>Chờ</th></tr></thead><tbody></tbody></table></div>
+      </section>
+      <section class="card compact panel-card" data-views="reports">
+        <div class="card-header">Nhật ký hệ thống</div>
+        <div id="systemLogBox" class="log-list">Đang chờ sự kiện</div>
+      </section>
+    </aside>
+    <section id="center-panel" aria-label="Bản đồ kho">
+      <div class="map-heading"><div><span class="eyebrow">SƠ ĐỒ VẬN HÀNH</span><div id="mapTitle">Bản đồ kho</div></div><div class="map-actions"><span class="map-live">Node xe báo gần nhất</span><button id="mapExpandBtn" type="button" class="btn-outline" aria-pressed="true" onclick="toggleMapExpanded()">Thu gọn</button><button id="mapZoomBtn" type="button" class="btn-outline" aria-pressed="false" onclick="toggleMapZoom()">Phóng to</button></div></div>
+      <div id="selectionBar" class="idle"><span id="selectionText">Bấm node để Core chọn xe gần nhất; bấm robot trước nếu muốn chỉ định xe.</span><button id="cancelSelectBtn" onclick="cancelSelection()" style="display:none">Huỷ chọn (Esc)</button></div>
+      <div id="mapViewport" class="map-viewport" data-zoom="fit">
+        <svg id="mapSvg" viewBox="20 20 1020 720" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Đồ thị kho, hướng đường, RFID và vị trí xe">
+          <defs><marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto-start-reverse"><path d="M0,0 L0,6 L6,3 z" fill="#475569" /></marker></defs>
+          <g id="edgesG"></g><g id="routesG" style="pointer-events:none"></g><g id="nodesG"></g><g id="agvsG"></g>
+        </svg>
+      </div>
+      <div class="map-foot"><div id="dataFreshness">Đang chờ bản đồ và telemetry từ core</div><div>Vị trí: node RFID gần nhất · Nét đứt: tuyến dự kiến · Mũi tên: hướng đường · Số: trọng số</div><div id="mapLegend">M: RFID / vùng chung · K: kho · G: cửa kho · S: trạm sạc · GS: cửa sạc · C: góc</div></div>
+    </section>
+    <aside id="right-panel" aria-label="Điều khiển và cấu hình">
+      <section class="card compact panel-card" data-views="overview tasks">
+        <div class="card-header">Ca làm việc <span id="homeStationCaption" class="card-caption">Theo cấu hình core</span></div>
+        <div id="shiftStatus" role="status" class="shift-phase">Đang chờ trạng thái ca từ core</div>
+        <div id="coreModeStatus" class="field-hint" role="status">Chờ cấu hình Core</div>
+        <div id="homeStationList" class="home-list"></div>
+        <div class="row-btn"><button id="startShiftBtn" data-control class="btn" onclick="changeShift('start',this)">Bắt đầu ca</button><button id="endShiftBtn" data-control class="btn btn-outline" onclick="changeShift('end',this)">Kết thúc ca</button></div>
+        <p class="card-help">Kết thúc ca: hoàn thành nhiệm vụ đang chạy rồi về trạm riêng. Vị trí chỉ được xác nhận qua RFID.</p>
+      </section>
+      <section class="card compact panel-card" data-views="overview tasks">
+        <div class="card-header">Giao nhiệm vụ</div>
+        <div class="task-mode-switch" role="group" aria-label="Loại nhiệm vụ">
+          <button id="orderModeBtn" type="button" aria-pressed="true" onclick="setTaskMode('order')">Đơn hàng kho</button>
+          <button id="nodeModeBtn" type="button" aria-pressed="false" onclick="setTaskMode('node')">Đi tới node</button>
+        </div>
+        <div id="orderTaskForm">
+          <div class="order-progress" aria-live="polite">
+            <div class="order-progress-heading"><span>Tiến độ đơn hàng</span><strong id="orderProgressCount">0/0 kiện</strong></div>
+            <select id="orderProgressSelect" aria-label="Đơn hàng xem tiến độ" disabled><option value="">Chưa có đơn hàng</option></select>
+            <progress id="orderProgressBar" max="1" value="0" aria-label="Tiến độ giao kiện"></progress>
+          </div>
+          <label>Kho lấy · số kiện</label>
+          <div id="orderPickups" class="order-lines"></div>
+          <button type="button" class="btn-outline full-width" onclick="addOrderLine('pickup')">Thêm kho lấy</button>
+          <label>Kho giao · số kiện</label>
+          <div id="orderDeliveries" class="order-lines"></div>
+          <button type="button" class="btn-outline full-width" onclick="addOrderLine('dropoff')">Thêm kho giao</button>
+          <div id="orderTotals" class="field-hint">Lấy 0 · giao 0 kiện</div>
+          <button id="submitOrderBtn" type="button" data-control data-task-control class="btn full-width" onclick="submitOrder()">Tạo đơn hàng</button>
+          <p class="card-help">Mỗi chuyến một kiện. Server chờ xe đứng tại RFID 10 giây để mô phỏng bốc/dỡ; lệnh ngoài đơn có thể làm gián đoạn. Không xác nhận hàng vật lý.</p>
+        </div>
+        <div id="nodeTaskForm" hidden>
+          <label for="task_agv">Xe thực hiện</label>
+          <select id="task_agv" class="form-group"><option value="">Tự động chọn xe gần nhất</option></select>
+          <div id="taskBatteryHint" class="field-hint" role="status"></div>
+          <div class="form-grid task-inputs"><div><label for="task_target">Node đích</label><input id="task_target" class="form-group" list="mapNodeOptions" placeholder="Ví dụ: K3"></div><div><label for="task_priority">Ưu tiên</label><input id="task_priority" type="number" min="0" max="100" step="1" class="form-group" value="0"></div></div>
+          <button id="submitTaskBtn" data-control data-task-control class="btn full-width" onclick="addTask()">Giao nhiệm vụ</button>
+          <p class="card-help">Core xác nhận đã nhận nhiệm vụ; vị trí hoàn thành dựa trên telemetry RFID.</p>
+        </div>
+      </section>
+      <section class="card compact panel-card" data-views="map">
+        <div class="card-header">Vật cản trên bản đồ</div>
+        <label for="obstacle_node">Node cần thay đổi</label>
+        <input id="obstacle_node" class="form-group" list="mapNodeOptions" placeholder="Chọn trên bản đồ hoặc nhập ID">
+        <div id="obstacleNodeState" class="field-hint">Chọn node để xem trạng thái.</div>
+        <button id="blockNodeBtn" data-control class="btn btn-danger full-width" onclick="toggleObstacle()">Khóa node</button>
+      </section>
+      <section class="card compact panel-card" data-views="map">
+        <div class="card-header">Bản đồ đã lưu</div>
+        <p class="card-help">Lưu file làm việc cho lần khởi động sau, hoặc tạo snapshot riêng trong cơ sở dữ liệu.</p>
+        <button id="quickSaveBtn" data-control class="btn-outline full-width" onclick="saveMap()">Lưu bản đồ làm việc</button>
+        <div class="snapshot-save"><input id="map_save_name" class="form-group" placeholder="Tên snapshot"><button id="saveSnapshotBtn" data-control class="btn" onclick="saveNamedMap()">Lưu snapshot</button></div>
+        <div id="mapListBox" class="log-list"></div>
+      </section>
+      <section class="card compact panel-card" data-views="map">
+        <div class="card-header">Chỉnh cấu trúc <span class="card-caption">Khi kho trống</span></div>
+        <p id="mapEditHint" class="card-help"></p>
+        <div class="section-label">NODE</div>
+        <div class="form-grid"><input id="edit_node_id" placeholder="ID node" aria-label="ID node"><select id="edit_node_type" aria-label="Loại node"><option value="waypoint">Điểm đường</option><option value="mutex">Vùng giao nhau</option><option value="station">Điểm kho</option><option value="charging">Trạm sạc</option></select><input id="edit_node_x" type="number" value="0" placeholder="Tọa độ X" aria-label="Tọa độ X"><input id="edit_node_y" type="number" value="0" placeholder="Tọa độ Y" aria-label="Tọa độ Y"></div>
+        <div class="row-btn"><button id="saveNodeBtn" data-map-edit class="btn" onclick="editNode()">Thêm / sửa</button><button id="removeNodeBtn" data-map-edit class="btn-danger" onclick="editNode(true)">Xóa node</button></div>
+        <div class="section-label section-spaced">CẠNH ĐƯỜNG</div>
+        <div class="form-grid"><input id="edit_edge_from" list="mapNodeOptions" placeholder="Từ node" aria-label="Node đầu cạnh"><input id="edit_edge_to" list="mapNodeOptions" placeholder="Đến node" aria-label="Node cuối cạnh"><input id="edit_edge_weight" type="number" min="0" max="1000000" step="1" value="1" aria-label="Trọng số cạnh"><select id="edit_edge_type" aria-label="Loại cạnh"><option value="main">Đường chính</option><option value="branch">Nhánh</option><option value="loop">Vòng</option></select><input id="edit_edge_class" placeholder="Phân loại đường" aria-label="Phân loại đường"><label class="check-label"><input id="edit_edge_two_way" type="checkbox"> Hai chiều</label></div>
+        <div class="row-btn"><button id="saveEdgeBtn" data-map-edit class="btn" onclick="editEdge()">Thêm / sửa</button><button id="removeEdgeBtn" data-map-edit class="btn-danger" onclick="editEdge(true)">Xóa cạnh</button></div>
+      </section>
+      <section class="card compact panel-card" data-views="reports" id="kpiPanel">
+        <div class="card-header">Hiệu suất ca <button class="btn" onclick="generateKpi()">Tạo báo cáo</button></div>
+        <div id="kpiBox"><i>Đang tải...</i></div>
+        <div class="section-label section-spaced">BÁO CÁO ĐÃ LƯU</div>
+        <div class="card-help">Chọn một ca để xem lại số liệu đã lưu.</div>
+        <div id="kpiHistoryBox" class="log-list"></div>
+      </section>
+    </aside>
+  </main>
+  <datalist id="mapNodeOptions"></datalist>
+
+  <div id="mapPreviewOverlay"
+    style="display:none; position:fixed; inset:0; background:rgba(11, 15, 25, 0.85); z-index:50; align-items:center; justify-content:center; backdrop-filter: blur(4px);">
+    <div
+      style="background:var(--bg-panel); border:1px solid var(--border-color); border-radius:12px; padding:20px; width:85%; max-width:1000px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h2 id="mapPreviewTitle" style="margin:0; font-size:18px">Xem bản đồ</h2><button class="btn-outline"
+          onclick="closeMapPreview()">✕ Đóng</button>
+      </div>
+      <svg id="mapPreviewSvg" viewBox="20 20 1020 720" width="100%" height="500"
+        style="background:#0B0F19; border-radius:8px; border: 1px solid #1E2536;">
+        <g id="previewEdgesG"></g>
+        <g id="previewNodesG"></g>
+      </svg>
+      <div style="margin-top:20px; display:flex; gap:12px; justify-content: flex-end;"><button class="btn btn-danger"
+          onclick="deletePreviewedMap()">Xoá bản đồ</button><button id="applySnapshotBtn" data-map-edit class="btn" onclick="applyPreviewedMap()">Nạp vào
+          Server Đang Chạy</button></div>
+    </div>
+  </div>
+
+  <dialog id="loginDialog" aria-labelledby="loginTitle">
+    <form id="loginForm">
+      <h2 id="loginTitle">Đăng nhập hệ thống AGV</h2>
+      <label for="loginToken">Token truy cập do quản trị viên cấp</label>
+      <input id="loginToken" type="password" autocomplete="off" required class="form-group">
+      <p id="loginError" role="alert"></p>
+      <button class="btn full-width" type="submit">Đăng nhập</button>
+    </form>
+  </dialog>
+  <script src="/dashboard.js?v=20261009-two-robot-trial"></script>
+</body>
+
+</html>

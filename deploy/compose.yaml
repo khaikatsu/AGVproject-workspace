@@ -1,0 +1,55 @@
+services:
+  broker:
+    image: eclipse-mosquitto:2
+    ports: ["8883:8883"]
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto.acl:/mosquitto/config/mosquitto.acl:ro
+      - ./secrets:/mosquitto/config/secrets:ro
+      - ./tls/ca.crt:/mosquitto/config/tls/ca.crt:ro
+      - ./tls/server.crt:/mosquitto/config/tls/server.crt:ro
+      - ./tls/server.key:/mosquitto/config/tls/server.key:ro
+      - broker-data:/mosquitto/data
+    restart: unless-stopped
+  core:
+    build: {context: .., dockerfile: deploy/Dockerfile.core}
+    environment:
+      AGV_CORE_WS_HOST: 0.0.0.0
+      AGV_CORE_TOKEN: ${AGV_CORE_TOKEN:?set core token}
+      AGV_MQTT_HOST: broker
+      AGV_MQTT_PORT: 8883
+      AGV_MQTT_USER: core
+      AGV_MQTT_PASSWORD: ${AGV_MQTT_PASSWORD:?set core MQTT password}
+      AGV_MQTT_CA: /tls/ca.crt
+      AGV_SECURITY_REQUIRED: 1
+      AGV_MAP_PATH: /data/map_layout.json
+    volumes:
+      - core-data:/data
+      - ../data/map_layout.json:/initial/map_layout.json:ro
+      - ./tls/ca.crt:/tls/ca.crt:ro
+    depends_on: [broker]
+    entrypoint: ["sh", "-c", "if [ ! -f /data/map_layout.json ]; then cp /initial/map_layout.json /data/map_layout.json; fi; exec agv_core"]
+    restart: unless-stopped
+  gateway:
+    build: {context: .., dockerfile: deploy/Dockerfile.gateway}
+    environment:
+      AGV_WS_URL: ws://core:8080
+      AGV_CORE_TOKEN: ${AGV_CORE_TOKEN:?set core token}
+      AGV_AUTH_TOKEN: ${AGV_AUTH_TOKEN:?set web token}
+      AGV_SECURITY_REQUIRED: 1
+      AGV_ALLOWED_ORIGINS: ${AGV_ALLOWED_ORIGINS:?set https origin}
+      AGV_HTTPS_CERT: /tls/server.crt
+      AGV_HTTPS_KEY: /tls/server.key
+      AGV_RETENTION_DAYS: 30
+      AGV_RETENTION_ROWS: 100000
+    ports: ["3000:3000"]
+    volumes:
+      - gateway-data:/data
+      - ./tls/server.crt:/tls/server.crt:ro
+      - ./tls/server.key:/tls/server.key:ro
+    depends_on: [core]
+    restart: unless-stopped
+volumes:
+  core-data:
+  gateway-data:
+  broker-data:

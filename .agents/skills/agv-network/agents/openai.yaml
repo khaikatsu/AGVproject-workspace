@@ -1,0 +1,4 @@
+interface:
+  display_name: "AGV Network Protocols"
+  short_description: "Hợp đồng MQTT HTTP WebSocket và kết nối robot server"
+  default_prompt: "Dùng $agv-network để thiết kế hoặc kiểm tra giao thức kết nối robot server theo hợp đồng AGV."

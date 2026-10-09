@@ -1,0 +1,14 @@
+**/node_modules
+.qa
+.git
+build
+**/*.exe
+**/*.db*
+deploy/secrets
+deploy/tls
+**/.env*
+data/*sequence.json*
+data/runtime_state.json*
+src/data/*sequence.json*
+src/data/runtime_state.json*
+firmware

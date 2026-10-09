@@ -1,0 +1,43 @@
+# Dependencies and generated outputs
+node_modules/
+**/node_modules/
+**/.pio/
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.exe
+*.obj
+*.o
+*.pdb
+*.log
+.qa/
+simulation/runs/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Operational SQLite data and temporary Office files
+*.db
+*.db-wal
+*.db-shm
+data/command_sequence.json
+data/command_sequence.json.tmp
+data/shift_state.json
+data/shift_state.json.tmp
+**/runtime_state.json*
+**/task_sequence.json*
+deploy/secrets/
+deploy/tls/
+deploy/mosquitto.windows.conf
+firmware/NCKHAGV/NCKHAGV/src/LocalNetworkConfig.h
+firmware/NCKHAGV/NCKHAGV/src/LocalNetworkConfig01.h
+firmware/NCKHAGV/NCKHAGV/src/LocalNetworkConfig02.h
+~$*.docx
+
+# Keep final Word deliverables and map examples under version control

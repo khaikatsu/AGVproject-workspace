@@ -1,0 +1,4 @@
+interface:
+  display_name: "AGV Robot Simulation"
+  short_description: "Mô phỏng MQTT động học và ROS Gazebo cho robot AGV"
+  default_prompt: "Dùng $agv-simulation để tạo mô phỏng đúng hợp đồng và mục tiêu kiểm chứng của workspace AGV."

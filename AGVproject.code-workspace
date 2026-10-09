@@ -1,0 +1,12 @@
+{
+  "folders": [{ "name": "AGV IoT Workspace", "path": "." }],
+  "settings": {
+    "files.encoding": "utf8",
+    "files.exclude": { "**/node_modules": true, "**/.qa": true },
+    "search.exclude": { "**/node_modules": true, "**/json.hpp": true, "**/.qa": true },
+    "files.associations": { "*.hpp": "cpp" }
+  },
+  "extensions": {
+    "recommendations": ["ms-vscode.cpptools", "yzhang.markdown-all-in-one"]
+  }
+}

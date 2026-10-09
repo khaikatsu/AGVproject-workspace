@@ -1,0 +1,25 @@
+{
+  "status": "documentation-only",
+  "contract": "current-v0.1",
+  "robot_id": "01",
+  "messages": [
+    { "direction": "robot_to_core", "topic": "agv/01/telemetry", "payload": "UNKNOWN|85|0" },
+    { "direction": "robot_to_core", "topic": "agv/01/telemetry", "payload": "S1|85|0" },
+    { "direction": "robot_to_core", "topic": "agv/01/telemetry", "payload": "S1|?|0", "note": "RFID known; battery has not been measured, so Core must block task dispatch" },
+    { "direction": "robot_to_core", "topic": "agv/01/diagnostic", "payload": { "version": 1, "agvId": "01", "session": 2, "uptimeMs": 120000, "node": "S1", "rfidAgeMs": 20, "state": "AGV_IDLE", "error": "NONE", "motor": "STOP", "leftDuty": 0, "rightDuty": 0, "taskActive": false, "wifi": true, "mqtt": true, "batteryCalibrated": true, "batteryPercentage": 55 }, "note": "NCKHAGV: a recent physical S1 scan and zero motor duties can support supervised two-robot recovery; stale or null rfidAgeMs cannot" },
+    { "direction": "robot_to_core", "topic": "agv/02/telemetry", "payload": "S2|85|0" },
+    { "direction": "robot_to_core", "topic": "agv/01/telemetry", "payload": "M1|85|0" },
+    { "direction": "core_to_robot", "topic": "agv/01/command", "payload": { "cmd": "GOTO", "cmd_id": 42, "path": ["M1", "GS1"], "target": "GS1" } },
+    { "direction": "robot_to_core", "topic": "agv/01/ack", "payload": "42" },
+    { "direction": "core_to_robot", "topic": "agv/01/command", "payload": { "cmd": "STOP", "cmd_id": 43 } },
+    { "direction": "core_to_robot", "topic": "agv/01/command", "payload": { "cmd": "WAIT", "cmd_id": 44 } },
+    { "direction": "core_to_robot", "topic": "agv/01/command", "payload": { "cmd": "RESET_FAULT", "cmd_id": 47 }, "note": "Operator clear_error or one automatic network-fault attempt at the freshly scanned home station; ACK confirms receipt, healthy diagnostic confirms cleared state" },
+    { "direction": "core_to_robot", "topic": "agv/01/command", "payload": { "cmd": "CHARGE_START", "cmd_id": 45 } },
+    { "direction": "robot_to_core", "topic": "agv/01/mutex_request", "payload": "M5" },
+    { "direction": "core_to_robot", "topic": "agv/01/mutex_grant", "payload": {"zone":"M5","grant_id":46} },
+    { "direction": "robot_to_core", "topic": "agv/01/mutex_ack", "payload": {"zone":"M5","grant_id":46} },
+    { "direction": "robot_to_core", "topic": "agv/01/mutex_release", "payload": {"zone":"M5","grant_id":46} },
+    { "direction": "robot_to_core", "topic": "agv/01/status", "payload": "online", "retained":true },
+    { "direction": "core_to_all", "topic": "agv/server/heartbeat", "payload": "core-session", "retained":false }
+  ]
+}

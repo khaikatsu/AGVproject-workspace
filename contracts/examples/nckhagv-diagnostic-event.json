@@ -1,0 +1,15 @@
+{
+  "status": "documentation-only; Core v0 does not consume this topic",
+  "topic": "agv/01/event",
+  "payload": {
+    "version": 1,
+    "agvId": "01",
+    "session": 1,
+    "uptimeMs": 123456,
+    "event": "AGV_REACHED_NODE",
+    "node": "GS1",
+    "taskId": "",
+    "fromNode": "S1",
+    "reverse": true
+  }
+}

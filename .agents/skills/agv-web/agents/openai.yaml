@@ -1,0 +1,4 @@
+interface:
+  display_name: "AGV Web Dashboard"
+  short_description: "Web giám sát bản đồ robot pin và lỗi realtime"
+  default_prompt: "Dùng $agv-web để phát triển dashboard theo yêu cầu mới và hợp đồng hiện tại của workspace AGV."

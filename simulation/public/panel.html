@@ -1,0 +1,28 @@
+<section class="card compact panel-card sim-card" id="simOrderPanel" data-views="overview tasks">
+  <div class="card-header">Đơn hàng kho <span class="sim-pill">2 XE ẢO</span></div>
+  <p class="card-help">Nhập kho lấy và các điểm giao theo thứ tự ưu tiên. Mỗi xe chở 1 kiện/chuyến; tối đa 2 chuyến cùng lúc. Khi xe phụ trách một kho đang bận, xe còn lại có thể lấy kiện cho kho khác nếu Core cấp được đường.</p>
+  <label for="simOrderPickup">Lấy hàng tại kho</label>
+  <select id="simOrderPickup" aria-label="Kho lấy hàng"></select>
+  <div class="sim-order-heading">Giao đến kho · số kiện</div>
+  <div id="simOrderLines"></div>
+  <div class="sim-order-actions"><button id="simAddOrderLine" type="button" class="btn-outline">+ Thêm điểm giao</button><span id="simOrderTotal">0 kiện</span></div>
+  <button id="simCreateOrder" type="button" class="btn full-width">Tạo đơn và giao cho 2 xe</button>
+  <p class="card-help">Ví dụ: lấy 5 kiện tại K1, nhập K2 × 2 và K4 × 3. Hai xe có thể giao xong khác thứ tự khi chạy song song.</p>
+  <div id="simOrders" aria-live="polite"></div>
+</section>
+<section class="card compact sim-card" id="simControlPanel">
+  <div class="card-header">Xe ảo <span class="sim-pill">SIMULATION</span></div>
+  <p class="card-help">Bắt đầu ca ở bảng phía trên, rồi giao nhiệm vụ. Các nút này chỉ tác động xe ảo.</p>
+  <div class="form-grid">
+    <div><label for="simTimeScale">Tốc độ mô phỏng</label><select id="simTimeScale"><option value="1">1×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select></div>
+    <div><label for="simSpeed">Vận tốc giả định (cm/s)</label><input id="simSpeed" type="number" min="1" max="200" value="25"></div>
+  </div>
+  <div class="sim-vehicle-controls" id="simVehicleControls"></div>
+  <details class="sim-assumptions"><summary>Thông số và giới hạn</summary>
+    <p>Xe là điểm trên đồ thị. Tọa độ map được giả định là cm; quãng đường = chiều dài các đoạn đã đi. Chi phí tuyến = tổng trọng số cạnh. Chưa mô hình kích thước, phanh hay va chạm thân xe.</p>
+    <label for="simDrain">Hao pin (%/cm)</label><input id="simDrain" type="number" min="0" max="0.1" step="0.001" value="0.002">
+    <label for="simCharge">Sạc (%/giây mô phỏng)</label><input id="simCharge" type="number" min="0.1" max="20" step="0.1" value="2">
+    <label for="simService">Thời gian lấy/trả (giây)</label><input id="simService" type="number" min="0" max="60" value="2">
+    <p>Hệ số × chỉ tăng thời gian xe/hàng. Timeout, retry và heartbeat của Core vẫn dùng thời gian thực.</p>
+  </details>
+</section>

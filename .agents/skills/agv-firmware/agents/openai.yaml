@@ -1,0 +1,4 @@
+interface:
+  display_name: "AGV MCU Firmware"
+  short_description: "Firmware motor cảm biến và giao tiếp MCU với server"
+  default_prompt: "Dùng $agv-firmware để phát triển firmware theo phần cứng và hợp đồng giao tiếp của workspace AGV."

@@ -1,0 +1,11 @@
+FROM node:24-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app/AGVwebserver
+COPY AGVwebserver/package*.json ./
+RUN npm ci --omit=dev
+COPY AGVwebserver/*.js AGVwebserver/index.html ./
+COPY AGVwebserver/public ./public
+RUN mkdir /data && chown node /data
+USER node
+ENV AGV_DB_PATH=/data/agv.db
+CMD ["node", "server.js"]

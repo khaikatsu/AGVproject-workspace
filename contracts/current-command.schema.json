@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AGV current v0 command contract",
+  "description": "Documented desired command shape. Runtime validation is not yet connected.",
+  "type": "object",
+  "required": ["cmd", "cmd_id"],
+  "properties": {
+    "cmd": { "enum": ["GOTO", "STOP", "WAIT", "CHARGE_START", "RESET_FAULT"] },
+    "cmd_id": { "type": "integer", "minimum": 1 },
+    "path": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "target": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [{
+    "if": { "properties": { "cmd": { "const": "GOTO" } } },
+    "then": { "required": ["path", "target"] }
+  }],
+  "additionalProperties": true
+}

@@ -1,0 +1,46 @@
+.sim-pill {background:#193945;color:#67e8f9;border:1px solid #246574;border-radius:20px;padding:3px 9px;font-size:10px;letter-spacing:1px;white-space:nowrap}
+.brand-subtitle {color:#67e8f9!important}
+.sim-card {border-color:#246574!important}
+.sim-card .card-header {color:#67e8f9}
+.sim-card label {font-size:11px}
+.sim-card select,.sim-card input {width:100%;min-width:0;box-sizing:border-box;margin-bottom:5px;padding:7px;background:#0b1626;color:#e2e8f0;border:1px solid #344a65;border-radius:6px}
+.sim-card option {background:#0b1626;color:#e2e8f0}
+.sim-goto {display:grid;grid-template-columns:1fr auto;gap:6px;margin:8px 0}
+.sim-goto button {white-space:nowrap}
+.map-foot {flex-shrink:0}
+.sim-vehicle {margin:12px 0 0;padding:10px 0 0;border-top:1px solid var(--border-color)}
+.sim-vehicle summary {font-weight:700;cursor:pointer;display:flex;justify-content:space-between;color:#e2e8f0}
+.sim-vehicle[data-robot="02"] summary {color:#d8b4fe}
+.sim-vehicle .sim-position {font-size:11px;line-height:1.65;margin:5px 0;color:var(--text-muted)}
+.sim-pair {display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.sim-card button {font-size:11px;padding:7px 8px;min-width:0}
+.sim-actions {display:flex;gap:5px;flex-wrap:wrap;margin:5px 0}
+.sim-actions button {flex:1 1 44%}
+.sim-actions .btn-danger {background:#642333}
+.sim-vehicle .full-width {margin-top:4px}
+.sim-assumptions {font-size:11px;line-height:1.6;margin-top:12px;color:var(--text-muted)}
+.sim-assumptions summary {cursor:pointer}
+.sim-metric-grid {display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sim-metric-grid strong {display:block;font-size:20px;color:#e2e8f0;font-variant-numeric:tabular-nums}
+.sim-metric-grid span {font-size:10px;color:var(--text-muted)}
+.sim-status {font-size:11px;margin:9px 0;color:#67e8f9;overflow-wrap:anywhere}
+.sim-downloads {display:flex;gap:6px;margin-top:10px}
+.sim-downloads a {flex:1;text-align:center;color:#7dd3fc;text-decoration:none;border:1px solid var(--border-color);padding:7px;border-radius:6px;font-size:11px}
+.sim-job {font-size:11px;padding:8px 0;border-top:1px solid var(--border-color);line-height:1.6;overflow-wrap:anywhere}
+.sim-job strong {color:#e2e8f0}
+#simEvents {max-height:220px;overflow:auto;font-size:11px;line-height:1.6}
+#simEvents>div {padding:5px 0;border-bottom:1px solid var(--border-color);overflow-wrap:anywhere}
+#simMotionG {pointer-events:none}
+.sim-note {color:#67e8f9!important;font-size:11px}
+.sim-card button:disabled {opacity:.45;cursor:not-allowed}
+.sim-order-heading {font-size:11px;font-weight:700;margin:9px 0 5px;color:#e2e8f0}
+.sim-order-line {display:grid;grid-template-columns:minmax(0,1fr) 68px 28px;gap:5px;align-items:start;margin-bottom:5px}
+.sim-order-line button {padding:6px 0;font-size:16px;line-height:1.1}
+.sim-order-actions {display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0 10px;font-size:11px;color:#67e8f9}
+.sim-order-card {border-top:1px solid var(--border-color);padding:9px 0;font-size:11px;line-height:1.55}
+.sim-order-card summary {cursor:pointer;font-weight:700;color:#e2e8f0}
+.sim-order-card progress {width:100%;height:8px;accent-color:#22c55e;margin-top:7px}
+.sim-order-subtitle {color:var(--text-muted)}
+.sim-order-warning {color:#fbbf24;margin:5px 0;overflow-wrap:anywhere}
+.sim-order-items {max-height:180px;overflow:auto;margin-top:5px}
+.sim-order-items>div {border-top:1px solid #26384d;padding:4px 0;overflow-wrap:anywhere}

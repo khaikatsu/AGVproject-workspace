@@ -1,0 +1,24 @@
+{
+  "name": "agv-web-backend",
+  "version": "1.0.0",
+  "description": "Backend Web (API + Database) cho he thong AGV - dung giua Dashboard va AGVServer.cpp",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test --test-isolation=none ../tests/gateway.test.js ../tests/security.test.js",
+    "test:hardening": "node ../tests/hardening.integration.js",
+    "test:tls": "node ../tests/tls.integration.js",
+    "test:system": "node ../tests/system.integration.js",
+    "test:browser": "node ../tests/browser.integration.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "cors": "^2.8.6",
+    "express": "^4.22.3",
+    "ws": "^8.21.3"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.3": true
+  }
+}

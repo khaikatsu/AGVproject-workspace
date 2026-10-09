@@ -1,0 +1,4 @@
+interface:
+  display_name: "AGV Server and Storage"
+  short_description: "Core C++ gateway Node.js và dữ liệu vận hành AGV"
+  default_prompt: "Dùng $agv-server để triển khai thay đổi API core hoặc lưu trữ dựa trên yêu cầu của workspace AGV."

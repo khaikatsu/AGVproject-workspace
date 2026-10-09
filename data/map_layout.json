@@ -1,0 +1,489 @@
+{
+  "charging_stations": [
+    "S2",
+    "S1"
+  ],
+  "edges": [
+    {
+      "from": "C1",
+      "path_class": "boulevard",
+      "to": "M1",
+      "two_way": false,
+      "type": "main",
+      "weight": 50
+    },
+    {
+      "from": "M1",
+      "path_class": "boulevard",
+      "to": "GS1",
+      "two_way": false,
+      "type": "main",
+      "weight": 50
+    },
+    {
+      "from": "GS1",
+      "path_class": "boulevard",
+      "to": "M2",
+      "two_way": false,
+      "type": "main",
+      "weight": 50
+    },
+    {
+      "from": "M2",
+      "path_class": "boulevard",
+      "to": "C2",
+      "two_way": false,
+      "type": "main",
+      "weight": 50
+    },
+    {
+      "from": "C4",
+      "path_class": "boulevard",
+      "to": "M4",
+      "two_way": false,
+      "type": "main",
+      "weight": 50
+    },
+    {
+      "from": "M4",
+      "path_class": "boulevard",
+      "to": "GS2",
+      "two_way": false,
+      "type": "main",
+      "weight": 50
+    },
+    {
+      "from": "GS2",
+      "path_class": "boulevard",
+      "to": "M3",
+      "two_way": false,
+      "type": "main",
+      "weight": 50
+    },
+    {
+      "from": "M3",
+      "path_class": "boulevard",
+      "to": "C3",
+      "two_way": false,
+      "type": "main",
+      "weight": 50
+    },
+    {
+      "from": "G1",
+      "path_class": "outer",
+      "to": "C1",
+      "two_way": false,
+      "type": "main",
+      "weight": 70
+    },
+    {
+      "from": "C3",
+      "path_class": "outer",
+      "to": "G1",
+      "two_way": false,
+      "type": "main",
+      "weight": 70
+    },
+    {
+      "from": "C2",
+      "path_class": "outer",
+      "to": "G6",
+      "two_way": false,
+      "type": "main",
+      "weight": 70
+    },
+    {
+      "from": "G6",
+      "path_class": "outer",
+      "to": "C4",
+      "two_way": false,
+      "type": "main",
+      "weight": 70
+    },
+    {
+      "from": "M1",
+      "path_class": "inner",
+      "to": "G2",
+      "two_way": false,
+      "type": "main",
+      "weight": 35
+    },
+    {
+      "from": "G2",
+      "to": "M5",
+      "weight": 35,
+      "path_class": "inner",
+      "type": "main",
+      "two_way": false
+    },
+    {
+      "from": "M5",
+      "to": "G3",
+      "weight": 35,
+      "path_class": "inner",
+      "type": "main",
+      "two_way": false
+    },
+    {
+      "from": "G3",
+      "path_class": "inner",
+      "to": "M3",
+      "two_way": false,
+      "type": "main",
+      "weight": 35
+    },
+    {
+      "from": "M4",
+      "path_class": "inner",
+      "to": "G5",
+      "two_way": false,
+      "type": "main",
+      "weight": 35
+    },
+    {
+      "from": "G5",
+      "to": "M6",
+      "weight": 35,
+      "path_class": "inner",
+      "type": "main",
+      "two_way": false
+    },
+    {
+      "from": "M6",
+      "to": "G4",
+      "weight": 35,
+      "path_class": "inner",
+      "type": "main",
+      "two_way": false
+    },
+    {
+      "from": "G4",
+      "path_class": "inner",
+      "to": "M2",
+      "two_way": false,
+      "type": "main",
+      "weight": 35
+    },
+    {
+      "from": "G1",
+      "to": "M5",
+      "weight": 50,
+      "path_class": "shortcut",
+      "type": "main",
+      "two_way": false
+    },
+    {
+      "from": "M5",
+      "to": "M6",
+      "weight": 100,
+      "path_class": "shortcut",
+      "type": "main",
+      "two_way": false
+    },
+    {
+      "from": "M6",
+      "to": "G6",
+      "weight": 50,
+      "path_class": "shortcut",
+      "type": "main",
+      "two_way": false
+    },
+    {
+      "from": "S1",
+      "path_class": "",
+      "to": "GS1",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "GS1",
+      "path_class": "",
+      "to": "S1",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "S2",
+      "path_class": "",
+      "to": "GS2",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "GS2",
+      "path_class": "",
+      "to": "S2",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "K1",
+      "path_class": "",
+      "to": "G1",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "G1",
+      "path_class": "",
+      "to": "K1",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "K2",
+      "path_class": "",
+      "to": "G2",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "G2",
+      "path_class": "",
+      "to": "K2",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "K3",
+      "path_class": "",
+      "to": "G3",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "G3",
+      "path_class": "",
+      "to": "K3",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "K4",
+      "path_class": "",
+      "to": "G4",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "G4",
+      "path_class": "",
+      "to": "K4",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "K5",
+      "path_class": "",
+      "to": "G5",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "G5",
+      "path_class": "",
+      "to": "K5",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "K6",
+      "path_class": "",
+      "to": "G6",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    },
+    {
+      "from": "G6",
+      "path_class": "",
+      "to": "K6",
+      "two_way": true,
+      "type": "branch",
+      "weight": 20
+    }
+  ],
+  "map_name": "Kho AGV v3 (cm)",
+  "mutex_zones": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6"
+  ],
+  "nodes": [
+    {
+      "id": "S1",
+      "type": "charging",
+      "x": 100.0,
+      "y": -20.0
+    },
+    {
+      "id": "C1",
+      "type": "waypoint",
+      "x": 0.0,
+      "y": 0.0
+    },
+    {
+      "id": "M1",
+      "type": "mutex",
+      "x": 50.0,
+      "y": 0.0
+    },
+    {
+      "id": "GS1",
+      "type": "waypoint",
+      "x": 100.0,
+      "y": 0.0
+    },
+    {
+      "id": "M2",
+      "type": "mutex",
+      "x": 150.0,
+      "y": 0.0
+    },
+    {
+      "id": "C2",
+      "type": "waypoint",
+      "x": 200.0,
+      "y": 0.0
+    },
+    {
+      "id": "K2",
+      "type": "station",
+      "x": 30.0,
+      "y": 35
+    },
+    {
+      "id": "G2",
+      "type": "waypoint",
+      "x": 50.0,
+      "y": 35
+    },
+    {
+      "id": "G4",
+      "type": "waypoint",
+      "x": 150.0,
+      "y": 35
+    },
+    {
+      "id": "K4",
+      "type": "station",
+      "x": 170.0,
+      "y": 35
+    },
+    {
+      "id": "K1",
+      "type": "station",
+      "x": -20.0,
+      "y": 70.0
+    },
+    {
+      "id": "G1",
+      "type": "waypoint",
+      "x": 0.0,
+      "y": 70.0
+    },
+    {
+      "id": "M5",
+      "type": "mutex",
+      "x": 50.0,
+      "y": 70.0
+    },
+    {
+      "id": "M6",
+      "type": "mutex",
+      "x": 150.0,
+      "y": 70.0
+    },
+    {
+      "id": "G6",
+      "type": "waypoint",
+      "x": 200.0,
+      "y": 70.0
+    },
+    {
+      "id": "K6",
+      "type": "station",
+      "x": 220.0,
+      "y": 70.0
+    },
+    {
+      "id": "K3",
+      "type": "station",
+      "x": 30.0,
+      "y": 105
+    },
+    {
+      "id": "G3",
+      "type": "waypoint",
+      "x": 50.0,
+      "y": 105
+    },
+    {
+      "id": "G5",
+      "type": "waypoint",
+      "x": 150.0,
+      "y": 105
+    },
+    {
+      "id": "K5",
+      "type": "station",
+      "x": 170.0,
+      "y": 105
+    },
+    {
+      "id": "C3",
+      "type": "waypoint",
+      "x": 0.0,
+      "y": 140.0
+    },
+    {
+      "id": "M3",
+      "type": "mutex",
+      "x": 50.0,
+      "y": 140.0
+    },
+    {
+      "id": "GS2",
+      "type": "waypoint",
+      "x": 100.0,
+      "y": 140.0
+    },
+    {
+      "id": "M4",
+      "type": "mutex",
+      "x": 150.0,
+      "y": 140.0
+    },
+    {
+      "id": "C4",
+      "type": "waypoint",
+      "x": 200.0,
+      "y": 140.0
+    },
+    {
+      "id": "S2",
+      "type": "charging",
+      "x": 100.0,
+      "y": 160.0
+    }
+  ],
+  "obstacles": [],
+  "revision": 3
+}
