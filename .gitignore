@@ -2,6 +2,8 @@
 node_modules/
 **/node_modules/
 **/.pio/
+**/.pio-cache/
+**/.pio-core/
 .venv/
 __pycache__/
 *.pyc
