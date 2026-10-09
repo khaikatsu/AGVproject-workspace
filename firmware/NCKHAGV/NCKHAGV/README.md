@@ -104,7 +104,28 @@ Hai env `esp32dev_two_robot_bench_01` và `esp32dev_two_robot_bench_02` mở PWM
 
 Nếu `SEGMENT_TIMEOUT` làm ESP32 báo `AGV_SAFE_STOP`, Core/web xóa lỗi phải gửi thêm `RESET_FAULT`; chỉ `WAIT` không mở được chốt firmware. Cần nạp firmware hỗ trợ lệnh này cho cả hai xe và dùng Core mới đồng bộ. Xe phải online, vừa xác minh RFID đúng vị trí, line hợp lệ, không có tuyến đang chạy và chốt điện áp đạt yêu cầu. Sau thao tác xóa lỗi, xem `agv/{id}/diagnostic`: `state=AGV_IDLE`, `error=NONE`, `motor=STOP` trước khi thử lệnh mới. ACK reset chỉ là nhận lệnh. Còi lùi chỉ chứng minh firmware đã đặt duty khác 0; nếu bánh vẫn đứng, đọc duty lúc lệnh đang hoạt động và kiểm tra nguồn motor/ENA/ENB/OUT của L298N trước khi tăng PWM tiếp.
 
-Build từ thư mục chứa `platformio.ini` bằng `& "$env:USERPROFILE/.platformio/penv/Scripts/platformio.exe" run -e esp32dev_two_robot_bench_01 -e esp32dev_two_robot_bench_02`. Trước khi nạp, xác định ID xe/MAC qua Serial hoặc MQTT và đúng cổng COM. Nạp từng xe bằng `run -e esp32dev_two_robot_bench_01 -t upload --upload-port COMx` hoặc env `_02` tương ứng. Mỗi lần nạp/đọc Serial có thể reboot ESP32; quét lại S1/S2, xác nhận Core online/vị trí hợp lệ rồi mới xử lý lỗi và thử lệnh. Không dùng ảnh bench để chạy trên sàn khi chưa có cảm biến dừng vật cản và kiểm tra hình học thật.
+### Cấu hình và nạp riêng xe 01, xe 02
+
+Chỉ nạp **firmware `.bin` do PlatformIO build**, không nạp trực tiếp `main.cpp`, `Config.h` hay file profile. Hai env bench dùng cùng mã điều khiển và chân GPIO nhưng chọn file thông số riêng:
+
+| Xe | File chỉnh tốc độ/trim/timeout/pin | Env PlatformIO | Ảnh ứng dụng sau build |
+| --- | --- | --- | --- |
+| 01 | [`src/profiles/Robot01Config.h`](src/profiles/Robot01Config.h) | `esp32dev_two_robot_bench_01` | `.pio/build/esp32dev_two_robot_bench_01/firmware.bin` |
+| 02 | [`src/profiles/Robot02Config.h`](src/profiles/Robot02Config.h) | `esp32dev_two_robot_bench_02` | `.pio/build/esp32dev_two_robot_bench_02/firmware.bin` |
+
+Mỗi profile khóa MQTT ID đúng xe. Giá trị ban đầu của cả hai vẫn là PWM cơ sở 230, trim trái −40/phải 0 như trước khi tách; chỉnh từng file theo số đo trên **chính xe đó**. Bảng chân và UID RFID chung ở `src/Config.h`. Muốn dùng Wi‑Fi/broker hoặc tài khoản MQTT khác nhau, sao chép `src/LocalNetworkConfig01.example.h` thành `src/LocalNetworkConfig01.h`, và `02.example.h` thành `02.h`, rồi điền riêng. Hai file thật bị ignore; nếu chưa tạo, env bench vẫn đọc `src/LocalNetworkConfig.h` cũ. Không đặt mật khẩu trong file profile.
+
+Từ thư mục chứa `platformio.ini`, chọn đúng cổng USB của từng xe rồi build/nạp **từng env**:
+
+```powershell
+Set-Location 'C:\Users\DELL\OneDrive\noobcoder\AGVproject\firmware\NCKHAGV\NCKHAGV'
+$pio = "$env:USERPROFILE/.platformio/penv/Scripts/platformio.exe"
+& $pio device list
+& $pio run -e esp32dev_two_robot_bench_01 -t upload --upload-port COM_XE_01
+& $pio run -e esp32dev_two_robot_bench_02 -t upload --upload-port COM_XE_02
+```
+
+Thay `COM_XE_01`/`COM_XE_02` bằng cổng COM thực tế; nếu dùng chung một dây USB, chuyển dây sang đúng xe trước lệnh thứ hai. PlatformIO nạp cả bootloader, partition và ứng dụng ở offset phù hợp. Không dùng riêng `firmware.bin` với công cụ nạp thủ công khi chưa có bảng offset của bo. Sau mỗi lần nạp, Serial 115200 và topic `agv/01/...` hoặc `agv/02/...` phải khớp xe; quét lại S1/S2 để xác nhận vị trí trong phiên MQTT mới. Chỉ thử chuyển động khi hai xe trên giá kê, có thể ngắt nguồn motor ngay và đã xác minh hướng quay, line cùng điện áp của từng xe. [ADR-027](../../../docs/decisions/ADR-027-per-robot-firmware-profiles.md).
 
 Người dùng chọn **28 cm** làm mốc thử trước khi đo lại đường thật. `Config::MUTEX_EXIT_TRIAL_CM=28.0f` lưu mốc này trong firmware; hiện **chưa được dùng để phát `mutex_release`**. Bản trial mở PWM độc lập với mốc này vì chỉ có một xe. Vì đã bỏ encoder, firmware hiện không tự đo được 28 cm; cần cách xác nhận khác hoặc mốc RFID vật lý đã đo. Map v3 có cạnh ngắn nhất rời node M dài 35 đơn vị mô hình, nhưng chưa xác nhận 1 đơn vị bằng 1 cm thực tế.
 

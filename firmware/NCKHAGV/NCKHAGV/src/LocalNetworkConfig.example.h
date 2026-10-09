@@ -1,7 +1,8 @@
 #pragma once
 
-// Copy to LocalNetworkConfig.h on each robot. That file is excluded from Git.
-// Use "01" for the first vehicle and "02" for the second.
+// Bản mạng chung cũ: sao chép thành LocalNetworkConfig.h (bị ignore).
+// Env bench 01/02 ưu tiên LocalNetworkConfig01.h/02.h nếu có.
+// Bản một xe dùng ID 01; env bench mới khóa ID theo profile.
 #define AGV_ROBOT_ID "01"
 #define AGV_WIFI_SSID ""
 #define AGV_WIFI_PASSWORD ""
