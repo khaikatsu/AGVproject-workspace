@@ -1,0 +1,158 @@
+// Menu/F5 va loc xe: broker, map, counter, cong rieng; khong dieu khien xe that.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const net = require('node:net');
+const {spawn} = require('node:child_process');
+const {once} = require('node:events');
+const {randomUUID} = require('node:crypto');
+const WebSocket = require('../AGVwebserver/node_modules/ws');
+const {MqttFixture} = require('./helpers/mqtt-client');
+const root = path.resolve(__dirname,'..');
+const executable = process.env.AGV_CORE_BIN || path.join(root,'build/agv_core.exe');
+const bin = process.env.AGV_MOSQUITTO_BIN || 'C:/msys64/ucrt64/bin';
+const delay = ms => new Promise(resolve=>setTimeout(resolve,ms));
+async function until(fn,timeout=8000) {
+  const end=Date.now()+timeout;
+  while(Date.now()<end) {if(await fn()) return;await delay(25);}
+  throw Error('Core mode condition timed out');
+}
+async function freePort() {
+  const server=net.createServer();server.listen(0,'127.0.0.1');await once(server,'listening');
+  const port=server.address().port;await new Promise(resolve=>server.close(resolve));return port;
+}
+async function main() {
+  fs.mkdirSync(path.join(root,'.qa'),{recursive:true});
+  const directory=fs.mkdtempSync(path.join(root,'.qa/core-mode-test-'));
+  const mqttPort=await freePort();
+  const config=path.join(directory,'broker.conf');
+  fs.writeFileSync(config,`listener ${mqttPort} 127.0.0.1\nallow_anonymous true\npersistence false\n`);
+  const baseEnv={...process.env,AGV_MQTT_HOST:'127.0.0.1',AGV_MQTT_PORT:String(mqttPort),AGV_CORE_WS_HOST:'127.0.0.1',
+    AGV_ONE_ROBOT_TRIAL:'1',AGV_TWO_ROBOT_TRIAL:'1',AGV_MONITOR_ONLY_02:'1'};
+  delete baseEnv.AGV_CORE_TOKEN;delete baseEnv.AGV_TEST_MODE;
+  const pathKey=Object.keys(baseEnv).find(key=>key.toLowerCase()==='path') || 'PATH';
+  baseEnv[pathKey]=bin+path.delimiter+baseEnv[pathKey];
+  const children=[];let output='',peer,mqtt,heartbeat;
+  function child(file,args,env=baseEnv) {
+    const proc=spawn(file,args,{env,cwd:root,windowsHide:true});children.push(proc);proc.captured='';
+    const capture=data=>{proc.captured+=data;output+=data;};
+    proc.stdout.on('data',capture);proc.stderr.on('data',capture);proc.on('error',error=>output+=error.message);
+    return proc;
+  }
+  function caseEnv(name,port) {
+    const folder=path.join(directory,name);fs.mkdirSync(folder);
+    fs.copyFileSync(path.join(root,'data/map_layout.json'),path.join(folder,'map.json'));
+    return {...baseEnv,AGV_CORE_WS_PORT:String(port),AGV_HOME_STATIONS:'{"01":"S1","02":"S2"}',
+      AGV_MAP_PATH:path.join(folder,'map.json'),AGV_COMMAND_ID_PATH:path.join(folder,'counter.json'),
+      AGV_TASK_ID_PATH:path.join(folder,'task.json'),AGV_RUNTIME_STATE_PATH:path.join(folder,'runtime.json'),
+      AGV_SHIFT_STATE_PATH:path.join(folder,'shift.json')};
+  }
+  async function stop(proc) {
+    if(proc.exitCode===null && proc.signalCode===null) proc.kill();
+    await until(()=>proc.exitCode!==null || proc.signalCode!==null);
+  }
+  try {
+    const broker=child(path.join(bin,process.platform==='win32'?'mosquitto.exe':'mosquitto'),['-c',config,'-v']);
+    await until(()=>broker.captured.includes('running'));
+    // Cancel/EOF must not touch counters or connect to MQTT.
+    for(const [name,input] of [['cancel','0\n'],['eof','']]) {
+      const env=caseEnv(name,await freePort());const core=child(executable,['--select-mode'],env);
+      core.stdin.end(input);await until(()=>core.exitCode!==null);
+      assert.equal(core.exitCode,0);assert.equal(fs.existsSync(env.AGV_COMMAND_ID_PATH),false);
+      assert.equal(fs.existsSync(env.AGV_SHIFT_STATE_PATH),false);
+    }
+    for(const [choice,mode,id] of [['1','robot01','01'],['2','robot02','02'],['3','both','']]) {
+      const port=await freePort(),env=caseEnv(mode,port),core=child(executable,['--select-mode'],env);
+      await until(()=>core.captured.includes('Nhap lua chon'));
+      assert.equal(fs.existsSync(env.AGV_COMMAND_ID_PATH),false);
+      core.stdin.write('wrong\n');await until(()=>core.captured.includes('Lua chon khong hop le'));
+      assert.equal(fs.existsSync(env.AGV_COMMAND_ID_PATH),false);
+      core.stdin.end(` ${choice} \n`);
+      let state;const results=new Map();
+      peer=new WebSocket(`ws://127.0.0.1:${port}`);peer.on('error',()=>{});
+      peer.on('message',raw=>{
+        const message=JSON.parse(raw);
+        if(message.type==='command_result') {results.set(message.request_id,message);state=message.state;}
+        else state=message.type==='state_delta'?{...state,...message.changes,state_seq:message.state_seq}:message;
+      });
+      // Retry connecting while Core reserves files and starts MQTT.
+      await until(()=> {
+        if(peer.readyState===WebSocket.CLOSED) {
+          peer=new WebSocket(`ws://127.0.0.1:${port}`);peer.on('error',()=>{});
+          peer.on('message',raw=>{const m=JSON.parse(raw);if(m.type==='command_result'){results.set(m.request_id,m);state=m.state;}
+            else state=m.type==='state_delta'?{...state,...m.changes,state_seq:m.state_seq}:m;});
+        }
+        return state?.mqtt_connected;
+      });
+      assert.equal(state.shift.test_mode,mode);assert.equal(state.shift.trial_robot_id,id);
+      assert.equal(state.shift.supervised_trial,true);assert.equal(state.shift.single_robot_trial,false);
+      assert.equal(state.shift.two_robot_trial,mode==='both');assert.equal(state.shift.can_start,false);
+      async function command(body) {
+        const request_id=randomUUID();peer.send(JSON.stringify({...body,request_id}));
+        await until(()=>results.has(request_id));return results.get(request_id);
+      }
+      const commands=[];mqtt=new MqttFixture(mqttPort);mqtt.on('error',()=>{});
+      await until(()=>mqtt.connected);mqtt.subscribe('agv/#');await until(()=>mqtt.subscribed);
+      mqtt.on('publish',(topic,payload)=>{
+        if(!topic.endsWith('/command')) return;
+        const c=JSON.parse(payload),robot=topic.split('/')[1];commands.push({robot,...c});
+        mqtt.publish(`agv/${robot}/ack`,String(c.cmd_id));
+      });
+      const nodes={'01':'S1','02':'S2'};
+      if(id) nodes[id==='01'?'02':'01']='UNKNOWN';
+      const telemetry=()=>{for(const robot of ['01','02']) mqtt.publish(`agv/${robot}/telemetry`,`${nodes[robot]}|?|0`);};
+      telemetry();heartbeat=setInterval(telemetry,150);
+      await until(()=>state?.fleet?.agvs?.length===2);
+      if(id) {
+        await delay(300);assert.equal(state.shift.can_start,false);
+        nodes[id==='01'?'02':'01']=id==='01'?'S2':'S1';telemetry();
+      }
+      await until(()=>state.shift.can_start);
+      assert.equal((await command({cmd:'start_shift'})).ok,true);
+      if(id) {
+        const other=id==='01'?'02':'01';
+        assert.equal((await command({cmd:'direct_goto',agv_id:other,target:other==='01'?'GS1':'M3'})).ok,false);
+        // An unselected robot cannot acquire a new mutex.
+        mqtt.publish(`agv/${other}/mutex_request`,'M2');await delay(300);
+        assert.equal(state.mutex.M2.owner,'');
+        const task=await command({cmd:'add_task',target:id==='01'?'GS1':'M3'});assert.equal(task.ok,true);
+        await until(()=>commands.some(c=>c.robot===id && c.cmd==='GOTO'));
+        assert.equal(state.fleet.tasks.find(t=>t.task_id===task.data.task_id).assigned_agv,id);
+        assert.equal(commands.some(c=>c.robot!==id && ['GOTO','CHARGE_START'].includes(c.cmd)),false);
+      } else {
+        assert.equal((await command({cmd:'direct_goto',agv_id:'01',target:'GS1'})).ok,true);
+        assert.equal((await command({cmd:'direct_goto',agv_id:'02',target:'M3'})).ok,true);
+        await until(()=>['01','02'].every(robot=>commands.some(c=>c.robot===robot && c.cmd==='GOTO')));
+        mqtt.publish('agv/01/mutex_request','M2');await until(()=>state.mutex.M2.owner==='01');
+        mqtt.publish('agv/02/mutex_request','M2');await until(()=>state.mutex.M2.waiting.includes('02'));
+        assert.equal(state.mutex.M2.owner,'01');
+      }
+      clearInterval(heartbeat);heartbeat=null;mqtt.close();mqtt=null;peer.terminate();peer=null;
+      const counter=JSON.parse(fs.readFileSync(env.AGV_COMMAND_ID_PATH,'utf8')).reserved_through;
+      await stop(core);
+      // Noninteractive argument mode reuses the counter instead of rewinding it.
+      const restarted=child(executable,['--mode',mode],env);
+      await until(()=>fs.existsSync(env.AGV_COMMAND_ID_PATH) && JSON.parse(fs.readFileSync(env.AGV_COMMAND_ID_PATH,'utf8')).reserved_through>counter);
+      await stop(restarted);
+    }
+    const env=caseEnv('normal',await freePort()),normal=child(executable,['--mode','normal'],env);
+    let normalState;
+    await until(()=>{
+      if(!peer || peer.readyState===WebSocket.CLOSED) {
+        peer=new WebSocket(`ws://127.0.0.1:${env.AGV_CORE_WS_PORT}`);peer.on('error',()=>{});
+        peer.on('message',raw=>{const m=JSON.parse(raw);normalState=m.type==='state_delta'?{...normalState,...m.changes}:m;});
+      }
+      return normalState?.mqtt_connected;
+    });
+    assert.equal(normalState.shift.test_mode,'normal');assert.equal(normalState.shift.supervised_trial,false);
+    assert.equal(normalState.shift.single_robot_trial,false);assert.equal(normalState.shift.two_robot_trial,false);
+    peer.terminate();peer=null;await stop(normal);
+    console.log('PASS Core menu: invalid input, cancel/EOF, robot01/robot02 filtering, passive RFID gate, dual mutex, explicit modes and counter continuation');
+    console.log('Artifacts: '+directory);
+  } catch(error) {console.error(output.slice(-6500));throw error;}
+  finally {
+    clearInterval(heartbeat);if(mqtt) mqtt.close();if(peer) peer.terminate();
+    for(const proc of children) if(proc.exitCode===null && proc.signalCode===null) await stop(proc);
+  }
+}
+main().catch(error=>{console.error(error);process.exitCode=1;});

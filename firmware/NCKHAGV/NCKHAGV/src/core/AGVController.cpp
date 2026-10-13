@@ -1,6 +1,7 @@
 #include "AGVController.h"
 #include "RoutePlanner.h"
 #include <cstring>
+#include <esp_system.h>
 
 AGVController::AGVController() : line_(motor_), movement_(motor_, line_, buzzer_), mqtt_(wifi_),
     control_({Config::WIFI_TIMEOUT_MS, Config::MQTT_TIMEOUT_MS, Config::TURN_MIN_MS,
@@ -19,6 +20,8 @@ void AGVController::begin() {
     control_.begin(millis());
     if (!mqtt_.begin()) control_.fail(ErrorCode::Configuration);
     if (Config::DEBUG_ENABLED) {
+        Serial.printf("[BOOT] xe=%s reset_reason=%d motion=%d bench=%d\n", Config::AGV_ID,
+                      static_cast<int>(esp_reset_reason()), Config::ENABLE_CORE_MOTION, Config::TWO_ROBOT_BENCH_TRIAL);
         Serial.printf("[AGV] Core motion %s; mutex release requires verified exit RFID\n",
                       Config::ENABLE_CORE_MOTION ? "configured" : "locked");
     }
@@ -52,6 +55,7 @@ bool AGVController::consumePriority() {
         lastRfidSeenMs_ = 0;
         previousNode_[0] = '\0';
         previousSegmentReverse_ = false;
+        heading_ = RobotHeading::Unknown; headingBayDefault_ = false;
         navigator_.resetGrants();
         clearance_.reset();
         control_.safeStop(ErrorCode::NotConnected);
@@ -101,6 +105,14 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
         control_.safeStop(ErrorCode::ChargerUnconfigured);
         return;
     }
+    if (command.type == CoreCommandType::NodeOrder) {
+        if (positionConfirmed_ && positionSession_ == mqtt_.session() &&
+            navigator_.authorizeNodeOrder(command)) {
+            if (Config::DEBUG_ENABLED) Serial.printf("[NODE_ORDER] server: %s %s -> %s route=%ld step=%u\n",
+                command.maneuver,command.node,command.nextNode,static_cast<long>(command.routeCmdId),command.pathIndex);
+        } else if (Config::DEBUG_ENABLED) Serial.println("[NODE_ORDER] rejected stale/mismatched order");
+        return;
+    }
     if (command.type == CoreCommandType::Goto) {
         // A new route while between tags has no reliable physical start node.
         if (navigator_.active()) {
@@ -116,7 +128,7 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
             return;
         }
         if (!RoutePlanner::plan(previousNode_, control_.currentNode(), command, route,
-                                previousSegmentReverse_)) {
+                                previousSegmentReverse_, heading_)) {
             control_.safeStop(ErrorCode::InvalidCommand);
             return;
         }
@@ -133,12 +145,17 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
         if (!Config::ENABLE_CORE_MOTION || (Config::ONE_ROBOT_TRIAL && !trialRoute) ||
             !Config::benchVoltageReady(battery_.readVoltage()) ||
             (!battery_.calibrated() && !trialRoute && !Config::TWO_ROBOT_BENCH_TRIAL) ||
-            (reverseRequired && !Config::REVERSE_STEERING_CONFIRMED && !trialRoute) ||
+            !RoutePlanner::reverseAllowed(control_.currentNode(), command, route) ||
             control_.state() == AGV_SAFE_STOP || control_.state() == AGV_ERROR) {
+            if (Config::DEBUG_ENABLED)
+                Serial.printf("[MOTION_LOCK] xe=%s node=%s previous=%s motion=%d voltage=%.2f reverse=%d state=%s\n",
+                              Config::AGV_ID, control_.currentNode(), previousNode_,
+                              Config::ENABLE_CORE_MOTION, battery_.readVoltage(), reverseRequired,
+                              stateName(control_.state()));
             control_.safeStop(ErrorCode::MotionLocked);
             return;
         }
-        if (route.count && !navigator_.start(control_.currentNode(), command, route, millis(), trialRoute))
+        if (route.count && !navigator_.start(control_.currentNode(), command, route, millis(), trialRoute, true))
             control_.safeStop(ErrorCode::InvalidCommand);
         return;
     }
@@ -154,6 +171,7 @@ void AGVController::update() {
         positionConfirmed_ = false; previousNode_[0] = '\0';
         lastRfidSeenMs_ = 0;
         previousSegmentReverse_ = false;
+        heading_ = RobotHeading::Unknown; headingBayDefault_ = false;
         navigator_.resetGrants();
         clearance_.reset();
     }
@@ -173,6 +191,7 @@ void AGVController::update() {
             lastRfidSeenMs_ = 0;
             previousNode_[0] = '\0';
             previousSegmentReverse_ = false;
+            heading_ = RobotHeading::Unknown; headingBayDefault_ = false;
             control_.reachedNode("", millis());
             if (!navigator_.active() && control_.state() != AGV_MOVING) movement_.stop();
         }
@@ -197,16 +216,26 @@ void AGVController::update() {
                 AGVMath::copyText(fromNode, sizeof(fromNode), control_.currentNode());
                 if (expected && fromNode[0] && navigator_.error() == ErrorCode::None)
                     clearance_.reached(fromNode, event.node);
-                if (priorConfirmed && fromNode[0] && std::strcmp(fromNode, event.node) != 0)
-                    AGVMath::copyText(previousNode_, sizeof(previousNode_), fromNode);
+                const char* incoming = RoutePlanner::confirmedIncoming(
+                    expected && navigator_.error() == ErrorCode::None, fromNode, event.node);
+                if (incoming)
+                    AGVMath::copyText(previousNode_, sizeof(previousNode_), incoming);
                 else previousNode_[0] = '\0';
-                previousSegmentReverse_ = priorConfirmed && reverse && previousNode_[0];
+                previousSegmentReverse_ = incoming && reverse;
+                heading_ = incoming ? RoutePlanner::edgeHeading(fromNode, event.node, reverse) : RobotHeading::Unknown;
+                headingBayDefault_ = false;
                 control_.reachedNode(event.node, millis());
                 if (!navigator_.active() && control_.state() != AGV_MOVING) movement_.stop();
                 mqtt_.publishEvent("AGV_REACHED_NODE", event.node, millis(), control_.task().id, fromNode, reverse);
                 publishTelemetry();
             }
         }
+        if (positionConfirmed_ && !navigator_.active() && !control_.task().active &&
+            navigator_.error() == ErrorCode::None && control_.error() == ErrorCode::None) {
+            const auto docking = RoutePlanner::bayHeading(control_.currentNode());
+            if (docking != RobotHeading::Unknown) { heading_ = docking; headingBayDefault_ = true; }
+        }
+        rfid_.finishRead(); // HALT can wait for a timeout; the arrival motor stop has already happened.
     }
     if (Config::ULTRASONIC_MOTION_GUARD) sensor_.update();
     if (controlArmed_) control_.checkSafety(input());
@@ -247,6 +276,16 @@ void AGVController::update() {
     if (navigator_.active() && (control_.state() == AGV_SAFE_STOP || control_.state() == AGV_ERROR))
         navigator_.fault(control_.error() == ErrorCode::None ? ErrorCode::Configuration : control_.error());
     const MotorAction coreMotor = navigator_.active() ? navigator_.update(input()) : MotorAction::Stop;
+    if (navigator_.stationOriented()) {
+        heading_ = RoutePlanner::bayHeading(control_.currentNode());
+        headingBayDefault_ = true;
+    } else if (coreMotor == MotorAction::PivotLeft || coreMotor == MotorAction::PivotRight) {
+        heading_ = RobotHeading::Unknown; headingBayDefault_ = false;
+    } else if (navigator_.following() && coreMotor != MotorAction::Stop) {
+        // Reacquired route line fixes the front direction; backing does not flip it.
+        heading_ = RoutePlanner::edgeHeading(control_.currentNode(), navigator_.nextNode(), navigator_.segmentReverse());
+        headingBayDefault_ = false;
+    }
     movement_.apply(navigator_.state() == AGV_SAFE_STOP ? MotorAction::Stop :
                     (navigator_.active() ? coreMotor : output.motor));
     if (output.servo != ServoAction::None) {
@@ -257,11 +296,13 @@ void AGVController::update() {
     if (navigator_.state() == AGV_SAFE_STOP ||
         (!navigator_.active() && control_.state() != AGV_MOVING)) movement_.stop();
     const MotorAction motorAction = movement_.action();
-    if (Config::DEBUG_ENABLED && Config::ONE_ROBOT_TRIAL && motorAction != lastMotorAction_ &&
-        std::strcmp(control_.currentNode(), "GS1") == 0) {
-        Serial.printf("[MOTOR] %s left=%d right=%d line=%u next=%s\n",
-                      motorActionName(motorAction), motor_.leftDuty(), motor_.rightDuty(),
-                      static_cast<unsigned int>(line_.readSensors().pattern), navigator_.nextNode());
+    if (Config::DEBUG_ENABLED && Config::ENABLE_CORE_MOTION && motorAction != lastMotorAction_ &&
+        (std::strcmp(control_.currentNode(), "GS1") == 0 || std::strcmp(control_.currentNode(), "GS2") == 0)) {
+        Serial.printf("[MOTOR] xe=%s node=%s action=%s left=%d right=%d line=%u next=%s zone=%s\n",
+                      Config::AGV_ID, control_.currentNode(), motorActionName(motorAction),
+                      motor_.leftDuty(), motor_.rightDuty(),
+                      static_cast<unsigned int>(line_.readSensors().pattern), navigator_.nextNode(),
+                      navigator_.missingZone() ? navigator_.missingZone() : "-");
     }
     lastMotorAction_ = motorAction;
     observeState();
@@ -323,6 +364,15 @@ void AGVController::publishTelemetry() {
     if (positionConfirmed_ && positionSession_ == currentSession && lastRfidSeenMs_)
         snapshot.rfidAgeMs = static_cast<uint32_t>(snapshot.uptimeMs - lastRfidSeenMs_);
     snapshot.localSession = currentSession;
+    snapshot.heading = heading_;
+    snapshot.headingBayDefault = headingBayDefault_;
+    snapshot.stationReady = RoutePlanner::station(snapshot.position.node) &&
+        snapshot.heading == RoutePlanner::bayHeading(snapshot.position.node) &&
+        !snapshot.taskActive && snapshot.state == AGV_IDLE && snapshot.error == ErrorCode::None &&
+        snapshot.motor == MotorAction::Stop && snapshot.leftDuty == 0 && snapshot.rightDuty == 0;
+    snapshot.awaitingNodeOrder = navigator_.needsNodeOrder();
+    snapshot.stationTurnRequired = navigator_.stationTurnRequired();
+    snapshot.routeCmdId = navigator_.routeCommandId();
     mqtt_.publishStatus(snapshot);
     lastTelemetryMs_ = snapshot.uptimeMs;
 }

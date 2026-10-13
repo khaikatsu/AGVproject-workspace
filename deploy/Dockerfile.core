@@ -2,7 +2,8 @@ FROM debian:bookworm-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends g++ libmosquitto-dev libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /work
 COPY src ./src
-RUN g++ -std=c++17 -O2 -pthread src/AGVserver.cpp -lmosquitto -lssl -lcrypto -o /agv_core
+COPY include ./include
+RUN g++ -Iinclude -std=c++17 -O2 -pthread src/core/AGVserver.cpp -lmosquitto -lssl -lcrypto -o /agv_core
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends libmosquitto1 libssl3 ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN useradd --uid 10001 --create-home agv && mkdir /data && chown agv /data

@@ -8,7 +8,11 @@
 class CoreNavigator {
 public:
     bool start(const char* current, const CoreCommand& command, const RoutePlan& route, uint32_t now,
-               bool soloTrial = false);
+               bool soloTrial = false, bool requireNodeOrders = false);
+    bool authorizeNodeOrder(const CoreCommand& order);
+    bool needsNodeOrder() const;
+    bool stationTurnRequired() const { return phase_ == Phase::StationDwell; }
+    int32_t routeCommandId() const { return routeCmdId_; }
     void stop();
     bool clearFault();
     void fault(ErrorCode reason);
@@ -19,6 +23,8 @@ public:
     MotorAction update(const ControlInput& input);
     const char* missingZone() const;
     bool active() const { return phase_ != Phase::Idle && phase_ != Phase::Fault; }
+    bool following() const { return phase_ == Phase::Following; }
+    bool stationOriented() const { return stationOriented_; }
     AGVState state() const;
     ErrorCode error() const { return error_; }
     const char* nextNode() const;
@@ -28,7 +34,7 @@ public:
         return active() && index_ < length_ && turns_[index_] == RouteTurn::Reverse;
     }
 private:
-    enum class Phase { Idle, WaitingGrant, Turning, Following, Fault };
+    enum class Phase { Idle, WaitingGrant, Turning, Following, StationDwell, StationTurning, Fault };
     static int zoneIndex(const char* node);
     bool hasGrant(const char* node) const;
     Phase phase_ = Phase::Idle;
@@ -36,6 +42,10 @@ private:
     char current_[NODE_TEXT_SIZE]{};
     char path_[Config::MAX_PATH_NODES][NODE_TEXT_SIZE]{};
     RouteTurn turns_[Config::MAX_PATH_NODES]{};
+    uint8_t turnCrossings_[Config::MAX_PATH_NODES]{};
+    bool stationOriented_ = false;
+    uint8_t crossedLines_ = 0;
+    uint32_t lastCrossingMs_ = 0;
     int32_t grantIds_[6]{};
     uint8_t index_ = 0, length_ = 0;
     uint32_t segmentStartedMs_ = 0, turnStartedMs_ = 0;
@@ -44,4 +54,6 @@ private:
     uint32_t lineLossStartedMs_ = 0;
     bool lineLossPending_ = false;
     bool soloTrial_ = false;
+    bool requireNodeOrders_ = false, nodeOrderReceived_ = false;
+    int32_t routeCmdId_ = 0;
 };

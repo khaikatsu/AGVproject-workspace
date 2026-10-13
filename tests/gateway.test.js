@@ -50,6 +50,38 @@ async function fixture(t,options = {}) {
   t.after(async ()=>{await gateway.close();for (const client of core.clients) client.terminate();await new Promise(resolve=>core.close(resolve));db.close();});
   return {db,model,push,api,commands,peer:()=>peer,base};
 }
+test('failed checkpoint reports Core unready and rejects commands until a healthy state',async t=>{
+  const f=await fixture(t);f.model.storage_healthy=false;f.push();
+  await until(async()=>(await f.api('GET','/api/health')).data.storage_healthy===false);
+  assert.equal((await f.api('GET','/api/health')).data.core_ready,false);
+  assert.equal((await f.api('GET','/api/state')).data.core_ready,false);
+  const before=f.commands.length;const rejected=await f.api('POST','/api/tasks',{target:'T'});
+  assert.equal(rejected.status,503);assert.match(rejected.data.error,/checkpoint/);assert.equal(f.commands.length,before);
+  f.model.storage_healthy=true;f.push();await until(async()=>(await f.api('GET','/api/health')).data.core_ready);
+  assert.equal((await f.api('POST','/api/tasks',{target:'T'})).status,200);
+});
+
+test('delta WebSocket includes order status changes after scheduler mutates an existing order',async t=>{
+  const f=await fixture(t);f.model.map.nodes.push(...['K1','K2'].map(id=>({id,type:'station'})),...['G1','G2'].map(id=>({id,type:'waypoint'})));
+  f.model.map.edges.push({from:'A',to:'K1',weight:1},{from:'K1',to:'K2',weight:1},
+    {from:'K1',to:'G1',weight:1,two_way:true},{from:'K2',to:'G2',weight:1,two_way:true});
+  f.model.shift={phase:'RUNNING'};f.model.fleet.accepting_tasks=true;f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.shift?.phase==='RUNNING');
+  const socket=new WebSocket(f.base.replace('http:','ws:')+'/ws?delta=1'),messages=[];
+  socket.on('message',raw=>messages.push(JSON.parse(raw)));t.after(()=>socket.terminate());
+  await once(socket,'open');await until(()=>messages.length);
+  assert.equal((await f.api('POST','/api/orders',{pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]})).status,201);
+  await until(()=>messages.some(m=>m.changes?.orders?.[0]?.status==='active'));
+  f.model.shift.phase='CLOSING';f.push();
+  await until(()=>messages.some(m=>m.changes?.orders?.[0]?.status==='needs_attention'));
+});
+
+test('manual heading endpoint is removed and sends no command',async t=>{
+  const f=await fixture(t),before=f.commands.length;
+  const r=await fetch(f.base+'/api/agvs/01/heading',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({node:'A',heading:'E',physically_confirmed:true})});
+  assert.equal(r.status,404);assert.equal(f.commands.length,before);
+});
+
 test('Array contracts: snapshot list, history, logs; snapshot apply waits for core',async t=>{
   const f = await fixture(t);
   assert.equal((await f.api('POST','/api/map/snapshots',{name:'Kho <script>alert(1)</script>'})).status,201);
@@ -61,9 +93,10 @@ test('Array contracts: snapshot list, history, logs; snapshot apply waits for co
 });
 test('warehouse orders use Core task IDs and wait at pickup before any delivery command',async t=>{
   const f = await fixture(t);
-  f.model.map = {nodes:[{id:'A',type:'waypoint'},...['K1','K2','K3','K4'].map(id=>({id,type:'station'}))],
+    f.model.map = {nodes:[{id:'A',type:'waypoint'},...['K1','K2','K3','K4'].map(id=>({id,type:'station'})),...['G1','G2','G3','G4'].map(id=>({id,type:'waypoint'}))],
     edges:[{from:'A',to:'K1',weight:1},{from:'K1',to:'K3',weight:1},{from:'K1',to:'K4',weight:2},
-      {from:'K2',to:'K3',weight:2},{from:'K2',to:'K4',weight:1}],obstacles:[]};
+        {from:'K2',to:'K3',weight:2},{from:'K2',to:'K4',weight:1},
+        ...[1,2,3,4].map(index=>({from:`K${index}`,to:`G${index}`,weight:1,two_way:true}))],obstacles:[]};
   f.model.shift = {phase:'RUNNING'};f.model.fleet.accepting_tasks = true;
   f.model.fleet.agvs = [{id:'01',node:'A',state:'IDLE',online:true,position_valid:true,task_id:null}];
   f.push();await until(async()=> (await f.api('GET','/api/state')).data.shift?.phase === 'RUNNING');
@@ -149,6 +182,15 @@ test('KPI watermarks, cross-period completions and first observation',()=>{
   const report = db.computeKpiReport();
   assert.ok(report.agv_utilization.late.known_seconds < (Date.parse(report.period_end.replace(' ','T')+'Z')-Date.parse(prior.period_end.replace(' ','T')+'Z'))/1000);
   db.close();
+});
+test('Duplicate HTTP port rejects cleanly and keeps the existing gateway healthy',async t=>{
+  const f=await fixture(t);
+  const directory=fs.mkdtempSync(path.join(__dirname,'../.qa/duplicate-gateway-'));
+  const duplicate=createGateway({dbPath:path.join(directory,'test.db'),coreUrl:'ws://127.0.0.1:1'});
+  try{
+    await assert.rejects(duplicate.start(new URL(f.base).port,'127.0.0.1'),error=>error.code==='EADDRINUSE');
+    assert.equal((await f.api('GET','/api/health')).data.core_ready,true);
+  }finally{await duplicate.close();}
 });
 test('Migrate old DB without deleting history; reopen with duplicate seq across sessions',()=>{
   const directory = fs.mkdtempSync(path.join(__dirname,'../.qa/legacy-db-test-'));

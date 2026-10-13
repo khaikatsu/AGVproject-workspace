@@ -11,6 +11,7 @@ if (-not (Test-Path -LiteralPath $binary)) {
 $normalCounter = Join-Path $projectRoot 'data/command_sequence.json'
 $existingCounter = Join-Path $projectRoot 'src/data/command_sequence.json'
 $previousCounterOverride = $env:AGV_COMMAND_ID_PATH
+$previousPath = $env:PATH
 if (-not $env:AGV_COMMAND_ID_PATH -and -not $env:AGV_MAP_PATH -and -not (Test-Path -LiteralPath $normalCounter) -and
     (Test-Path -LiteralPath $existingCounter)) {
     $env:AGV_COMMAND_ID_PATH = $existingCounter
@@ -18,6 +19,9 @@ if (-not $env:AGV_COMMAND_ID_PATH -and -not $env:AGV_MAP_PATH -and -not (Test-Pa
 }
 Push-Location -LiteralPath $projectRoot
 try {
+    if (Test-Path -LiteralPath 'C:/msys64/ucrt64/bin') {
+        $env:PATH = 'C:/msys64/ucrt64/bin;' + $previousPath
+    }
     Write-Output "Chạy core: $binary"
     Write-Output "Working directory: $projectRoot"
     & $binary
@@ -25,4 +29,5 @@ try {
 } finally {
     Pop-Location
     $env:AGV_COMMAND_ID_PATH = $previousCounterOverride
+    $env:PATH = $previousPath
 }

@@ -20,6 +20,8 @@ function fixture() {
   assert.equal(r.grants.size,0);assert.deepEqual(JSON.parse(sent.find(m=>m.action === 'mutex_release').payload),{zone:'M',grant_id:900});
   r.command({cmd:'GOTO',cmd_id:3,path:['M','K'],target:'K'});r.grants.set('M',901);r.edge = {from:'A',to:'M',progress:0.3,distance:10,weight:7};
   r.command({cmd:'STOP',cmd_id:4});assert.equal(r.grants.get('M'),901,'occupied entry survives STOP');assert.equal(r.edge.progress,0.3);
+  r.fault='Lỗi cần xác nhận RFID';r.paused=true;r.command({cmd:'RESET_FAULT',cmd_id:5});r.command({cmd:'RESET_FAULT',cmd_id:5});
+  assert.equal(r.grants.get('M'),901);assert.equal(r.edge.progress,0.3);assert.equal(r.paused,true);assert.ok(r.fault,'ACK reset alone never clears the simulated fault or repositions the robot');
 }
 {
   const {r,sent} = fixture();r.command({cmd:'GOTO',cmd_id:1,path:[],target:'A'});assert.equal(r.fault,'');assert.equal(r.path.length,0);

@@ -145,11 +145,22 @@ public:
         }
         std::unordered_map<std::string, std::vector<Edge>> adjacency;
         for (const auto& e : edges) adjacency[e.from].push_back(e);
+        std::unordered_set<std::string> blockedEdges;
+        const auto blockedJson = j.value("blocked_edges",json::array());
+        if (!blockedJson.is_array()) throw std::invalid_argument("blocked_edges phai la array");
+        for (const auto& blocked : blockedJson) {
+            const auto from = blocked.at("from").get<std::string>(), to = blocked.at("to").get<std::string>();
+            if (!std::any_of(edges.begin(),edges.end(),[&](const Edge& e){
+                return (e.from==from && e.to==to) || (e.from==to && e.to==from);
+            })) throw std::invalid_argument("Vat can canh khong ton tai");
+            blockedEdges.insert(edgeKey(from,to));
+        }
         std::lock_guard<std::mutex> lk(mtx_);
         nodes_.swap(nodes); edges_.swap(edges); adjacency_.swap(adjacency);
         mutexZones_.swap(zones); chargingStations_.swap(stations); obstacles_.swap(obstacles);
         mapName_ = std::move(name); ++revision_;
         obstacleDeadlines_ = std::move(deadlines);
+        blockedEdges_.swap(blockedEdges);
     }
 
     void saveToFile(const std::string& path) {
@@ -188,6 +199,11 @@ public:
                      [&](const Edge& e){ return e.from == id || e.to == id; }), edges_.end());
         obstacles_.erase(id);
         obstacleDeadlines_.erase(id);
+        for (auto it=blockedEdges_.begin();it!=blockedEdges_.end();) {
+            const auto split=it->find('\n');
+            if (it->substr(0,split)==id || it->substr(split+1)==id) it=blockedEdges_.erase(it);
+            else ++it;
+        }
         mutexZones_.erase(std::remove(mutexZones_.begin(), mutexZones_.end(), id), mutexZones_.end());
         chargingStations_.erase(std::remove(chargingStations_.begin(), chargingStations_.end(), id), chargingStations_.end());
         ++revision_;
@@ -223,7 +239,21 @@ public:
             list.erase(std::remove_if(list.begin(), list.end(), matches), list.end());
         }
         edges_.erase(std::remove_if(edges_.begin(), edges_.end(), matches), edges_.end());
+        if (!std::any_of(edges_.begin(),edges_.end(),[&](const Edge& e){
+            return edgeKey(e.from,e.to)==edgeKey(from,to);
+        })) blockedEdges_.erase(edgeKey(from,to));
         ++revision_;
+    }
+
+    // A physical obstacle blocks both travel directions on this segment.
+    void setEdgeObstacle(const std::string& from,const std::string& to,bool blocked) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (!std::any_of(edges_.begin(),edges_.end(),[&](const Edge& e){
+            return edgeKey(e.from,e.to)==edgeKey(from,to);
+        })) throw std::invalid_argument("Canh khong ton tai");
+        const auto key=edgeKey(from,to);
+        const bool changed=blocked ? blockedEdges_.insert(key).second : blockedEdges_.erase(key)>0;
+        if (changed) ++revision_;
     }
 
     // Vật cản: cảm biến AGV báo vật cản tại 1 node -> chặn tạm thời cho Dijkstra
@@ -296,6 +326,7 @@ public:
             if (it == adjacency_.end()) continue;
             for (const auto& edge : it->second) {
                 if (obstacles_.count(edge.to) || extraBlocked.count(edge.to)) continue;
+                if (blockedEdges_.count(edgeKey(edge.from,edge.to))) continue;
                 if (dist[u] > INT_MAX - edge.weight) continue;
                 int alt = dist[u] + edge.weight;
                 if (dist.find(edge.to) != dist.end() && alt < dist[edge.to]) {
@@ -390,6 +421,13 @@ public:
                                    {"type", e.type}, {"path_class", e.path_class}, {"two_way", e.twoWay}});
         }
         j["obstacles"] = std::vector<std::string>(obstacles_.begin(), obstacles_.end());
+        j["blocked_edges"] = json::array();
+        std::vector<std::string> blocked(blockedEdges_.begin(),blockedEdges_.end());
+        std::sort(blocked.begin(),blocked.end());
+        for (const auto& key : blocked) {
+            const auto split=key.find('\n');
+            j["blocked_edges"].push_back({{"from",key.substr(0,split)},{"to",key.substr(split+1)}});
+        }
         if (!obstacleDeadlines_.empty()) j["obstacle_deadlines"] = obstacleDeadlines_;
         j["mutex_zones"] = mutexZones_;
         j["charging_stations"] = chargingStations_;
@@ -503,6 +541,7 @@ private:
         nodes_.clear(); edges_.clear(); adjacency_.clear();
         mutexZones_.clear(); chargingStations_.clear(); obstacles_.clear();
         obstacleDeadlines_.clear();
+        blockedEdges_.clear();
     }
 
     unsigned long revision_ = 0;
@@ -513,6 +552,10 @@ private:
     std::vector<std::string> mutexZones_;
     std::vector<std::string> chargingStations_;
     std::unordered_set<std::string> obstacles_;
+    static std::string edgeKey(const std::string& from,const std::string& to) {
+        return from<to ? from+"\n"+to : to+"\n"+from;
+    }
+    std::unordered_set<std::string> blockedEdges_;
     std::unordered_map<std::string,long long> obstacleDeadlines_;
     std::mutex mtx_;
 };

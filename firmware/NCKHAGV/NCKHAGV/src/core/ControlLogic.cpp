@@ -2,6 +2,24 @@
 #include <cmath>
 #include <cstring>
 
+const char* headingName(RobotHeading heading) {
+    switch (heading) {
+        case RobotHeading::North: return "N";
+        case RobotHeading::East: return "E";
+        case RobotHeading::South: return "S";
+        case RobotHeading::West: return "W";
+        default: return "UNKNOWN";
+    }
+}
+RobotHeading parseHeading(const char* heading) {
+    if (!heading) return RobotHeading::Unknown;
+    if (std::strcmp(heading, "N") == 0) return RobotHeading::North;
+    if (std::strcmp(heading, "E") == 0) return RobotHeading::East;
+    if (std::strcmp(heading, "S") == 0) return RobotHeading::South;
+    if (std::strcmp(heading, "W") == 0) return RobotHeading::West;
+    return RobotHeading::Unknown;
+}
+
 const char* stateName(AGVState s) {
     switch (s) {
         case AGV_IDLE: return "AGV_IDLE";

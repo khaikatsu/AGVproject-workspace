@@ -1,200 +1,192 @@
-/* Add-on for the cloned dashboard. The production dashboard/API is reused unchanged. */
-(() => {
-  // A tab lease keeps the isolated Core/broker alive only while someone views this page.
-  const viewerId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}-viewer`;
-  const viewerUrl = '/sim-api/viewer';
-  const heartbeat = () => fetch(viewerUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:viewerId}),keepalive:true}).catch(()=>{});
-  heartbeat();
-  let heartbeatTimer = setInterval(heartbeat,4000);
-  addEventListener('pagehide',()=>{
-    clearInterval(heartbeatTimer);
-    navigator.sendBeacon(viewerUrl,new Blob([JSON.stringify({id:viewerId,leaving:true})],{type:'application/json'}));
-  });
-  addEventListener('pageshow',event=>{
-    if (event.persisted) {heartbeat();heartbeatTimer = setInterval(heartbeat,4000);}
-  });
-  const el = id=>document.getElementById(id),make = (tag,text,cls)=>{
-    const node = document.createElement(tag);if (text != null) node.textContent = text;if (cls) node.className = cls;return node;
+/* Simulation UI uses the shared form with multiple pickup and delivery warehouses. */
+(async() => {
+  await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/sim-assets/motion.js';script.onload=resolve;script.onerror=reject;document.head.append(script);});
+  const direction=globalThis.AgvSimMotion,headingViews=new Map();
+  function displayedHeading(id,target,now){
+    if(target==null)return null;
+    let view=headingViews.get(id);
+    if(!view){view={from:target,to:target,at:now};headingViews.set(id,view);}
+    const current=view.from+(view.to-view.from)*Math.max(0,Math.min(1,(now-view.at)/650));
+    if(direction.normalize(view.to)!==direction.normalize(target)){
+      let delta=direction.normalize(target-current);if(delta>180)delta-=360;
+      view={from:current,to:current+delta,at:now};headingViews.set(id,view);
+    }
+    return view.from+(view.to-view.from)*Math.max(0,Math.min(1,(now-view.at)/650));
+  }
+  const dashboardToast=toast;
+  toast=(message,type)=>{if(!/Da xu ly lenh sim_(edge_obstacle|replan)/.test(message))dashboardToast(message,type);};
+  const viewerId=crypto.randomUUID(),viewerUrl='/sim-api/viewer';
+  const el=id=>document.getElementById(id),make=(tag,text,cls)=>{const n=document.createElement(tag);if(text!=null)n.textContent=text;if(cls)n.className=cls;return n;};
+  const number=n=>Number(n||0).toLocaleString('vi-VN',{maximumFractionDigits:1}),edgeKey=(a,b)=>[a,b].sort().join('|');
+  const freshMs=3000,requests=new Set();
+  let snapshot=null,busy=false,lastSnapshotAt=0,lastSnapshotTime=null,edges=[],edgeDrawingKey='';
+  let connected=false,pageActive=true,networkEpoch=0,failures=0,pollTimer=null,heartbeatTimer=null,heartbeatBusy=false;
+  const isFresh=()=>pageActive&&connected&&navigator.onLine!==false&&!!snapshot&&performance.now()-lastSnapshotAt<freshMs;
+  const dashboardControlsReady=controlsReady,dashboardDataFresh=dataFresh,dashboardUpdateConnection=updateConnection;
+  dataFresh=()=>isFresh()&&dashboardDataFresh();
+  controlsReady=()=>isFresh()&&snapshot.health==='Sẵn sàng'&&dashboardControlsReady();
+  updateConnection=()=>{
+    dashboardUpdateConnection();
+    if(!isFresh()){el('status').textContent=navigator.onLine===false?'Web: Mất mạng':'Web: Chờ dữ liệu mô phỏng';el('status').className='status-indicator bad';}
+    render();
   };
-  let snapshot = null,busy = false,lastSnapshotAt = 0;
-  el('wsUrl').readOnly = true;
-  el('wsUrl').title = 'Bản mô phỏng luôn nối gateway riêng trên cùng địa chỉ web';
-  const phaseNames = {to_pickup:'Đến lấy hàng',pickup_service:'Đang lấy hàng',to_dropoff:'Đến trả hàng',dropoff_service:'Đang trả hàng',completed:'Hoàn thành',interrupted:'Gián đoạn',failed:'Lỗi'};
-  const orderStatusNames = {active:'Đang giao',completed:'Đã giao đủ',needs_attention:'Cần đối soát'};
-  const number = n=>Number(n || 0).toLocaleString('vi-VN',{maximumFractionDigits:1});
-  const seconds = n=>number(n)+' s';
-  async function call(route,body) {
-    const response = await fetch('/sim-api'+route,{method:body ? 'POST' : 'GET',headers:body ? {'Content-Type':'application/json'} : undefined,body:body ? JSON.stringify(body) : undefined});
-    const result = await response.json();if (!response.ok) throw new Error(result.error || 'Thao tác thất bại');return result;
+  async function call(route,body,timeoutMs=8000){
+    const controller=new AbortController();requests.add(controller);
+    const timer=setTimeout(()=>controller.abort(),timeoutMs);
+    try{
+      const r=await fetch('/sim-api'+route,{method:body?'POST':'GET',signal:controller.signal,cache:'no-store',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined});
+      let x;try{x=await r.json();}catch{throw Object.assign(Error('Phản hồi mô phỏng không hợp lệ'),{connectionError:true});}
+      if(!r.ok)throw Error(x.error||'Thao tác thất bại');return x;
+    }catch(error){
+      if(controller.signal.aborted||error instanceof TypeError||error.connectionError){
+        throw Object.assign(Error(body?'Chưa xác định kết quả lệnh. Kiểm tra trạng thái sau khi kết nối lại; lệnh không được tự gửi lại.':'Không nhận được dữ liệu mô phỏng'),{connectionError:true,unknown:!!body});
+      }throw error;
+    }finally{clearTimeout(timer);requests.delete(controller);}
   }
-  async function run(button,fn) {
-    if (button.dataset.simBusy === 'true') return;
-    button.dataset.simBusy = 'true';button.disabled = true;
-    try {const result = await fn();toast(result?.message || 'Mô phỏng đã nhận thao tác',result?.warning ? 'warn' : 'ok');await poll();}
-    catch (error) {toast(error.message,'error');}
-    finally {delete button.dataset.simBusy;button.disabled = false;}
+  function disconnected(){connected=false;updateConnection();}
+  async function run(button,fn){
+    if(button.dataset.simBusy)return;
+    if(!controlsReady()||snapshot.health!=='Sẵn sàng'){toast('Chờ kết nối và dữ liệu mới trước khi điều khiển','warn');return;}
+    button.dataset.simBusy='true';button.disabled=true;
+    try{const x=await fn();toast(x?.message||'Đã cập nhật','ok');await poll();}
+    catch(e){if(e.connectionError)disconnected();toast(e.message,e.unknown?'warn':'error');}
+    finally{delete button.dataset.simBusy;render();}
   }
-  const metrics = make('section',null,'card compact sim-card');metrics.id = 'simMetrics';
-  metrics.append(make('div','Kết quả mô phỏng','card-header'));
-  const status = make('div','Đang khởi động','sim-status');status.id = 'simHealth';metrics.append(status);
-  const grid = make('div',null,'sim-metric-grid');
-  for (const [id,label] of [['simDistance','Quãng đường (cm)'],['simCost','Chi phí trọng số'],['simWait','Chờ mutex (giây mô phỏng)'],['simCompleted','Task Core hoàn thành'],['simClock','Thời gian mô phỏng'],['simWall','Thời gian thực']]) {
-    const item = make('div');item.append(make('span',label));const value = make('strong','0');value.id = id;item.append(value);grid.append(item);
-  }
-  metrics.append(grid);const downloads = make('div',null,'sim-downloads');
-  for (const [url,label] of [['report','Báo cáo JSON'],['events','Nhật ký JSONL']]) {const a = make('a',label);a.href = '/sim-api/'+url;a.download = '';downloads.append(a);}
-  metrics.append(downloads,make('p','Quãng đường từ tọa độ giả định cm; trọng số do Core dùng tìm đường.','card-help'));
-  const jobs = make('div');jobs.id = 'simJobs';metrics.append(jobs);
-  const taskDetails = make('details');taskDetails.append(make('summary','Thời gian từng task Core'));
-  const taskMetrics = make('div');taskMetrics.id = 'simTaskMetrics';taskDetails.append(taskMetrics);metrics.append(taskDetails);
-  const details = make('details');details.append(make('summary','Nhật ký mô phỏng'));const events = make('div');events.id = 'simEvents';details.append(events);metrics.append(details);
-  el('left-panel').prepend(metrics);
-  const control = el('simVehicleControls');
-  const orderLines = el('simOrderLines'),orderList = el('simOrders');
-  function addOrderLine(destination = '',quantity = 1) {
-    const row = make('div',null,'sim-order-line'),select = make('select'),count = make('input'),remove = make('button','×','btn-outline');
-    row.dataset.preferred = destination;
-    select.className = 'sim-order-destination';select.setAttribute('aria-label','Kho giao hàng');
-    select.onchange = ()=>{row.dataset.preferred = select.value;};
-    count.className = 'sim-order-quantity';count.type = 'number';count.min = '1';count.max = '20';count.step = '1';count.value = String(quantity);count.setAttribute('aria-label','Số kiện');
-    remove.type = 'button';remove.title = 'Bỏ điểm giao';remove.setAttribute('aria-label','Bỏ điểm giao');
-    remove.onclick = ()=>{row.remove();updateOrderTotal();};count.oninput = updateOrderTotal;
-    row.append(select,count,remove);orderLines.append(row);
-    const warehouses = (lastState?.map?.nodes || []).filter(node=>node.type === 'station').map(node=>node.id).sort();
-    syncWarehouseSelect(select,warehouses,destination || warehouses[1] || warehouses[0]);
-    updateOrderTotal();return row;
-  }
-  function syncWarehouseSelect(select,warehouses,preferred) {
-    if (select.dataset.nodes === warehouses.join(',')) return;
-    const old = select.value;
-    select.replaceChildren(...warehouses.map(id=>{const option = make('option',id);option.value = id;return option;}));
-    select.value = warehouses.includes(old) ? old : warehouses.includes(preferred) ? preferred : warehouses[0] || '';
-    select.dataset.nodes = warehouses.join(',');
-  }
-  function updateOrderTotal() {
-    const total = [...orderLines.querySelectorAll('.sim-order-quantity')].reduce((sum,input)=>sum+(Number(input.value) || 0),0);
-    el('simOrderTotal').textContent = `${total} kiện`;
-  }
-  addOrderLine('K2',2);addOrderLine('K4',3);
-  el('simAddOrderLine').onclick = ()=>addOrderLine();
-  const createOrderButton = el('simCreateOrder');
-  createOrderButton.onclick = ()=>run(createOrderButton,async()=>{
-    const deliveries = [...orderLines.querySelectorAll('.sim-order-line')].map(row=>({dropoff:row.querySelector('select').value,quantity:Number(row.querySelector('input').value)}));
-    const result = await call('/orders',{pickup:el('simOrderPickup').value,deliveries});
-    return {message:`Đã tạo ${result.order.id}: ${result.order.total} kiện. Hai xe sẽ nhận việc khi rảnh.`};
-  });
-  for (const id of ['01','02']) {
-    const section = make('details',null,'sim-vehicle');section.open = true;section.dataset.robot = id;
-    const summary = make('summary','AGV '+id+' · ẢO');const cargo = make('span','Không hàng');cargo.id = 'simCargo'+id;summary.append(cargo);section.append(summary);
-    const pos = make('div','Chờ kết nối','sim-position');pos.id = 'simPosition'+id;section.append(pos);
-    const goto = make('div',null,'sim-goto'),destination = make('input');destination.id = 'simTarget'+id;destination.placeholder = 'Node đích, ví dụ K2';destination.setAttribute('list','mapNodeOptions');destination.setAttribute('aria-label','Đích riêng xe '+id);
-    const go = make('button','Đi tới','btn');go.id = 'simGoto'+id;go.onclick = ()=>run(go,()=>call(`/robots/${id}/goto`,{target:destination.value.trim()}));goto.append(destination,go);section.append(goto);
-    const pair = make('div',null,'sim-pair');
-    for (const [kind,label] of [['pickup','Lấy tại'],['dropoff','Trả tại']]) {
-      const box = make('div'),select = make('select');select.id = 'sim'+kind+id;select.setAttribute('aria-label',label+' xe '+id);
-      box.append(make('label',label),select);pair.append(box);
+  const launcher=el('simOpenLauncher');
+  if(document.body.dataset.simLauncher){launcher.href=document.body.dataset.simLauncher;}
+  el('simRetryConnection').onclick=()=>{clearTimeout(pollTimer);if(!backendOnline)connect(true);poll();};
+  el('wsUrl').readOnly=true;
+  document.querySelectorAll('.card-help').forEach(n=>n.hidden=true);el('coreModeStatus').hidden=true;
+  el('submitOrderBtn').textContent='Giao đơn cho 2 xe';
+  const orderPanel=el('submitOrderBtn').closest('section');orderPanel.id='simWarehouseOrderPanel';
+  orderPanel.querySelector('.card-header').textContent='Đơn hàng · Lấy → Giao';
+  orderPanel.querySelectorAll('label').forEach(n=>{if(n.textContent.includes('Kho lấy'))n.textContent='Kho lấy hàng · số kiện';if(n.textContent.includes('Kho giao'))n.textContent='Kho giao hàng · số kiện';});
+  orderPanel.querySelectorAll('button').forEach(n=>{if(n.textContent.includes('Thêm kho lấy'))n.textContent='+ Kho lấy';if(n.textContent.includes('Thêm kho giao'))n.textContent='+ Kho giao';});
+  el('right-panel').prepend(el('startShiftBtn').closest('section'));
+  el('right-panel').insertBefore(orderPanel,el('simObstaclePanel'));
+  document.querySelector('.map-live').textContent='Hai xe ảo';
+  document.querySelector('.map-foot').children[1].textContent='Trắng: đầu xe · Màu xe: hướng đi · Hướng/vị trí: mô phỏng';
+  const metrics=make('section',null,'card compact sim-card');metrics.id='simMetrics';metrics.append(make('div','Kết quả','card-header'));
+  const status=make('div','Đang mở mô phỏng','sim-status');status.id='simHealth';metrics.append(status);
+  const grid=make('div',null,'sim-metric-grid');
+  for(const [id,label] of [['simDistance','Quãng đường (cm)'],['simCost','Chi phí tuyến'],['simWait','Chờ (giây)'],['simCompleted','Task hoàn thành'],['simClock','Giây mô phỏng'],['simWall','Giây thực']]){const box=make('div'),value=make('strong','0');value.id=id;box.append(make('span',label),value);grid.append(box);}metrics.append(grid);
+  const details=make('details',null,'sim-assumptions');details.append(make('summary','Nhật ký và báo cáo'));
+  const downloads=make('div',null,'sim-downloads');for(const [url,label] of [['report','Báo cáo'],['events','Nhật ký']]){const a=make('a',label);a.href='/sim-api/'+url;a.download='';downloads.append(a);}details.append(downloads);
+  const events=make('div');events.id='simEvents';details.append(events);metrics.append(details);el('left-panel').prepend(metrics);
+  for(const id of ['01','02']){
+    const section=make('details',null,'sim-vehicle');section.open=true;section.dataset.robot=id;
+    const summary=make('summary','Xe '+id),cargo=make('span','Trống');cargo.id='simCargo'+id;summary.append(cargo);section.append(summary);
+    const pos=make('div','Chờ kết nối','sim-position');pos.id='simPosition'+id;section.append(pos);
+    const row=make('div',null,'sim-goto'),target=make('input');target.id='simTarget'+id;target.placeholder='Node đích';target.setAttribute('list','mapNodeOptions');target.setAttribute('aria-label','Đích xe '+id);
+    const go=make('button','Đi tới','btn');go.id='simGoto'+id;go.onclick=()=>run(go,()=>call('/robots/'+id+'/goto',{target:target.value.trim()}));row.append(target,go);section.append(row);
+    const actions=make('div',null,'sim-actions'),advanced=make('details',null,'sim-assumptions');advanced.append(make('summary','Pin và kết nối'));const more=make('div',null,'sim-actions');advanced.append(more);
+    for(const [action,label,value] of [['pause','Dừng'],['resume','Tiếp tục'],['recover','Phục hồi'],['battery','Pin 15%',15],['battery','Pin 0%',0],['battery','Nạp 85%',85],['offline','Ngắt mạng'],['online','Kết nối'],['drop_ack','Mất ACK'],['unload','Gỡ hàng']]){
+      const b=make('button',label,value===0?'btn btn-danger':'btn-outline');b.dataset.simAction=action;b.dataset.robot=id;if(value!=null)b.dataset.value=value;
+      b.onclick=()=>run(b,()=>call('/robots/'+id+'/action',{action,...(value!=null?{value}:{})}));(['pause','resume','recover'].includes(action)?actions:more).append(b);
     }
-    section.append(pair);const jobButton = make('button','Lấy → trả hàng','btn full-width');jobButton.id = 'simJob'+id;
-    jobButton.onclick = ()=>run(jobButton,()=>call('/jobs',{robot:id,pickup:el('simpickup'+id).value,dropoff:el('simdropoff'+id).value}));section.append(jobButton);
-    const actions = make('div',null,'sim-actions');
-    for (const [action,label,value] of [['battery','Pin thấp 15%',15],['battery','Hết pin 0%',0],['battery','Nạp pin 85%',85],['recover','Phục hồi xe / RFID'],['pause','Tạm dừng xe'],['resume','Tiếp tục xe'],['offline','Ngắt MQTT'],['online','Kết nối lại'],['drop_ack','Mất 1 ACK'],['unload','Gỡ hàng ảo']]) {
-      const button = make('button',label,value === 0 ? 'btn btn-danger' : 'btn-outline');button.dataset.simAction = action;button.dataset.robot = id;
-      if (value != null) button.dataset.value = String(value);
-      button.onclick = ()=>run(button,()=>call(`/robots/${id}/action`,{action,...(value != null ? {value} : {})}));actions.append(button);
-    }
-    const hint = make('p','', 'card-help');hint.id = 'simRecoveryHint'+id;
-    section.append(actions,hint,make('p','15%: Core cho về sạc khi xe không lỗi/dừng. Đang chạy thì áp dụng tại RFID kế tiếp. 0%: dừng lỗi; cần nạp pin rồi Phục hồi xe / RFID. Phục hồi xác nhận xe ảo tại node đọc gần nhất, không tự quét RFID thật.','card-help'));
-    control.append(section);
+    const hint=make('div','','sim-recovery');hint.id='simRecoveryHint'+id;section.append(actions,hint,advanced);el('simVehicleControls').append(section);
   }
-  for (const [id,key] of [['simTimeScale','timeScale'],['simSpeed','speedCmS'],['simDrain','drainPerCm'],['simCharge','chargeRate'],['simService','serviceSeconds']]) {
-    el(id).onchange = ()=>run(el(id),()=>call('/settings',{[key]:Number(el(id).value)}));
+  for(const [id,key] of [['simTimeScale','timeScale'],['simSpeed','speedCmS'],['simDrain','drainPerCm'],['simCharge','chargeRate'],['simService','serviceSeconds']])el(id).onchange=()=>run(el(id),()=>call('/settings',{[key]:Number(el(id).value)}));
+  const edgeSelect=el('simObstacleEdge');
+  function selectedEdge(){return edges.find(e=>edgeKey(e.from,e.to)===edgeSelect.value);}
+  function changeObstacle(button,blocked,edge=selectedEdge()){if(edge)return run(button,()=>call('/edge-obstacles',{from:edge.from,to:edge.to,blocked}));}
+  el('simBlockEdge').onclick=()=>changeObstacle(el('simBlockEdge'),true);el('simUnblockEdge').onclick=()=>changeObstacle(el('simUnblockEdge'),false);edgeSelect.onchange=()=>render();
+  const ns='http://www.w3.org/2000/svg',motion=document.createElementNS(ns,'g'),obstacles=document.createElementNS(ns,'g');motion.id='simMotionG';obstacles.id='simEdgesG';el('mapSvg').append(obstacles,motion);
+  function svg(tag,attrs,text){const n=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text)n.textContent=text;return n;}
+  function render(){
+    const s=snapshot,fresh=isFresh(),ready=controlsReady()&&s?.health==='Sẵn sàng';
+    document.body.dataset.simConnection=fresh?'online':lastSnapshotTime||failures||navigator.onLine===false?'offline':'connecting';
+    const connectionText=el('simConnectionText');
+    connectionText.textContent=!fresh?(lastSnapshotTime?'Mất kết nối hoặc dữ liệu cũ. Lần nhận cuối: '+lastSnapshotTime.toLocaleTimeString('vi-VN')+'. Đang tự thử lại. Điều khiển đã khóa; vị trí và số liệu là dữ liệu cũ.':'Đang chờ dữ liệu mô phỏng. Điều khiển đã khóa; trang tự thử kết nối lại.'):
+      !backendOnline?'Mất kết nối WebSocket. Đang tự kết nối lại; điều khiển đã khóa.':!dashboardControlsReady()||s.health!=='Sẵn sàng'?'Đã kết nối web, đang chờ Core / MQTT hoặc dữ liệu Core mới. Điều khiển đã khóa.':'Đã kết nối · Đang nhận dữ liệu mô phỏng mới.';
+    if(!fresh&&navigator.onLine===false)connectionText.textContent='Trình duyệt mất mạng. Điều khiển đã khóa; dữ liệu đang hiển thị là dữ liệu cũ. Trang tự kết nối lại khi có mạng.';
+    el('simRetryConnection').disabled=busy||navigator.onLine===false;
+    launcher.hidden=fresh||!launcher.hasAttribute('href');el('simLauncherHint').hidden=launcher.hidden;
+    for(const input of document.querySelectorAll('#simControlPanel input,#simControlPanel select'))input.disabled=!ready||!!input.dataset.simBusy;
+    for(const button of document.querySelectorAll('[data-sim-action],.sim-obstacle-chip'))button.disabled=!ready||!!button.dataset.simBusy;
+    for(const id of ['simBlockEdge','simUnblockEdge','simGoto01','simGoto02'])if(!ready)el(id).disabled=true;
+    if(!s){status.textContent='Chờ kết nối mô phỏng';return;}
+    el('homeStationList').hidden=lastState?.shift?.phase==='RUNNING';
+    status.textContent=!fresh?'Dữ liệu cũ · Mất kết nối mô phỏng':!backendOnline?'Mất kết nối WebSocket':!dashboardControlsReady()?'Đang chờ Core / MQTT':s.health==='Sẵn sàng'&&s.robots.some(r=>!r.connected)?'Xe mất kết nối':s.health;
+    for(const [id,key]of [['simTimeScale','timeScale'],['simSpeed','speedCmS'],['simDrain','drainPerCm'],['simCharge','chargeRate'],['simService','serviceSeconds']])if(document.activeElement!==el(id)&&!el(id).dataset.simBusy)el(id).value=s.settings[key];
+    for(const [id,value]of [['simDistance',s.robots.reduce((a,r)=>a+r.distanceCm,0)],['simCost',s.robots.reduce((a,r)=>a+r.routeCost,0)],['simWait',s.robots.reduce((a,r)=>a+r.waitSeconds,0)],['simCompleted',s.totals.completed],['simClock',s.simSeconds],['simWall',s.wallSeconds]])el(id).textContent=number(value);
+    const unique=new Map();for(const e of lastState?.map?.edges||[])if(!unique.has(edgeKey(e.from,e.to)))unique.set(edgeKey(e.from,e.to),e);edges=[...unique.values()].sort((a,b)=>edgeKey(a.from,a.to).localeCompare(edgeKey(b.from,b.to)));
+    const signature=edges.map(e=>edgeKey(e.from,e.to)).join(',');if(edgeSelect.dataset.edges!==signature){const old=edgeSelect.value;edgeSelect.replaceChildren(...edges.map(e=>{const o=make('option',e.from+(e.two_way?' ↔ ':' → ')+e.to);o.value=edgeKey(e.from,e.to);return o;}));if(unique.has(old))edgeSelect.value=old;edgeSelect.dataset.edges=signature;}
+    const blocked=new Set((s.blockedEdges||[]).map(e=>edgeKey(e.from,e.to)));el('simObstacleCount').textContent=blocked.size;
+    el('simBlockEdge').disabled=!ready||!!el('simBlockEdge').dataset.simBusy||!selectedEdge()||blocked.has(edgeSelect.value);el('simUnblockEdge').disabled=!ready||!!el('simUnblockEdge').dataset.simBusy||!blocked.has(edgeSelect.value);
+    const list=el('simBlockedEdges');list.replaceChildren();for(const e of s.blockedEdges||[]){const chip=make('button',e.from+' — '+e.to+' ×','sim-obstacle-chip');chip.type='button';chip.disabled=!ready;chip.setAttribute('aria-label','Gỡ vật cản '+e.from+' '+e.to);chip.onclick=()=>changeObstacle(chip,false,e);list.append(chip);}
+    for(const r of s.robots){
+      const a=lastState?.fleet?.agvs?.find(a=>a.id===r.id);el('simCargo'+r.id).textContent=r.cargo?'Có hàng':'Trống';
+      const movement=direction.describe(r,lastState?.map||{},s.warehouseOrders,s.jobs);
+      const state=r.fault||(r.blockedEdge?'Chờ gỡ vật cản':r.paused?'Tạm dừng':r.waitingZone?'Chờ '+r.waitingZone:r.routeUpdatePending?'Đợi RFID để đổi tuyến':r.charging?'Sạc':a?.state==='BLOCKED'?'Chờ đường':movement.label|| (r.edge?'Đang chạy':'Sẵn sàng'));
+      el('simPosition'+r.id).textContent=r.node+(r.edge?' → '+r.edge.to:'')+' · '+number(r.battery)+'% · '+(!fresh?'Dữ liệu cũ':r.connected?'Online':'Offline')+'\n'+state;
+      el('simRecoveryHint'+r.id).textContent=!r.connected?'Mất mạng: bấm Phục hồi.':r.fault||a?.state==='ERROR'?'Xe đang khóa lỗi; kiểm tra pin rồi Phục hồi.':'';
+      el('simGoto'+r.id).disabled=!ready||!!el('simGoto'+r.id).dataset.simBusy||!r.connected||lastState?.shift?.phase!=='RUNNING'||a?.state!=='IDLE'||r.paused||!!r.fault||r.cargo||(s.warehouseOrders||[]).some(o=>o.status==='active'&&o.items.some(i=>i.robot===r.id&&!['queued','delivered','interrupted'].includes(i.status)));
+    }
+    events.replaceChildren(...s.events.slice(-12).reverse().map(e=>make('div',number(e.simSeconds)+'s · '+e.type+(e.robot?' · xe '+e.robot:'')+(e.from?' · '+e.from+' → '+e.to:'')+(e.message?' · '+e.message:''))));
   }
-  // Keep the existing shift controls first so the user can start work immediately.
-  const shift = el('startShiftBtn').closest('section');el('right-panel').prepend(shift);
-  document.querySelector('.map-live').textContent = 'Xe ảo · nội suy';
-  document.querySelector('.map-foot').children[1].textContent = 'Xe ảo: nội suy mô phỏng · Dấu vuông mờ: RFID Core nhận · Nét đứt: kế hoạch tuyến · Số trên cạnh: trọng số';
-  const svgNS = 'http://www.w3.org/2000/svg',motion = document.createElementNS(svgNS,'g');motion.id = 'simMotionG';el('mapSvg').append(motion);
-  function svg(tag,attrs,text) {const node = document.createElementNS(svgNS,tag);for (const [k,v] of Object.entries(attrs)) node.setAttribute(k,v);if (text) node.textContent = text;return node;}
-  function render() {
-    const s = snapshot;if (!s) return;
-    for (const [id,key] of [['simTimeScale','timeScale'],['simSpeed','speedCmS'],['simDrain','drainPerCm'],['simCharge','chargeRate'],['simService','serviceSeconds']]) {
-      const input = el(id);
-      if (document.activeElement !== input && input.dataset.simBusy !== 'true') input.value = String(s.settings[key]);
-    }
-    const displayHealth = s.health === 'Sẵn sàng' && s.robots.some(robot=>!robot.connected)
-      ? 'Xe ảo mất kết nối MQTT' : s.health;
-    status.textContent = `${displayHealth} · Web ${s.ports.web} · MQTT ${s.ports.mqtt} · Core ${s.ports.core}`;
-    for (const [id,value] of [['simDistance',s.robots.reduce((a,r)=>a+r.distanceCm,0)],['simCost',s.robots.reduce((a,r)=>a+r.routeCost,0)],['simWait',s.robots.reduce((a,r)=>a+r.waitSeconds,0)],['simCompleted',s.totals.completed],['simClock',s.simSeconds],['simWall',s.wallSeconds]]) el(id).textContent = number(value);
-    const warehouses = (lastState?.map?.nodes || []).filter(n=>n.type === 'station').map(n=>n.id).sort();
-    syncWarehouseSelect(el('simOrderPickup'),warehouses,'K1');
-    for (const [index,row] of [...orderLines.querySelectorAll('.sim-order-line')].entries())
-      syncWarehouseSelect(row.querySelector('select'),warehouses,row.dataset.preferred || warehouses[index+1] || warehouses[0]);
-    createOrderButton.disabled = createOrderButton.dataset.simBusy === 'true' || s.health !== 'Sẵn sàng' || lastState?.shift?.phase !== 'RUNNING';
-    for (const r of s.robots) {
-      const state = lastState?.fleet?.agvs?.find(a=>a.id === r.id);
-      el('simCargo'+r.id).textContent = r.cargo ? 'Có hàng' : 'Không hàng';
-      const recoveryHint = !r.connected ? 'MQTT offline: Phục hồi xe / RFID sẽ kết nối lại và xác nhận vị trí.' : r.fault || state?.state === 'ERROR' ? 'Xe đang khóa lỗi: đổi pin chưa xóa lỗi. Nạp pin nếu còn 0%, rồi Phục hồi xe / RFID.' : r.paused ? 'Xe đang tạm dừng: bấm Tiếp tục xe để chạy theo lệnh Core.' : r.pendingBattery != null ? `Đợi RFID ${r.edge?.to}: sẽ gửi pin ${r.pendingBattery}% rồi Core quyết định về sạc.` : state?.state === 'CHARGING_EN_ROUTE' ? `Core đang cho về sạc: ${state.target || r.home}.` : '';
-      el('simRecoveryHint'+r.id).textContent = recoveryHint;
-      el('simPosition'+r.id).textContent = `${r.node}${r.edge ? ' → '+r.edge.to : ''} · ${number(r.battery)}% · ${r.connected ? 'MQTT online' : 'MQTT offline'}\n${r.fault || (r.paused ? 'Đang tạm dừng' : r.waitingZone ? 'Chờ quyền '+r.waitingZone : r.charging ? 'Đang sạc' : 'Hoạt động')} · ${number(r.distanceCm)} cm / cost ${number(r.routeCost)}`;
-      for (const kind of ['pickup','dropoff']) {
-        const select = el('sim'+kind+r.id);
-        if (select.dataset.nodes !== warehouses.join(',')) {
-          const old = select.value;select.replaceChildren(...warehouses.map(id=>{const option = make('option',id);option.value = id;return option;}));
-          select.value = warehouses.includes(old) ? old : warehouses[(kind === 'pickup' ? 0 : 1)+(r.id === '02' ? 2 : 0)] || warehouses[0];select.dataset.nodes = warehouses.join(',');
-        }
-      }
-      el('simJob'+r.id).disabled = el('simJob'+r.id).dataset.simBusy === 'true' || s.health !== 'Sẵn sàng' || lastState?.shift?.phase !== 'RUNNING' || state?.state !== 'IDLE' || r.paused || !!r.fault || r.cargo || s.jobs.some(j=>j.robot === r.id && !j.ended);
-      el('simGoto'+r.id).disabled = el('simGoto'+r.id).dataset.simBusy === 'true' || s.health !== 'Sẵn sàng' || lastState?.shift?.phase !== 'RUNNING' || state?.state !== 'IDLE' || r.paused || !!r.fault || s.jobs.some(j=>j.robot === r.id && !j.ended);
-    }
-    jobs.replaceChildren();
-    for (const job of [...s.jobs].reverse().filter(job=>!job.retryableRoute).slice(0,6)) {
-      const item = make('div',null,'sim-job');item.append(make('strong',`${job.id} · ${job.robot}: ${job.pickup} → ${job.dropoff}`),make('div',phaseNames[job.phase] || job.phase));
-      item.append(make('div',`${seconds(job.simSeconds ?? s.simSeconds-job.startSim)} mô phỏng · ${seconds(job.wallSeconds ?? (Date.now()-job.started)/1000)} thực`));
-      if (job.ended) item.append(make('div',`${number(job.distanceCm)} cm · cost ${number(job.routeCost)} · chờ ${seconds(job.waitSeconds)}`));
-      if (job.reason) item.append(make('div',job.reason));jobs.append(item);
-    }
-    orderList.replaceChildren();
-    for (const order of [...(s.orders || [])].reverse().slice(0,5)) {
-      const delivered = order.items.filter(item=>item.status === 'delivered').length;
-      const active = order.items.filter(item=>['dispatching','in_progress'].includes(item.status)).length;
-      const card = make('details',null,'sim-order-card');card.open = order.status !== 'completed';
-      const summary = make('summary',`${order.id} · ${order.pickup} · ${delivered}/${order.total} kiện · ${orderStatusNames[order.status] || order.status}`);
-      card.append(summary);
-      const progress = make('progress');progress.max = order.total;progress.value = delivered;card.append(progress);
-      card.append(make('div',`${active} đang giao · ${order.items.filter(item=>item.status === 'queued').length} chờ cấp việc`,'sim-order-subtitle'));
-      if (order.reason) card.append(make('div',order.reason,'sim-order-warning'));
-      const itemList = make('div',null,'sim-order-items');
-      for (const item of order.items) {
-        const job = (s.jobs || []).find(candidate=>candidate.id === item.jobId);
-        const label = item.status === 'delivered' ? 'Đã giao' : item.status === 'interrupted' ? 'Gián đoạn' : item.status === 'queued' ? 'Chờ xe' : phaseNames[job?.phase] || 'Đang cấp việc';
-        itemList.append(make('div',`#${item.number} → ${item.dropoff} · ${item.robot ? 'xe '+item.robot : 'chưa phân xe'} · ${label}${item.jobId ? ' · '+item.jobId : ''}${item.note ? ' · '+item.note : ''}`));
-      }
-      card.append(itemList);orderList.append(card);
-    }
-    events.replaceChildren(...[...s.events].reverse().slice(0,40).map(e=>make('div',`${number(e.simSeconds)}s · ${e.robot || 'SIM'} · ${e.type} ${e.node || e.zone || e.message || e.task_id || ''}`)));
-    taskMetrics.replaceChildren(...[...s.tasks].reverse().slice(0,12).map(t=>make('div',`${t.task_id} → ${t.target} · xe ${t.assigned_agv || '—'} · ${t.status}\n${seconds((t.endSim ?? s.simSeconds)-t.firstSim)} mô phỏng / ${seconds(((t.endWall ?? Date.now())-t.firstWall)/1000)} thực`,'sim-job')));
-  }
-  function animate() {
+  function animate(){
     motion.replaceChildren();
-    if (snapshot && lastState?.map?.nodes) {
-      const transform = computeMapTransform(lastState.map.nodes),positions = new Map(lastState.map.nodes.map(n=>[n.id,{x:n.x*transform.scale+transform.ox,y:n.y*transform.scale+transform.oy}]));
-      for (const robot of snapshot.robots) {
-        const a = positions.get(robot.node),b = robot.edge && positions.get(robot.edge.to);if (!a) continue;
-        const age = Math.min(0.5,(performance.now()-lastSnapshotAt)/1000),progress = robot.edge ? Math.min(1,robot.edge.progress+(!robot.paused && !robot.fault && robot.connected && robot.path.length ? age*snapshot.settings.timeScale*snapshot.settings.speedCmS/robot.edge.distance : 0)) : 0;
-        const p = b ? {x:a.x+(b.x-a.x)*progress,y:a.y+(b.y-a.y)*progress} : a,color = robot.id === '01' ? '#38bdf8' : '#c084fc';
-        const coreMarker = document.querySelector(`#agvsG [data-robot="${robot.id}"]`);if (coreMarker) coreMarker.style.opacity = '0.3';
-        const group = svg('g',{'data-sim-robot':robot.id,transform:`translate(${p.x},${p.y})`});
-        group.append(svg('circle',{r:21,fill:color,opacity:'.12'}),svg('rect',{x:-12,y:-12,width:24,height:24,rx:5,fill:robot.fault ? '#ef4444' : color,stroke:'#e2e8f0','stroke-width':2}),svg('text',{x:0,y:-29,fill:color,'text-anchor':'middle','font-size':15,'font-weight':700},robot.id+' ảo'));
-        if (robot.cargo) group.append(svg('rect',{x:-5,y:-5,width:10,height:10,fill:'#fbbf24'}));motion.append(group);
+    if(snapshot&&lastState?.map?.nodes){
+      const t=computeMapTransform(lastState.map.nodes),positions=new Map(lastState.map.nodes.map(n=>[n.id,{x:n.x*t.scale+t.ox,y:n.y*t.scale+t.oy}])),blocked=new Set((snapshot.blockedEdges||[]).map(e=>edgeKey(e.from,e.to)));
+      const drawingKey=JSON.stringify([t,edges.map(e=>edgeKey(e.from,e.to)),[...blocked],edgeSelect.value]);
+      if(drawingKey!==edgeDrawingKey){edgeDrawingKey=drawingKey;obstacles.replaceChildren();for(const e of edges){
+        const a=positions.get(e.from),b=positions.get(e.to);if(!a||!b)continue;const length=Math.hypot(b.x-a.x,b.y-a.y),cut=Math.min(22/length,.2),key=edgeKey(e.from,e.to),g=svg('g',{'data-sim-edge':key});
+        const x1=a.x+(b.x-a.x)*cut,y1=a.y+(b.y-a.y)*cut,x2=b.x-(b.x-a.x)*cut,y2=b.y-(b.y-a.y)*cut,nx=-(b.y-a.y)/length*10,ny=(b.x-a.x)/length*10;
+        g.append(svg('line',{x1,y1,x2,y2,stroke:blocked.has(key)?'#ef4444':key===edgeSelect.value?'#38bdf8':'transparent','stroke-width':blocked.has(key)?8:5,'pointer-events':'none'}));
+        const hit=svg('polygon',{points:`${x1+nx},${y1+ny} ${x2+nx},${y2+ny} ${x2-nx},${y2-ny} ${x1-nx},${y1-ny}`,fill:'transparent',class:'sim-edge-hit'});
+        hit.addEventListener('click',event=>{event.stopPropagation();edgeSelect.value=key;render();});g.append(hit);
+        if(blocked.has(key)){const x=(a.x+b.x)/2,y=(a.y+b.y)/2;g.append(svg('rect',{x:x-11,y:y-11,width:22,height:22,rx:4,fill:'#ef4444',class:'sim-obstacle-marker'}),svg('text',{x,y:y+5,fill:'white','text-anchor':'middle','font-size':17,'font-weight':700,class:'sim-obstacle-marker'},'×'));}obstacles.append(g);
+      }}
+      for(const r of snapshot.robots){
+        const a=positions.get(r.node),b=r.edge&&positions.get(r.edge.to);if(!a)continue;const age=isFresh()&&dashboardControlsReady()?Math.min(.5,(performance.now()-lastSnapshotAt)/1000):0,p=r.edge?Math.min(1,r.edge.progress+(!r.paused&&!r.fault&&!r.blockedEdge&&r.connected&&r.path.length?age*snapshot.settings.timeScale*snapshot.settings.speedCmS/r.edge.distance:0)):0;
+        const pos=b?{x:a.x+(b.x-a.x)*p,y:a.y+(b.y-a.y)*p}:a,color=r.id==='01'?'#38bdf8':'#c084fc',g=svg('g',{'data-sim-robot':r.id,transform:'translate('+pos.x+','+pos.y+')'});const core=document.querySelector('#agvsG [data-robot="'+r.id+'"]');if(core)core.style.opacity='0';
+        const movement=direction.describe(r,lastState.map,snapshot.warehouseOrders,snapshot.jobs,headingViews.get(r.id)?.to),heading=displayedHeading(r.id,movement.heading,isFresh()?performance.now():lastSnapshotAt);
+        g.setAttribute('data-heading',movement.heading??'unknown');g.setAttribute('data-travel',movement.travel??'stopped');g.setAttribute('data-phase',movement.phase);g.setAttribute('data-reverse',movement.reverse);
+        g.append(svg('circle',{r:22,fill:color,opacity:'.12'}));
+        const body=svg('g',{transform:'rotate('+(heading??0)+')',class:'sim-robot-body'});
+        body.append(svg('rect',{x:-12,y:-12,width:24,height:24,rx:5,fill:r.fault?'#ef4444':color,stroke:'#e2e8f0','stroke-width':2}));
+        if(r.cargo)body.append(svg('rect',{x:-8,y:-4,width:7,height:8,rx:1,fill:'#fbbf24'}));
+        if(heading!=null)body.append(svg('path',{d:'M 3 -6 L 10 0 L 3 6',fill:'none',stroke:'white','stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round',class:'sim-heading-arrow'}));g.append(body);
+        if(isFresh()&&dashboardControlsReady()&&movement.travel!=null){const arrow=svg('g',{transform:'rotate('+movement.travel+')',class:'sim-travel-arrow'});arrow.append(svg('line',{x1:17,y1:0,x2:34,y2:0,stroke:color,'stroke-width':3}),svg('path',{d:'M 30 -5 L 39 0 L 30 5 Z',fill:color,stroke:'#0b1626','stroke-width':1}));g.append(arrow);}
+        g.append(svg('text',{x:0,y:-29,fill:color,'text-anchor':'middle','font-size':15,'font-weight':700},r.id));
+        const turning=!r.edge&&lastState.map.nodes.find(n=>n.id===r.node)?.type==='charging'&&heading!=null&&Math.abs(heading-(headingViews.get(r.id)?.to??heading))>.1;
+        const label=turning?'Quay đầu':movement.label;
+        if(label){const width=label.length*6+14;g.append(svg('rect',{x:-width/2,y:22,width,height:20,rx:5,fill:'#0b1626',stroke:color,'stroke-width':1}),svg('text',{x:0,y:36,fill:'#e2e8f0','text-anchor':'middle','font-size':11,class:'sim-motion-label'},label));}
+        motion.append(g);
       }
     }
     requestAnimationFrame(animate);
   }
-  async function poll() {
-    if (busy) return;busy = true;
-    try {snapshot = await call('/state');lastSnapshotAt = performance.now();render();}
-    catch {status.textContent = 'Mất kết nối mô phỏng; dữ liệu và vị trí đang cũ';snapshot = null;}
-    finally {busy = false;}
+  function validSnapshot(s){
+    return s?.simulation===true&&Number.isFinite(s.started)&&typeof s.health==='string'&&s.settings&&
+      ['timeScale','speedCmS','drainPerCm','chargeRate','serviceSeconds'].every(k=>Number.isFinite(s.settings[k]))&&
+      Number.isFinite(s.simSeconds)&&Number.isFinite(s.wallSeconds)&&Number.isFinite(s.totals?.completed)&&
+      Array.isArray(s.robots)&&s.robots.length===2&&['01','02'].every(id=>s.robots.some(r=>r?.id===id&&typeof r.node==='string'&&typeof r.connected==='boolean'&&Array.isArray(r.path)&&
+        ['battery','distanceCm','routeCost','waitSeconds'].every(k=>Number.isFinite(r[k]))&&(!r.edge||typeof r.edge.to==='string'&&Number.isFinite(r.edge.progress)&&r.edge.distance>0)))&&
+      Array.isArray(s.events)&&s.events.every(e=>e&&typeof e==='object')&&
+      ['jobs','warehouseOrders','blockedEdges'].every(k=>s[k]==null||Array.isArray(s[k])&&s[k].every(x=>x&&typeof x==='object'));
   }
-  poll();setInterval(poll,250);requestAnimationFrame(animate);
+  async function poll(){
+    if(busy||!pageActive||navigator.onLine===false)return;
+    clearTimeout(pollTimer);busy=true;const epoch=networkEpoch;render();
+    try{
+      const next=await call('/state',null,2500);
+      if(epoch!==networkEpoch||!pageActive)return;
+      if(!validSnapshot(next))throw Error('Snapshot mô phỏng không hợp lệ');
+      if(snapshot&&snapshot.started!==next.started)headingViews.clear();
+      snapshot={...next,jobs:next.jobs||[],warehouseOrders:next.warehouseOrders||[],blockedEdges:next.blockedEdges||[]};lastSnapshotAt=performance.now();lastSnapshotTime=new Date();connected=true;failures=0;
+    }catch{if(epoch===networkEpoch){connected=false;failures++;}}
+    finally{busy=false;updateConnection();if(pageActive&&navigator.onLine!==false)pollTimer=setTimeout(poll,failures?Math.min(4000,250*2**Math.min(failures,4)):250);}
+  }
+  async function heartbeat(){
+    if(heartbeatBusy||!pageActive||navigator.onLine===false)return;heartbeatBusy=true;
+    try{await call('/viewer',{id:viewerId},2500);}catch{}finally{heartbeatBusy=false;}
+  }
+  function suspend(){networkEpoch++;connected=false;clearTimeout(pollTimer);for(const controller of requests)controller.abort();}
+  addEventListener('offline',()=>{suspend();updateConnection();});
+  addEventListener('online',()=>{if(pageActive){heartbeat();if(!backendOnline)connect(true);poll();}});
+  addEventListener('pagehide',()=>{pageActive=false;suspend();clearInterval(heartbeatTimer);navigator.sendBeacon(viewerUrl,new Blob([JSON.stringify({id:viewerId,leaving:true})],{type:'application/json'}));});
+  addEventListener('pageshow',e=>{if(e.persisted){pageActive=true;networkEpoch++;heartbeat();clearInterval(heartbeatTimer);heartbeatTimer=setInterval(heartbeat,4000);if(!backendOnline)connect(true);poll();}});
+  render();heartbeat();heartbeatTimer=setInterval(heartbeat,4000);poll();requestAnimationFrame(animate);
 })();

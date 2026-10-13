@@ -176,7 +176,7 @@ constexpr std::array<int, 4> MOTOR_PWM_CHANNELS = {0, 1, 2, 3};
 
 // Black line = 1; centered readings 010, 101 and 111 are valid.
 constexpr int LINE_SENSOR_ACTIVE_STATE = 1;
-// Stop immediately on 000, but confirm it persists before latching a trial fault.
+// Stop immediately on 000, but confirm it persists before latching a fault.
 #if defined(AGV_PROFILE_ID)
 constexpr uint32_t LINE_LOSS_CONFIRM_MS = AGV_BENCH_LINE_LOSS_CONFIRM_MS;
 #else
@@ -244,7 +244,8 @@ constexpr std::array<NodeMapping, 26> RFID_NODES = {{
     {"S1", "77B04295"},
     {"S2", "D7E21F95"}
 }};
-constexpr uint32_t RFID_POLL_INTERVAL_MS = 30;
+// Match the first RC522 connection test; actual cadence also includes SPI/card response time.
+constexpr uint32_t RFID_POLL_INTERVAL_MS = 20;
 
 constexpr std::array<int, 3> SERVO_PINS = {SERVO_1_PIN, SERVO_2_PIN, SERVO_3_PIN};
 // Channels 4/5/6 use LEDC timers 2/3; motor channels 0..3 use timers 0/1.
@@ -323,6 +324,11 @@ constexpr size_t COMMAND_QUEUE_LENGTH = 8;
 constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
+#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+constexpr const char* FIRMWARE_BUILD = "20261012-line-loss-5s-stop";
+#else
+constexpr const char* FIRMWARE_BUILD = "20261010-grant-buffer-fix";
+#endif
 constexpr uint32_t SERIAL_BAUD = 115200;
 
 constexpr std::array<int, 22> ALL_PINS = {

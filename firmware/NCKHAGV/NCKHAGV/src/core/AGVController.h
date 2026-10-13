@@ -50,4 +50,6 @@ private:
     uint32_t lastRfidSeenMs_ = 0;
     char previousNode_[NODE_TEXT_SIZE]{};
     bool previousSegmentReverse_ = false;
+    RobotHeading heading_ = RobotHeading::Unknown;
+    bool headingBayDefault_ = false;
 };

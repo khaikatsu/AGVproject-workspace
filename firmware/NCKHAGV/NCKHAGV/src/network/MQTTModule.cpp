@@ -3,6 +3,7 @@
 #include "core/ControlLogic.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
+#include <esp_system.h>
 #include <climits>
 #include <cmath>
 #include <cstdio>
@@ -12,6 +13,21 @@
 #include <limits>
 
 namespace {
+const char* resetReasonName() {
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON: return "POWERON";
+        case ESP_RST_EXT: return "EXTERNAL";
+        case ESP_RST_SW: return "SOFTWARE";
+        case ESP_RST_PANIC: return "PANIC";
+        case ESP_RST_INT_WDT: return "INT_WATCHDOG";
+        case ESP_RST_TASK_WDT: return "TASK_WATCHDOG";
+        case ESP_RST_WDT: return "WATCHDOG";
+        case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+        case ESP_RST_BROWNOUT: return "BROWNOUT";
+        case ESP_RST_SDIO: return "SDIO";
+        default: return "UNKNOWN";
+    }
+}
 struct ZoneRelease { char zone[NODE_TEXT_SIZE]{}; int32_t grantId = 0; };
 void number(JsonObject object, const char* key, float value) {
     if (std::isfinite(value)) object[key] = value;
@@ -275,21 +291,14 @@ void MQTTModule::onMessage(char* topicName, uint8_t* payload, unsigned int lengt
     }
     if (std::strcmp(topicName, grantTopic_) == 0) {
         if (!isConnected() || !payload || !length || length > 128) return;
-        StaticJsonDocument<128> doc;
-        if (deserializeJson(doc, payload, length)) return;
-        if (!doc["zone"].is<const char*>() || !doc["grant_id"].is<int32_t>()) return;
-        const char* zone = doc["zone"] | "";
-        const int32_t id = doc["grant_id"] | 0;
-        if (zone[0] != 'M' || zone[1] < '1' || zone[1] > '6' || zone[2] || id < 1) return;
-        char ack[96];
-        const int count = std::snprintf(ack, sizeof(ack), "{\"zone\":\"%s\",\"grant_id\":%ld}",
-                                        zone, static_cast<long>(id));
-        if (count < 1 || static_cast<size_t>(count) >= sizeof(ack) ||
-            !client_.publish(grantAckTopic_, ack, false)) return;
         CoreGrant grant;
-        std::strcpy(grant.zone, zone);
-        grant.grantId = id;
+        if (!CoreProtocol::decodeGrant(payload,length,grant)) return;
         grant.localSession = session_.load();
+        // publish() reuses the RX buffer. All fields must already be owned
+        // by grant; never use a zero-copy JSON pointer after sending ACK.
+        char ack[96];
+        if (!CoreProtocol::grantAck(grant,ack,sizeof(ack)) ||
+            !client_.publish(grantAckTopic_, ack, false)) return;
         if (xQueueSend(grants_, &grant, 0) != pdTRUE) queueFault_ = true;
         return;
     }
@@ -373,12 +382,27 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
         transport_.stop(); secureTransport_.stop();
         return;
     }
-    // Extra diagnostics are outside the Core v0 contract. Never use them to
-    // infer arrival or charging completion on the server.
+    // RFID telemetry proves location; station diagnostics additionally gate
+    // completion until the physical exit-facing pivot is finished.
     StaticJsonDocument<1536> doc;
     auto object = doc.to<JsonObject>();
     base(object, session(), s.uptimeMs);
     object["state"] = stateName(s.state);
+    object["resetReason"] = resetReasonName();
+    object["resetReasonCode"] = static_cast<int>(esp_reset_reason());
+    object["firmwareMode"] = Config::TWO_ROBOT_BENCH_TRIAL ? "bench" : Config::ONE_ROBOT_TRIAL ? "solo" : "locked";
+    object["firmwareBuild"] = Config::FIRMWARE_BUILD;
+    object["motionEnabled"] = Config::ENABLE_CORE_MOTION;
+    object["headingSupported"] = true;
+    object["stationDockingSupported"] = true;
+    object["stationReady"] = s.stationReady;
+    object["nodeOrdersSupported"] = true;
+    object["awaitingNodeOrder"] = s.awaitingNodeOrder;
+    object["stationTurnRequired"] = s.stationTurnRequired;
+    object["routeCommandId"] = s.routeCmdId;
+    object["heading"] = headingName(s.heading);
+    object["headingNode"] = node;
+    object["headingSource"] = s.heading == RobotHeading::Unknown ? "unknown" : s.headingBayDefault ? "bay_default" : "route";
     object["error"] = errorName(s.error);
     object["node"] = node;
     if (s.rfidAgeMs != std::numeric_limits<uint32_t>::max()) object["rfidAgeMs"] = s.rfidAgeMs;

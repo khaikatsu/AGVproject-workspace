@@ -5,6 +5,8 @@ let selectedAgvId = null, previewMapId = null, currentKpiId = null, kpiHistoryDa
 let logSession = null;
 let orderWarehouses = [],orderWarehouseKey = '',orderRenderKey = '';
 let orderProgressOptionsKey = '';
+const headingLabels = {N:'↑ Lên',E:'→ Phải',S:'↓ Xuống',W:'← Trái'};
+const headingAngles = {N:-90,E:0,S:90,W:180};
 const orderExpanded = new Map();
 const pendingControls = new Set();
 const seenLogs = new Set(), recentLogs = [];
@@ -50,11 +52,9 @@ function controlsReady() {return dataFresh() && !!lastState?.protocol_supported 
 function tasksReady() {return controlsReady() && lastState?.fleet.accepting_tasks !== false;}
 function canEditMap() {return controlsReady() && !lastState.fleet.agvs.length && !lastState.fleet.pending_tasks.length;}
 function setTaskMode(mode) {
-  const order = mode !== 'node';
-  $('orderTaskForm').hidden = !order;
-  $('nodeTaskForm').hidden = order;
-  $('orderModeBtn').setAttribute('aria-pressed',String(order));
-  $('nodeModeBtn').setAttribute('aria-pressed',String(!order));
+  for (const [name,form,button] of [['order','orderTaskForm','orderModeBtn'],['node','nodeTaskForm','nodeModeBtn'],['warehouse','warehouseTaskForm','warehouseModeBtn']]) {
+    $(form).hidden=mode!==name;$(button).setAttribute('aria-pressed',String(mode===name));
+  }
 }
 function showView(view) {
   if (!views.has(view)) view = 'overview';
@@ -135,6 +135,7 @@ function updateConnection() {
   const shift = lastState?.shift;
   $('startShiftBtn').disabled = !controlsReady() || !shift?.supported || !shift.can_start || $('startShiftBtn').dataset.busy === 'true';
   $('endShiftBtn').disabled = !controlsReady() || !shift?.supported || shift.phase !== 'RUNNING' || $('endShiftBtn').dataset.busy === 'true';
+  updateWarehouseControls();
   document.querySelectorAll('[data-map-edit]').forEach(button=>button.disabled = !canEditMap() || button.dataset.busy === 'true');
   $('mapEditHint').textContent = canEditMap() ? 'Có thể chỉnh cấu trúc bản đồ.' : 'Chỉnh cấu trúc khi core chưa có robot và nhiệm vụ. Vẫn có thể xem bản đồ đã lưu.';
   renderObstacleAction();renderSummary(lastState);
@@ -325,11 +326,38 @@ async function submitOrder() {
   const result = await control('POST','/api/orders',{pickups,deliveries},$('submitOrderBtn'));
   if (result) {toast(`Đã tạo đơn ${result.order.id.slice(0,19)} · ${result.order.total} kiện`);showView('tasks');}
 }
+function updateWarehouseControls() {
+  const robot=lastState?.fleet.agvs.find(robot=>robot.id==='01');
+  const active=lastState?.warehouse_actions?.find(action=>!['completed','interrupted'].includes(action.status));
+  const ready=tasksReady()&&Array.isArray(lastState?.warehouse_actions)&&lastState.shift?.phase==='RUNNING'&&lastState.shift?.test_mode==='robot01'&&
+    robot?.state==='IDLE'&&robot.online!==false&&robot.position_valid!==false&&!robot.error&&!robot.task_id&&!active&&!!$('warehouseTarget').value;
+  for(const id of ['pickupWarehouseBtn','dropoffWarehouseBtn']) $(id).disabled=!ready||$(id).dataset.busy==='true';
+}
+async function warehouseAction(action,button) {
+  const result=await control('POST','/api/agvs/01/warehouse-action',{action,warehouse:$('warehouseTarget').value},button);
+  if(result)toast(`Xe 01: ${action==='pickup'?'lấy':'hạ'} tại ${result.action.warehouse}, chờ5s rồi lùi ra ${result.action.gate}`);
+}
+function renderWarehouseActionStatus() {
+  const test=lastState?.shift?.test_mode==='robot01';$('warehouseModeBtn').hidden=!test;$('orderModeBtn').hidden=test;
+  if(test&&!$('orderTaskForm').hidden)setTaskMode('warehouse');
+  if(!test&&!$('warehouseTaskForm').hidden)setTaskMode('order');
+  const warehouses=(lastState?.map.nodes||[]).filter(node=>node.type==='station'&&/^K[1-6]$/.test(node.id)).map(node=>node.id);
+  const select=$('warehouseTarget'),key=JSON.stringify(warehouses);
+  if(select.dataset.nodes!==key){const prior=select.value;select.replaceChildren();for(const node of warehouses)select.add(new Option(node,node));if(warehouses.includes(prior))select.value=prior;select.dataset.nodes=key;}
+  const action=lastState?.warehouse_actions?.[0],robot=lastState?.fleet.agvs.find(robot=>robot.id==='01');
+  const names={dispatching:'Đang cấp tuyến tới kho',to_warehouse:'Đang đi tới kho',dispatching_exit:'Đang cấp lệnh lùi',to_gate:'Đang lùi ra gate',completed:'Đã ra gate; chờ lệnh tiếp theo',interrupted:'Thao tác gián đoạn'};
+  $('warehouseActionStatus').textContent=test&&!Array.isArray(lastState?.warehouse_actions)?'Cần khởi động lại gateway để nạp chức năng Lấy / hạ hàng.':action ? action.status==='waiting' ?
+    `Dừng tại ${action.warehouse}: còn ${Math.max(0,Math.ceil((Date.parse(action.service_until)-Date.now())/1000))}s` :
+    `${names[action.status]||action.status} · ${action.warehouse} → ${action.gate}${action.reason?' · '+action.reason:''}` :
+    robot?.state==='IDLE'?'Xe 01 sẵn sàng. Chọn kho rồi bấm Lấy hàng hoặc Hạ hàng.':`Xe 01: ${robot?.error||robot?.state||'chưa có dữ liệu'}`;
+  updateWarehouseControls();
+}
 function updateOrderTimers() {
   document.querySelectorAll('[data-order-service-until]').forEach(node=>{
     const seconds = Math.max(0,Math.ceil((Date.parse(node.dataset.orderServiceUntil)-Date.now())/1000));
     node.textContent = `Mô phỏng ${node.dataset.orderServiceKind}: còn ${seconds}s`;
   });
+  renderWarehouseActionStatus();
 }
 function renderOrderProgress(orders) {
   const rows = Array.isArray(orders) ? orders : [];
@@ -355,6 +383,12 @@ function renderOrderProgress(orders) {
   $('orderProgressCount').textContent = `${delivered}/${total} kiện`;
 }
 function renderOrders(orders) {
+  $('orderList').closest('section').hidden=lastState?.shift?.test_mode==='robot01';
+  const selected=lastState?.shift?.test_mode === 'robot01' ? '01' : lastState?.shift?.test_mode === 'robot02' ? '02' :
+    lastState?.shift?.trial_robot_id || lastState?.fleet?.trial_robot_id;
+  if ($('orderDispatchHint')) $('orderDispatchHint').textContent=selected ?
+    `Chế độ test: mặc định xe ${selected}. Xe đi tới kho lấy rồi tới kho giao khi sẵn sàng.` :
+    'Server chọn xe sẵn sàng gần kho lấy nhất theo tổng trọng số đường có hướng.';
   renderOrderProgress(orders);
   const key = JSON.stringify(orders || []);
   if (key === orderRenderKey) return;
@@ -365,7 +399,8 @@ function renderOrders(orders) {
   const names = {active:'Đang điều phối',completed:'Đã giao đủ (mô phỏng)',needs_attention:'Cần đối soát',closed:'Đã đóng sau đối soát'};
   const phases = {queued:'Chờ xe',dispatching:'Đang cấp việc lấy',to_pickup:'Đi lấy',pickup_service:'Đang bốc hàng',
     ready_dropoff:'Chờ giao',dispatching_dropoff:'Đang cấp việc giao',to_dropoff:'Đi giao',
-    dropoff_service:'Đang dỡ hàng',delivered:'Đã giao (mô phỏng)',interrupted:'Gián đoạn'};
+    dropoff_service:'Đang dỡ hàng',ready_exit:'Chờ lùi ra gate',dispatching_exit:'Đang cấp lệnh lùi ra gate',to_exit:'Lùi ra gate',
+    delivered:'Đã giao (mô phỏng)',interrupted:'Gián đoạn'};
   for (const order of orders) {
     const entry = document.createElement('details');entry.className = 'order-entry';entry.dataset.orderId = order.id;
     entry.open = orderExpanded.has(order.id) ? orderExpanded.get(order.id) : order.status !== 'completed' && order.status !== 'closed';
@@ -389,6 +424,14 @@ function renderOrders(orders) {
       const line = document.createElement('div');line.className = 'order-item';
       line.textContent = `Kiện ${item.number}: ${item.pickup} → ${item.dropoff} · ${item.robot || 'chưa phân xe'} · ${phases[item.status] || item.status}`;
       if (item.task_id) line.title = `Core task_id: ${item.task_id}`;
+      if (item.waiting_reason) {
+        const waiting=document.createElement('div');waiting.className='order-reason';waiting.textContent=item.waiting_reason;line.append(waiting);
+      }
+      if (item.route_plan) for (const [key,label] of [['pickup','Tuyến lấy dự kiến'],['delivery','Tuyến giao dự kiến'],['exit','Lùi sau khi giao']]) {
+        const route=item.route_plan[key],detail=document.createElement('div');detail.className='order-service';
+        detail.textContent=route?.path?.length ? `${label}: ${route.path.join(' → ')} · trọng số ${route.cost}` : `${label}: chưa có đường`;
+        line.append(detail);
+      }
       if (item.status === 'pickup_service' || item.status === 'dropoff_service') {
         const timer = document.createElement('div');timer.className = 'order-service';
         timer.dataset.orderServiceUntil = item.service_until;timer.dataset.orderServiceKind = item.status === 'pickup_service' ? 'bốc hàng' : 'dỡ hàng';
@@ -422,13 +465,14 @@ function renderMutex(mutex) {
 }
 function populateTaskAgvSelect(agvs) {
   const select = $('task_agv'),previous = select.value,trial = lastState?.shift?.single_robot_trial === true;
+  const trialRobot = lastState?.shift?.trial_robot_id || '';
   const twoRobotTrial = lastState?.shift?.two_robot_trial === true;
-  const automatic = new Option(trial ? 'Chỉ xe 01 trong lần thử' : 'Tự động chọn xe gần nhất','');
+  const automatic = new Option(trial ? 'Chỉ xe 01 trong lần thử' : trialRobot ? `Tự động giao cho xe ${trialRobot}` : 'Tự động chọn xe gần nhất','');
   automatic.disabled = trial;
   select.replaceChildren(automatic);
   agvs.forEach(a=>{
     const option = new Option(`${a.id} — ${labels[a.state] || a.state}`,a.id);
-    option.disabled = (trial && a.id !== '01') || (twoRobotTrial && !['01','02'].includes(a.id)) ||
+    option.disabled = (trial && a.id !== '01') || (trialRobot && a.id !== trialRobot) || (twoRobotTrial && !['01','02'].includes(a.id)) ||
       !['IDLE','WORKING','BLOCKED'].includes(a.state) || a.online === false || a.position_valid === false;
     select.add(option);
   });
@@ -441,6 +485,10 @@ function populateTaskAgvSelect(agvs) {
     return;
   }
   if (Array.from(select.options).some(option=>option.value === previous && !option.disabled)) select.value = previous;
+  if (trialRobot) {
+    $('taskBatteryHint').textContent = `Thử riêng xe ${trialRobot}: chỉ xe này nhận nhiệm vụ; mutex vẫn bật, pin % chỉ hiển thị.`;
+    return;
+  }
   if (twoRobotTrial) {
     $('taskBatteryHint').textContent = 'Thử hai xe 01/02: pin % chỉ hiển thị. Core giữ mutex; vùng chỉ được nhả khi đã xác minh toàn bộ xe rời vùng.';
     return;
@@ -504,11 +552,12 @@ function renderShift(shift) {
   const displayOnly = lastState?.fleet?.agvs?.some(robot=>robot.battery_display_available === true && robot.battery_measured !== true);
   const mode = $('coreModeStatus');
   mode.textContent = !shift?.supported ? 'Chưa xác định chế độ Core'
+    : shift.trial_robot_id ? `Core: thử riêng xe ${shift.trial_robot_id} · mutex bật · pin % chỉ hiển thị`
     : shift.single_robot_trial ? 'Core: thử một xe 01 · pin % chỉ hiển thị'
     : shift.two_robot_trial ? 'Core: thử hai xe 01/02 · mutex bật · pin % chỉ hiển thị'
     : displayOnly ? 'Core: chế độ thường · pin % chưa dùng để cấp nhiệm vụ'
       : 'Core: chế độ thường';
-  mode.className = displayOnly && shift?.supported && !shift.single_robot_trial && !shift.two_robot_trial ? 'field-hint core-mode-warning' : 'field-hint';
+  mode.className = displayOnly && shift?.supported && !shift.single_robot_trial && !shift.two_robot_trial && !shift.trial_robot_id ? 'field-hint core-mode-warning' : 'field-hint';
   $('homeStationCaption').textContent = shift?.supported && shift.home_stations
     ? Object.entries(shift.home_stations).map(([robot,station])=>`${robot} → ${station}`).join(' · ') || 'Theo cấu hình core'
     : 'Theo cấu hình core';
@@ -525,7 +574,9 @@ function renderShift(shift) {
   }
   if (shift?.phase === 'CLOSED' && !shift.can_start) {
     const note = document.createElement('small');
-    note.textContent = shift.single_robot_trial
+    note.textContent = shift.trial_robot_id
+      ? `Chờ xe ${shift.trial_robot_id} tại trạm riêng. Xe không chọn đã xuất hiện cần dừng/rảnh tại trạm và hết lỗi/vùng chưa xác minh.`
+      : shift.single_robot_trial
       ? 'Chờ xe 01 online tại S1, RFID mới và xử lý lỗi/vùng chiếm. Pin không chặn ca thử một xe.'
       : shift.two_robot_trial
       ? 'Chờ cả xe 01 tại S1 và xe 02 tại S2 online, RFID mới và xử lý lỗi/vùng chiếm. Pin không chặn ca thử hai xe.'
@@ -544,7 +595,8 @@ async function cancelTask(task,button) {
 }
 async function clearAgvError(robotId,button) {
   if (!confirm('Chỉ xóa lỗi sau khi đã xác minh vị trí robot, đường đi và xử lý sự cố. Tiếp tục?')) return;
-  if (await control('POST',`/api/agvs/${encodeURIComponent(robotId)}/clear-error`,{},button)) toast(`Core đã xóa lỗi ${robotId}`);
+  if (await control('POST',`/api/agvs/${encodeURIComponent(robotId)}/clear-error`,{},button))
+    toast(lastState?.shift?.supervised_trial ? `Đã gửi reset lỗi ${robotId}; chờ xe xác nhận khỏe tại trạm` : `Core đã xóa lỗi ${robotId}`);
 }
 async function removeAGV(robotId,button) {
   if (!confirm(`Đã đưa robot ${robotId} ra khỏi kho và xác minh vùng đường trống?`)) return;
@@ -658,7 +710,7 @@ function drawMap(map,agvs,prefix = '') {
     const left = Math.min(...points.map(p=>p.x-16)),top = Math.min(...points.map(p=>p.y-16));
     const right = Math.max(...points.map(p=>p.x+(p.label.length<=4 ? 20 : 29+p.label.length*(prefix ? 8 : 10))));
     const bottom = Math.max(...points.map(p=>p.y+16));
-    svg.setAttribute('viewBox',`${left-24} ${top-32} ${right-left+48} ${bottom-top+56}`);
+    svg.setAttribute('viewBox',`${left-40} ${top-48} ${right-left+80} ${bottom-top+96}`);
   } else svg.setAttribute('viewBox','20 20 1020 720');
   if (prefix) return;
   const routesG = $('routesG'),agvsG = $('agvsG');routesG.replaceChildren();agvsG.replaceChildren();
@@ -672,9 +724,14 @@ function drawMap(map,agvs,prefix = '') {
     }
     const p = position.get(robot.node);if (!p || robot.position_valid === false) return;
     const siblings = agvs.filter(a=>a.node === robot.node),offset = siblings.length > 1 ? siblings.indexOf(robot)*20-10 : 0;
-    const group = svgElement('g',{transform:`translate(${p.x+offset},${p.y})`,class:'agv-group','data-robot':robot.id});
-    group.append(svgElement('rect',{x:-14,y:-14,width:28,height:28,rx:4,fill:colors[robot.state] || '#64748B',stroke:color,'stroke-width':selectedAgvId === robot.id ? 4 : 2}),
-      svgElement('text',{x:-14,y:-24,class:'agv-label'},robot.id),svgElement('title',{},`${robot.id}: ${labels[robot.state] || robot.state}; node đo gần nhất ${robot.node}`));
+    const group = svgElement('g',{transform:`translate(${p.x+offset},${p.y})`,class:'agv-group','data-robot':robot.id,'pointer-events':'bounding-box'});
+    group.append(svgElement('circle',{cx:0,cy:0,r:14,fill:colors[robot.state] || '#64748B',stroke:color,'stroke-width':selectedAgvId === robot.id ? 4 : 2}),
+      svgElement('text',{x:-14,y:-43,class:'agv-label'},robot.id),svgElement('title',{},`${robot.id}: ${labels[robot.state] || robot.state}; node đo gần nhất ${robot.node}; đầu xe ${robot.heading_supported && headingLabels[robot.heading] || 'chưa biết'}`));
+    if (robot.online && robot.heading_supported && headingLabels[robot.heading])
+      group.append(svgElement('path',{d:'M18,-6 L29,-6 L29,-10 L40,0 L29,10 L29,6 L18,6 Z',
+        transform:`rotate(${headingAngles[robot.heading]})`,fill:color,stroke:'#0B1220','stroke-width':1.5,
+        'data-robot-heading':robot.id,'data-heading':robot.heading}));
+    else group.append(svgElement('text',{x:21,y:5,fill:'#94A3B8','font-size':16,'data-heading-unknown':robot.id},'?'));
     group.onclick = event=>{event.stopPropagation();selectAgv(robot.id);};agvsG.append(group);
   });
 }

@@ -17,7 +17,8 @@ enum class MotorAction { Stop, Forward, Backward, ReverseCorrectLeft, ReverseCor
                          GentleCorrectLeft, GentleCorrectRight };
 enum class ServoAction { None, LiftUp, LiftDown };
 enum class CommandType { Task, Start, Stop, EmergencyStop, Restart, CancelTask, LiftUp, LiftDown, NodeOrder };
-enum class CoreCommandType { Goto, Wait, Stop, ChargeStart, ResetFault };
+enum class CoreCommandType { Goto, Wait, Stop, ChargeStart, ResetFault, NodeOrder };
+enum class RobotHeading { Unknown, North, East, South, West };
 enum class ErrorCode { None, Configuration, WifiTimeout, MqttTimeout, EmergencyStop,
     Obstacle, SensorInvalid, LineLost, AmbiguousLine, UnknownTag, UnexpectedNode,
     TurnTimeout, TurnConfiguration, TurnInterrupted, ServoConfiguration, InvalidTask,
@@ -34,6 +35,9 @@ struct CoreCommand {
     char target[NODE_TEXT_SIZE]{};
     char path[Config::MAX_PATH_NODES][NODE_TEXT_SIZE]{};
     uint8_t pathLength = 0;
+    int32_t routeCmdId = 0;
+    char node[NODE_TEXT_SIZE]{}, nextNode[NODE_TEXT_SIZE]{}, maneuver[24]{};
+    uint8_t pathIndex = 0, turnCrossings = 0;
 };
 struct CoreGrant {
     char zone[NODE_TEXT_SIZE]{};
@@ -103,8 +107,15 @@ struct TelemetrySnapshot {
     float batteryVoltage = UNKNOWN_VALUE, batteryPercentage = UNKNOWN_VALUE;
     bool cargoStable = false, cargoPresent = false;
     bool buzzerOn = false;
+    RobotHeading heading = RobotHeading::Unknown;
+    bool headingBayDefault = false;
+    bool stationReady = false;
+    bool awaitingNodeOrder = false, stationTurnRequired = false;
+    int32_t routeCmdId = 0;
 };
 
 const char* stateName(AGVState state);
 const char* errorName(ErrorCode error);
 const char* motorActionName(MotorAction action);
+const char* headingName(RobotHeading heading);
+RobotHeading parseHeading(const char* heading);

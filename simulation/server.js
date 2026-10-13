@@ -20,8 +20,8 @@ async function createSimulation(options = {}) {
     throw new Error('Dùng scripts/run-simulation.ps1 để mở môi trường mô phỏng riêng khỏi cấu hình vận hành');
   const port = options.port ?? Number(process.env.SIM_WEB_PORT || 3100);
   if (!Number.isInteger(port) || port < 0 || port > 65535 || [1883, 3000, 8080].includes(port)) throw new Error('Cổng mô phỏng không được trùng 1883/3000/8080');
-  const binary = options.coreBinary || process.env.AGV_CORE_BIN || path.join(root, 'build', process.platform === 'win32' ? 'agv_core.exe' : 'agv_core');
-  if (!fs.existsSync(binary)) throw new Error('Thiếu Core: chạy ./scripts/build-core.ps1 trước');
+  const binary = options.coreBinary || process.env.AGV_CORE_BIN || path.join(root, 'build/simulation', process.platform === 'win32' ? 'agv_core.exe' : 'agv_core');
+  if (!fs.existsSync(binary)) throw new Error('Thiếu Core mô phỏng: chạy ./scripts/build-core.ps1 -OutputDirectory build/simulation trước');
   const parent = options.runParent || path.join(__dirname, 'runs'); fs.mkdirSync(parent, { recursive: true });
   const directory = fs.mkdtempSync(path.join(parent, 'run-'));
   const mapPath = path.join(directory, 'map_layout.json'); fs.copyFileSync(options.mapPath || path.join(root, 'data/map_layout.json'), mapPath);
@@ -35,7 +35,7 @@ async function createSimulation(options = {}) {
   Object.assign(env, {
     AGV_MQTT_HOST: '127.0.0.1', AGV_MQTT_PORT: String(mqttPort), AGV_CORE_WS_HOST: '127.0.0.1', AGV_CORE_WS_PORT: String(corePort),
     AGV_MAP_PATH: mapPath, AGV_COMMAND_ID_PATH: path.join(directory, 'command_sequence.json'), AGV_TASK_ID_PATH: path.join(directory, 'task_sequence.json'),
-    AGV_RUNTIME_STATE_PATH: path.join(directory, 'runtime_state.json'), AGV_SHIFT_STATE_PATH: path.join(directory, 'shift_state.json'), AGV_HOME_STATIONS: '{"01":"S1","02":"S2"}'
+    AGV_RUNTIME_STATE_PATH: path.join(directory, 'runtime_state.json'), AGV_SHIFT_STATE_PATH: path.join(directory, 'shift_state.json'), AGV_HOME_STATIONS: '{"01":"S1","02":"S2"}', AGV_SIMULATION: '1'
   });
   if (options.twoRobotTrial === true) env.AGV_TWO_ROBOT_TRIAL = '1';
   const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'PATH'; env[pathKey] = bin + path.delimiter + (env[pathKey] || '');
@@ -70,12 +70,14 @@ async function createSimulation(options = {}) {
   }
   try {
     await child(path.join(bin, process.platform === 'win32' ? 'mosquitto.exe' : 'mosquitto'), ['-c', config], 'broker', mqttPort);
-    await child(binary, [], 'core', corePort);
+    await child(binary, options.coreArgs || [], 'core', corePort);
     gateway = createGateway({ dbPath: path.join(directory, 'simulation.db'), coreUrl: `ws://127.0.0.1:${corePort}`, coreToken: '', authToken: '', allowedOrigins: '', reconnectMs: 200 });
     runtime = new SimulationRuntime({ directory, map, mqttPort });
+    runtime.coreCommand = payload=>gateway.command(payload);
     gateway.app.use('/sim-assets', express.static(path.join(__dirname, 'public')));
     gateway.app.get('/simulation', (req, res) => {
       const html = fs.readFileSync(path.join(root, 'AGVwebserver/index.html'), 'utf8')
+        .replace('<body', '<body data-sim-launcher="' + (options.launcherUrl || '').replace(/[&"<>]/g, c=>({'&':'&amp;','"':'&quot;','<':'&lt;','>':'&gt;'}[c])) + '"')
         .replace('</head>', '<link rel="stylesheet" href="/sim-assets/simulation.css"></head>')
         .replace('Trung tâm điều phối', 'Phòng mô phỏng AGV').replace('Kho AGV · Hai xe tự hành', 'MÔ PHỎNG · Hai xe ảo · Core C++ thật')
         .replace('<title>', '<title>Mô phỏng · ')
@@ -98,6 +100,7 @@ async function createSimulation(options = {}) {
       res.json({ ok: true });
     }));
     gateway.app.post('/sim-api/settings', route((req, res) => res.json({ ok: true, settings: runtime.configure(req.body) })));
+    gateway.app.post('/sim-api/edge-obstacles', route(async (req,res)=>res.json(await runtime.setEdgeObstacle(req.body))));
     gateway.app.post('/sim-api/robots/:id/action', route(async (req, res) => {
       const robot = await runtime.action(req.params.id, req.body);
       res.json({ ok: true, robot, ...runtime.actionMessage(req.params.id, req.body) });
@@ -127,7 +130,7 @@ async function createSimulation(options = {}) {
       if (closing || !['core', 'broker'].includes(name)) throw new Error('Không thể restart fixture');
       const process = children.filter(p => p.simulationName === name).at(-1);
       if (process && process.exitCode == null) { process.kill(); await once(process, 'exit'); }
-      return name === 'core' ? child(binary, [], 'core', corePort) :
+      return name === 'core' ? child(binary, options.coreArgs || [], 'core', corePort) :
         child(path.join(bin, process.platform === 'win32' ? 'mosquitto.exe' : 'mosquitto'), ['-c', config], 'broker', mqttPort);
     }
     return { runtime, gateway, directory, base, url: base + '/simulation', close, restartProcess };

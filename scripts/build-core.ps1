@@ -1,18 +1,39 @@
-param([string]$Compiler = 'g++', [switch]$Tests, [string]$OutputDirectory = '')
+﻿param([string]$Compiler = 'g++', [switch]$Tests, [string]$OutputDirectory = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $outputRoot = if ($OutputDirectory) { [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory)) } else { Join-Path $projectRoot 'build' }
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $source = Join-Path $projectRoot 'src/core/AGVserver.cpp'
 $binary = Join-Path $outputRoot 'agv_core.exe'
-& $Compiler '-I' "$projectRoot/include" '-std=c++17' $source '-lmosquitto' '-lcrypto' '-lssl' '-lws2_32' '-o' $binary
-if ($LASTEXITCODE -ne 0) {throw 'Build core thất bại'}
-Write-Output "Core: $binary"
-if ($Tests) {
-    $testSource = Join-Path $projectRoot 'tests/core_tests.cpp'
-    $testBinary = Join-Path $outputRoot 'core_tests.exe'
-    & $Compiler '-I' "$projectRoot/include" '-std=c++17' $testSource '-o' $testBinary
-    if ($LASTEXITCODE -ne 0) {throw 'Build kiểm thử thất bại'}
-    & $testBinary
-    if ($LASTEXITCODE -ne 0) {throw 'Kiểm thử core thất bại'}
+# Windows không cho linker ghi đè executable đang chạy; không tự dừng Core.
+if ($env:OS -eq 'Windows_NT') {
+    $runningCore = Get-CimInstance Win32_Process -Filter "Name = 'agv_core.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq $binary }
+    if ($runningCore) {
+        throw "Core tại '$binary' đang chạy (PID $($runningCore.ProcessId -join ', ')). Dừng đúng phiên Core trước khi build/F5, hoặc dùng -OutputDirectory .qa/core-build để build riêng."
+    }
+}
+$compilerCommand = Get-Command $Compiler -CommandType Application -ErrorAction SilentlyContinue
+if (-not $compilerCommand -and $Compiler -eq 'g++') {
+    $compilerCommand = Get-Command 'C:/msys64/ucrt64/bin/g++.exe' -CommandType Application -ErrorAction SilentlyContinue
+}
+if (-not $compilerCommand) { throw "Không tìm thấy compiler '$Compiler'. Dùng -Compiler với đường dẫn g++.exe." }
+$compilerPath = $compilerCommand.Source
+$previousPath = $env:PATH
+# Compiler và test đều cần DLL UCRT64 kể cả khi VS Code chưa nhận PATH mới.
+$env:PATH = (Split-Path -Parent $compilerPath) + ';' + $previousPath
+try {
+    & $compilerPath '-I' "$projectRoot/include" '-std=c++17' '-g' $source '-lmosquitto' '-lcrypto' '-lssl' '-lws2_32' '-o' $binary
+    if ($LASTEXITCODE -ne 0) {throw "Build core thất bại (compiler exit $LASTEXITCODE). Xem lỗi GCC/linker phía trên; đầu ra: $binary"}
+    Write-Output "Core: $binary"
+    if ($Tests) {
+        $testSource = Join-Path $projectRoot 'tests/core_tests.cpp'
+        $testBinary = Join-Path $outputRoot 'core_tests.exe'
+        & $compilerPath '-I' "$projectRoot/include" '-std=c++17' '-g' $testSource '-o' $testBinary
+        if ($LASTEXITCODE -ne 0) {throw 'Build kiểm thử thất bại'}
+        & $testBinary
+        if ($LASTEXITCODE -ne 0) {throw 'Kiểm thử core thất bại'}
+    }
+} finally {
+    $env:PATH = $previousPath
 }

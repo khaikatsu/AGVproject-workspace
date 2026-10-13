@@ -6,13 +6,21 @@
 
 // Topological turns at each RFID. A route alone cannot establish the physical
 // heading of a robot placed on its first tag; Unknown must not authorize motion.
-enum class RouteTurn { Unknown, Straight, Left, Right, Reverse };
+enum class RouteTurn { Unknown, Straight, Left, Right, Reverse, TurnAround };
 struct RoutePlan {
     RouteTurn departure[Config::MAX_PATH_NODES]{};
+    uint8_t turnCrossings[Config::MAX_PATH_NODES]{};
     uint8_t count = 0;
 };
 
 namespace RoutePlanner {
+// Only an arrival on the active commanded segment proves the incoming heading.
+// Moving/scanning tags by hand while stopped must clear the old heading.
+inline const char* confirmedIncoming(bool expectedArrival, const char* from, const char* to) {
+    return expectedArrival && from && from[0] && to && to[0] &&
+           std::strcmp(from, to) != 0 ? from : nullptr;
+}
+
 inline const char* turnName(RouteTurn turn) {
     switch (turn) {
         case RouteTurn::Unknown: return "UNKNOWN_HEADING";
@@ -20,6 +28,7 @@ inline const char* turnName(RouteTurn turn) {
         case RouteTurn::Left: return "LEFT";
         case RouteTurn::Right: return "RIGHT";
         case RouteTurn::Reverse: return "REVERSE";
+        case RouteTurn::TurnAround: return "TURN_AROUND_RIGHT";
     }
     return "UNKNOWN_HEADING";
 }
@@ -38,6 +47,65 @@ inline bool directedEdge(const char* from, const char* to) {
         if (edge.twoWay && std::strcmp(edge.to, from) == 0 && std::strcmp(edge.from, to) == 0) return true;
     }
     return false;
+}
+
+inline RobotHeading edgeHeading(const char* from, const char* to, bool reverse = false) {
+    const auto* a = node(from); const auto* b = node(to);
+    if (!a || !b || !directedEdge(from, to)) return RobotHeading::Unknown;
+    const int dx = (b->x - a->x) * (reverse ? -1 : 1);
+    const int dy = (b->y - a->y) * (reverse ? -1 : 1);
+    if (dx == 0 && dy != 0) return dy < 0 ? RobotHeading::North : RobotHeading::South;
+    if (dy == 0 && dx != 0) return dx < 0 ? RobotHeading::West : RobotHeading::East;
+    return RobotHeading::Unknown;
+}
+inline RouteTurn turnFromHeading(RobotHeading incoming, RobotHeading outgoing) {
+    if (incoming == RobotHeading::Unknown || outgoing == RobotHeading::Unknown) return RouteTurn::Unknown;
+    const int delta = (static_cast<int>(outgoing) - static_cast<int>(incoming) + 4) % 4;
+    return delta == 0 ? RouteTurn::Straight : delta == 1 ? RouteTurn::Right :
+           delta == 2 ? RouteTurn::Reverse : RouteTurn::Left;
+}
+
+// Warehouses face inward for cargo service; charging stations face their gate
+// so each new route can depart forward without a docking heading reset.
+inline bool station(const char* id) {
+    return id && (std::strcmp(id,"S1") == 0 || std::strcmp(id,"S2") == 0);
+}
+inline const char* bayGate(const char* id) {
+    if (!id || !id[0] || !id[1] || id[2]) return nullptr;
+    if (id[0] == 'K' && id[1] >= '1' && id[1] <= '6') {
+        static constexpr const char* gates[] = {"G1","G2","G3","G4","G5","G6"};
+        return gates[id[1]-'1'];
+    }
+    if (std::strcmp(id,"S1") == 0) return "GS1";
+    if (std::strcmp(id,"S2") == 0) return "GS2";
+    return nullptr;
+}
+inline RobotHeading bayHeading(const char* id) {
+    const char* gate = bayGate(id);
+    return gate ? (station(id) ? edgeHeading(id,gate) : edgeHeading(gate,id)) : RobotHeading::Unknown;
+}
+inline bool bayExit(const char* from, const char* to) {
+    const char* gate = bayGate(from);
+    return gate && to && std::strcmp(gate,to) == 0 && directedEdge(from,to);
+}
+inline bool dockingReverse(const char* from, const char* to) {
+    return !station(from) && bayExit(from,to);
+}
+inline bool physicalBranch(const char* current, RobotHeading heading) {
+    for (const auto& edge : RouteMap::EDGES) {
+        if (std::strcmp(edge.from,current) == 0 && edgeHeading(edge.from,edge.to) == heading) return true;
+        if (std::strcmp(edge.to,current) == 0 && edgeHeading(edge.from,edge.to,true) == heading) return true;
+    }
+    return false;
+}
+inline bool reverseAllowed(const char* current, const CoreCommand& command, const RoutePlan& route,
+                           bool calibrated = Config::REVERSE_STEERING_CONFIRMED,
+                           bool bayTrial = Config::ENABLE_CORE_MOTION) {
+    if (command.pathLength != route.count) return false;
+    for (uint8_t i=0;i<route.count;++i)
+        if (route.departure[i] == RouteTurn::Reverse && !calibrated &&
+            !(bayTrial && dockingReverse(i ? command.path[i-1] : current,command.path[i]))) return false;
+    return true;
 }
 
 // Supervised one-robot trial: only robot 01, with a fully resolved directed
@@ -78,7 +146,8 @@ inline RouteTurn turn(const char* previous, const char* current, const char* nex
 }
 
 inline bool plan(const char* previous, const char* current, const CoreCommand& command,
-                 RoutePlan& output, bool previousWasReverse = false) {
+                 RoutePlan& output, bool previousWasReverse = false,
+                 RobotHeading confirmedHeading = RobotHeading::Unknown) {
     output = RoutePlan{};
     if (command.type != CoreCommandType::Goto || !node(current) || !node(command.target) ||
         command.pathLength > Config::MAX_PATH_NODES) return false;
@@ -90,17 +159,24 @@ inline bool plan(const char* previous, const char* current, const CoreCommand& c
         if (!directedEdge(from, to)) return false;
         const char* incoming = i == 0 ? previous : (i == 1 ? current : command.path[i - 2]);
         RouteTurn decision = incoming && incoming[0] ? turn(incoming, from, to) : RouteTurn::Unknown;
-        // The operator confirmed each vehicle faces its own GS tag while at S1/S2.
-        // Only these two boot headings are known without a previous RFID.
-        if (i == 0 && (!incoming || !incoming[0]) &&
-            ((std::strcmp(from, "S1") == 0 && std::strcmp(to, "GS1") == 0) ||
-             (std::strcmp(from, "S2") == 0 && std::strcmp(to, "GS2") == 0)))
-            decision = RouteTurn::Straight;
-        if (previousWasReverse) {
+        const RobotHeading docking = bayHeading(from);
+        const bool explicitHeading = docking != RobotHeading::Unknown ||
+                                     (i == 0 && confirmedHeading != RobotHeading::Unknown);
+        if (explicitHeading) decision = turnFromHeading(
+            docking != RobotHeading::Unknown ? docking : confirmedHeading, edgeHeading(from,to));
+        if (previousWasReverse && !explicitHeading) {
             if (decision == RouteTurn::Left) decision = RouteTurn::Right;
             else if (decision == RouteTurn::Right) decision = RouteTurn::Left;
             else if (decision == RouteTurn::Reverse) decision = RouteTurn::Straight;
             else if (decision == RouteTurn::Straight) decision = RouteTurn::Reverse; // continue backing on the same line
+        }
+        if (decision == RouteTurn::Reverse && !dockingReverse(from,to)) {
+            decision = RouteTurn::TurnAround;
+        }
+        if (decision == RouteTurn::TurnAround) {
+            const auto outgoing = edgeHeading(from,to);
+            const auto halfway = static_cast<RobotHeading>((static_cast<int>(outgoing)+2)%4+1);
+            output.turnCrossings[i] = 1 + (physicalBranch(from,halfway) ? 1 : 0);
         }
         output.departure[i] = decision;
         previousWasReverse = decision == RouteTurn::Reverse;

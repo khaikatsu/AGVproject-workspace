@@ -11,6 +11,7 @@ public:
                 std::string savePath = "data/map_layout.json")
         : map_(map), fleet_(fleet), arbiter_(arbiter), savePath_(std::move(savePath)) {}
     void setShiftController(ShiftController* shift) { shift_ = shift; }
+    void setSimulationMode(bool enabled) { simulationMode_ = enabled; }
 
     json execute(const json& j) {
         json result = {{"type", "command_result"}, {"request_id", j.value("request_id", "")}, {"ok", false}};
@@ -49,7 +50,7 @@ public:
                     (*a)["uncertain_path"].empty()) {
                     const auto shift = shift_->snapshot();
                     const auto& homes = shift["home_stations"];
-                    parkedAndStopped = shift.value("two_robot_trial",false) &&
+                    parkedAndStopped = (shift.value("two_robot_trial",false) || shift.value("supervised_trial",false)) &&
                         homes.contains(owner) && (*a).value("node","") == homes[owner];
                 }
                 if (a != robots.end() && (*a)["state"] != "ERROR" &&
@@ -67,7 +68,18 @@ public:
                 if (!count) return failure(result, 404, "Khong tim thay task dang cho/chay");
                 data["cancelled"] = count;
             } else if (cmd == "clear_error") {
-                if (!fleet_.clearError(id(j, "id"))) return failure(result, 409, "Xe khong o trang thai loi hoac telemetry/vi tri chua hop le");
+                const auto trial = fleet_.toJson().value("trial_robot_id",std::string{});
+                const auto robot = id(j,"id");
+                const bool robot01Reset = trial == "01" && robot == "01";
+                if (!robot01Reset && ((shift_ && shift_->snapshot().value("supervised_trial",false)) ||
+                    !trial.empty())) {
+                    const auto snapshot = fleet_.toJson();
+                    const auto& homes = snapshot["home_stations"];
+                    for (const auto& a : snapshot["agvs"]) if (a["id"] == robot &&
+                        (!homes.contains(robot) || a["node"] != homes[robot]))
+                        return failure(result,409,"Ca thu: dung xe va xac minh tai tram rieng S1/S2 truoc khi reset loi; RFID giua tuyen khong xac nhan huong sau reboot");
+                }
+                if (!fleet_.clearError(robot)) return failure(result, 409, "Xe khong o trang thai loi hoac telemetry/vi tri chua hop le");
             } else if (cmd == "remove_agv") {
                 auto robot = id(j, "id");
                 auto fleet = fleet_.toJson();
@@ -107,6 +119,18 @@ public:
                 if (ttl < 0 || ttl > 86400) return failure(result,400,"TTL phai trong 0..86400");
                 if (blocked) fleet_.reportObstacle("", node,ttl); else fleet_.clearObstacle(node);
                 data = {{"node", node}, {"blocked", blocked}};
+            } else if (cmd == "sim_edge_obstacle" || cmd == "sim_replan") {
+                if (!simulationMode_) return failure(result,403,"Lenh chi dung trong mo phong");
+                const auto deferred=j.value("deferred_agvs",std::vector<std::string>{});
+                if (deferred.size()>2 || std::any_of(deferred.begin(),deferred.end(),[](const std::string& id){return id!="01" && id!="02";}))
+                    return failure(result,400,"Danh sach xe mo phong khong hop le");
+                if (cmd=="sim_edge_obstacle") {
+                    const auto from=id(j,"from"),to=id(j,"to");
+                    const bool blocked=j.at("blocked").get<bool>();
+                    map_.setEdgeObstacle(from,to,blocked);
+                    data={{"from",from},{"to",to},{"blocked",blocked}};
+                }
+                fleet_.simulationReplan(deferred);
             } else if (cmd == "save_map") {
                 if (j.value("path", savePath_) != savePath_) return failure(result, 400, "Chi luu vao duong dan ban do cau hinh cua core");
                 map_.saveToFile(savePath_);
@@ -133,4 +157,5 @@ private:
     MutexArbiter& arbiter_;
     std::string savePath_;
     ShiftController* shift_ = nullptr;
+    bool simulationMode_ = false;
 };

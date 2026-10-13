@@ -95,6 +95,20 @@ async function main() {
     await page.locator(`#taskHistoryTable tr[title="${model.fleet.tasks[0].task_id}"] button`).filter({hasText:'Hủy'}).click();
     await page.locator('#taskHistoryTable').filter({hasText:'Đã hủy'}).waitFor();
     assert.equal(commands.find(c=>c.cmd === 'cancel_task').task_id,model.fleet.tasks[0].task_id);
+    // Automatic heading telemetry; no editor and no SET_HEADING request.
+    assert.equal(await page.locator('#headingPanel').count(),0);
+    assert.equal(await page.locator('[data-heading-choice]').count(),0);
+    Object.assign(model.fleet.agvs[0],{heading_supported:true,heading:'N',heading_source:'bay_default',uncertain_path:[]});push();
+    await page.locator('[data-robot-heading="01"][data-heading="N"]').waitFor();
+    assert.equal(await page.locator('[data-robot-heading="01"]').getAttribute('transform'),'rotate(-90)');
+    await page.locator('#center-panel').screenshot({path:path.join(directory,'robot-heading-default.png')});
+    model.fleet.agvs[0].heading='E';model.fleet.agvs[0].heading_source='route';push();
+    await page.waitForFunction(()=>document.querySelector('[data-robot-heading="01"]')?.getAttribute('transform')==='rotate(0)');
+    model.fleet.agvs[0].online=false;push();
+    await page.waitForFunction(()=>!document.querySelector('[data-robot-heading="01"]'));
+    model.fleet.agvs[0].online=true;model.fleet.agvs[0].heading='UNKNOWN';push();
+    await page.waitForFunction(()=>!document.querySelector('[data-robot-heading="01"]'));
+    assert.equal(commands.some(c=>c.cmd==='set_heading'),false);
     model.fleet.agvs[0].state = 'ERROR';model.fleet.agvs[0].error = '<img src=x onerror="window.__xss=2"> lỗi motor';push();
     await page.locator('#fleetTable').filter({hasText:'lỗi motor'}).waitFor();assert.equal(await page.evaluate(()=>window.__xss),undefined);
     model.fleet.agvs[1].state = 'WORKING';model.fleet.agvs[1].path = ['B','Z'];model.fleet.agvs[1].target = 'Z';push();
@@ -185,6 +199,25 @@ async function main() {
     await page.waitForFunction(()=>!document.querySelector('#startShiftBtn').disabled);
     await page.locator('#startShiftBtn').click();await page.waitForFunction(()=>!document.querySelector('#submitTaskBtn').disabled);
     assert.equal(commands.at(-1).cmd,'start_shift');
+    // Menu supervised solo: correct ID on the dashboard, other robot disabled.
+    const fleetBeforeMenu=model.fleet.agvs;
+    model.fleet.agvs=[...['01','02'].map(id=>({id,node:id==='01'?'S1':'S2',battery:-1,state:'IDLE',
+      path:[],target:'',task_id:'',position_valid:true,battery_measured:false,last_seen_s:0,online:true}))];
+    for(const id of ['01','02']) {
+      model.shift.trial_robot_id=id;model.shift.supervised_trial=true;model.shift.test_mode='robot'+id;
+      model.shift.home_stations={[id]:id==='01'?'S1':'S2'};push();
+      await page.locator('#coreModeStatus').filter({hasText:`thử riêng xe ${id}`}).waitFor();
+      await page.waitForFunction(selected=>{
+        const options=[...document.querySelector('#task_agv').options];
+        return options.find(o=>o.value===selected)?.disabled===false &&
+          options.find(o=>o.value===(selected==='01'?'02':'01'))?.disabled===true;
+      },id);
+      assert.match(await page.locator('#taskBatteryHint').innerText(),new RegExp(`Thử riêng xe ${id}`));
+      assert.equal(await page.locator('#task_agv option').first().innerText(),`Tự động giao cho xe ${id}`);
+    }
+    model.shift.trial_robot_id='';model.shift.supervised_trial=false;model.shift.test_mode='normal';
+    model.fleet.agvs=fleetBeforeMenu;
+    model.shift.home_stations={'01':'S1','02':'S2'};push();
     await page.locator('#endShiftBtn').click();await page.waitForFunction(()=>document.querySelector('#submitTaskBtn').disabled);
     assert.equal(commands.at(-1).cmd,'end_shift');
     await page.screenshot({path:path.join(directory,'shift-home-stations.png'),fullPage:true});
@@ -199,7 +232,7 @@ async function main() {
     assert.equal(commands.at(-1).blocked,false);
     await page.locator('[data-view-target="overview"]').click();
     model.fleet.agvs[0].position_valid=false;model.fleet.agvs[0].state='UNLOCALIZED';push();
-    await page.waitForFunction(()=>document.querySelectorAll('#agvsG rect').length===0);
+    await page.waitForFunction(()=>document.querySelectorAll('#agvsG [data-robot]').length===0);
     assert.match(await page.locator('#fleetTable').innerText(),/Chưa xác minh/);
     assert.match(await page.locator('#fleetTable').innerText(),/Chờ quét RFID/);
     await page.setViewportSize({width:390,height:844});

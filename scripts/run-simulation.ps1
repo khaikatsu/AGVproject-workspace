@@ -5,6 +5,11 @@ if ($Port -in @(1883,3000,8080) -or $Port -lt 1 -or $Port -gt 65535) { throw 'Ch
 try { $simulationExisting = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/sim-api/state" -TimeoutSec 1 } catch { $simulationExisting = $null }
 try { $launcherExisting = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/launch/status" -TimeoutSec 1 } catch { $launcherExisting = $null }
 if ($null -ne $launcherExisting.active) {
+    if ($Build) {
+        if ($launcherExisting.active) { throw 'Đóng tab mô phỏng và chờ phiên dừng trước khi build lại Core.' }
+        & (Join-Path $PSScriptRoot 'build-core.ps1') -OutputDirectory 'build/simulation'
+        if ($LASTEXITCODE -ne 0) { throw 'Build Core thất bại' }
+    }
     Write-Host "Mở http://127.0.0.1:$Port/simulation để bắt đầu mô phỏng."
     return
 }
@@ -13,8 +18,8 @@ if ($simulationExisting.simulation -eq $true) {
     Write-Host 'Dừng phiên cũ bằng scripts/stop-simulation.ps1 trước nếu muốn một phiên mới.'
     return
 }
-if ($Build -or !(Test-Path -LiteralPath (Join-Path $simulationRoot 'build/agv_core.exe'))) {
-    & (Join-Path $PSScriptRoot 'build-core.ps1')
+if ($Build -or !(Test-Path -LiteralPath (Join-Path $simulationRoot 'build/simulation/agv_core.exe'))) {
+    & (Join-Path $PSScriptRoot 'build-core.ps1') -OutputDirectory 'build/simulation'
     if ($LASTEXITCODE -ne 0) { throw 'Build Core thất bại' }
 }
 # Env is changed only for this command, then restored for the user's shell.

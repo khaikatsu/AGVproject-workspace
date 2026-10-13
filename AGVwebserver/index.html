@@ -591,6 +591,7 @@
     #systemLogBox .log-item {display:block;overflow-wrap:anywhere;}
     @media(max-width:1100px) {html,body {height:auto;min-height:100%;overflow:auto;} #topbar {height:auto;min-height:56px;flex-wrap:wrap;padding:10px;} #topbar>div:last-child {flex-wrap:wrap;} #main-container {display:grid;grid-template-columns:minmax(300px,1fr) minmax(300px,1fr);overflow:visible;} #center-panel {grid-column:1 / -1;grid-row:1;min-height:560px;} #left-panel,#right-panel {width:auto;overflow:visible;} }
     @media(max-width:680px) {#main-container {display:flex;flex-direction:column;} #center-panel {min-height:480px;order:-1;} #topbar input {width:210px;} #mapPreviewSvg {height:350px;} #toastContainer {left:8px;right:8px;bottom:8px;max-width:none;} }
+    #headingStatus {flex-basis:100%;}
   </style>
   <link rel="stylesheet" href="/dashboard-layout.css?v=20261008-core-mode">
 </head>
@@ -671,7 +672,7 @@
           <g id="edgesG"></g><g id="routesG" style="pointer-events:none"></g><g id="nodesG"></g><g id="agvsG"></g>
         </svg>
       </div>
-      <div class="map-foot"><div id="dataFreshness">Đang chờ bản đồ và telemetry từ core</div><div>Vị trí: node RFID gần nhất · Nét đứt: tuyến dự kiến · Mũi tên: hướng đường · Số: trọng số</div><div id="mapLegend">M: RFID / vùng chung · K: kho · G: cửa kho · S: trạm sạc · GS: cửa sạc · C: góc</div></div>
+      <div class="map-foot"><div id="dataFreshness">Đang chờ bản đồ và telemetry từ core</div><div>Chấm xe: RFID gần nhất · Mũi tên: đầu xe · Kho: tiến vào, lùi ra · Trạm: đầu hướng ra, tiến xuất phát · Nét đứt: tuyến dự kiến</div><div id="mapLegend">M: RFID / vùng chung · K: kho · G: cửa kho · S: trạm sạc · GS: cửa sạc · C: góc</div></div>
     </section>
     <aside id="right-panel" aria-label="Điều khiển và cấu hình">
       <section class="card compact panel-card" data-views="overview tasks">
@@ -685,8 +686,20 @@
       <section class="card compact panel-card" data-views="overview tasks">
         <div class="card-header">Giao nhiệm vụ</div>
         <div class="task-mode-switch" role="group" aria-label="Loại nhiệm vụ">
+          <button id="warehouseModeBtn" type="button" aria-pressed="false" onclick="setTaskMode('warehouse')" hidden>Lấy / hạ hàng</button>
           <button id="orderModeBtn" type="button" aria-pressed="true" onclick="setTaskMode('order')">Đơn hàng kho</button>
           <button id="nodeModeBtn" type="button" aria-pressed="false" onclick="setTaskMode('node')">Đi tới node</button>
+        </div>
+        <div id="warehouseTaskForm" hidden>
+          <p>Test xe 01: tới kho, dừng 5 giây rồi lùi ra gate.</p>
+          <label for="warehouseTarget">Kho thực hiện</label>
+          <select id="warehouseTarget" class="form-group" onchange="updateWarehouseControls()"></select>
+          <div class="row-btn">
+            <button id="pickupWarehouseBtn" type="button" data-control class="btn" onclick="warehouseAction('pickup',this)">Lấy hàng</button>
+            <button id="dropoffWarehouseBtn" type="button" data-control class="btn btn-outline" onclick="warehouseAction('dropoff',this)">Hạ hàng</button>
+          </div>
+          <div id="warehouseActionStatus" class="field-hint" role="status">Chờ xe 01 sẵn sàng.</div>
+          <p>Đến gate thì chờ lệnh tiếp theo. Core ra lệnh xoay theo hướng của tuyến mới.</p>
         </div>
         <div id="orderTaskForm">
           <div class="order-progress" aria-live="polite">
@@ -702,7 +715,8 @@
           <button type="button" class="btn-outline full-width" onclick="addOrderLine('dropoff')">Thêm kho giao</button>
           <div id="orderTotals" class="field-hint">Lấy 0 · giao 0 kiện</div>
           <button id="submitOrderBtn" type="button" data-control data-task-control class="btn full-width" onclick="submitOrder()">Tạo đơn hàng</button>
-          <p class="card-help">Mỗi chuyến một kiện. Server chờ xe đứng tại RFID 10 giây để mô phỏng bốc/dỡ; lệnh ngoài đơn có thể làm gián đoạn. Không xác nhận hàng vật lý.</p>
+          <p id="orderDispatchHint">Server chọn xe sẵn sàng gần kho lấy nhất theo đường có hướng.</p>
+          <p class="card-help">Mỗi chuyến một kiện: dừng 5 giây trong kho lấy/giao, lùi ra gate rồi xoay theo tuyến tiếp theo. Đứng chờ mô phỏng thao tác hàng; chưa xác nhận hàng vật lý.</p>
         </div>
         <div id="nodeTaskForm" hidden>
           <label for="task_agv">Xe thực hiện</label>
@@ -776,7 +790,7 @@
       <button class="btn full-width" type="submit">Đăng nhập</button>
     </form>
   </dialog>
-  <script src="/dashboard.js?v=20261009-two-robot-trial"></script>
+  <script src="/dashboard.js?v=20261010-warehouse-actions"></script>
 </body>
 
 </html>

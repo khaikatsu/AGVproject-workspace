@@ -34,6 +34,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <io.h>
   #pragma comment(lib, "ws2_32.lib")
 #else
 #include <sys/socket.h>
@@ -170,14 +171,20 @@ static json recentLogsJson() {
 void publishTo(const string& topic, const string& payload) {
     if (g_mqttConnected && g_storageHealthy) g_outbound.push_back({topic,payload});
 }
-static void checkpointAndPublish() {
-    if (!g_storageHealthy) {g_outbound.clear();return;}
+static void checkpointAndPublish(bool attemptRecovery = false) {
+    if (!g_storageHealthy && !attemptRecovery) {g_outbound.clear();return;}
+    const bool recovering = !g_storageHealthy;
     try {
         if (g_runtime) g_runtime->save({{"version",1},{"map",g_map.toJson()},
             {"fleet",g_fleet.durableSnapshot()},{"mutex",g_arbiter.toJson()}});
     } catch (const std::exception& e) {
         g_storageHealthy = false;g_outbound.clear();g_fleet.setNetworkAvailable(false);
         pushLog(string("[LOI] Checkpoint: ")+e.what());throw;
+    }
+    if (recovering) {
+        g_storageHealthy = true;
+        g_fleet.setNetworkAvailable(g_mqttConnected.load());
+        pushLog("Checkpoint da ghi lai thanh cong; MQTT/heartbeat hoat dong lai, khong phat lai tuyen bi gian doan");
     }
     for (const auto& item : g_outbound) if (g_mosq && g_mqttConnected)
         mosquitto_publish(g_mosq,NULL,item.first.c_str(),static_cast<int>(item.second.size()),item.second.c_str(),0,false);
@@ -552,11 +559,8 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
             diagnostic.contains("taskActive") && diagnostic["taskActive"].is_boolean() &&
             diagnostic.contains("wifi") && diagnostic["wifi"].is_boolean() &&
             diagnostic.contains("mqtt") && diagnostic["mqtt"].is_boolean() &&
-            diagnostic.contains("leftDuty") && diagnostic["leftDuty"].is_number_integer() && diagnostic["leftDuty"] == 0 &&
-            diagnostic.contains("rightDuty") && diagnostic["rightDuty"].is_number_integer() && diagnostic["rightDuty"] == 0 &&
-            diagnostic.contains("rfidAgeMs") && diagnostic["rfidAgeMs"].is_number_integer()) {
-            const auto age = diagnostic["rfidAgeMs"].get<long long>();
-            if (age >= 0 && age <= 250) {
+            diagnostic.contains("leftDuty") && diagnostic["leftDuty"].is_number_integer() &&
+            diagnostic.contains("rightDuty") && diagnostic["rightDuty"].is_number_integer()) {
                 MotionDiagnostic motion;
                 motion.node = diagnostic["node"].get<string>();
                 motion.state = diagnostic["state"].get<string>();
@@ -565,15 +569,31 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                 motion.taskActive = diagnostic["taskActive"].get<bool>();
                 motion.wifi = diagnostic["wifi"].get<bool>();
                 motion.mqtt = diagnostic["mqtt"].get<bool>();
-                motion.rfidAgeMs = static_cast<std::uint32_t>(age);
+                if (diagnostic.contains("rfidAgeMs") && diagnostic["rfidAgeMs"].is_number_integer()) {
+                    const auto age = diagnostic["rfidAgeMs"].get<long long>();
+                    if (age >= 0 && age < UINT32_MAX) motion.rfidAgeMs = static_cast<std::uint32_t>(age);
+                }
                 motion.leftDuty = diagnostic["leftDuty"].get<int>();
                 motion.rightDuty = diagnostic["rightDuty"].get<int>();
+                motion.headingSupported = diagnostic.value("headingSupported",false);
+                motion.stationDockingSupported = diagnostic.value("stationDockingSupported",false);
+                motion.stationReady = diagnostic.value("stationReady",false);
+                motion.nodeOrdersSupported = diagnostic.value("nodeOrdersSupported",false);
+                motion.awaitingNodeOrder = diagnostic.value("awaitingNodeOrder",false);
+                motion.stationTurnRequired = diagnostic.value("stationTurnRequired",false);
+                motion.routeCommandId = diagnostic.value("routeCommandId",0L);
+                motion.pathIndex = diagnostic.value("pathIndex",-1);
+                motion.nextNode = diagnostic.value("nextNode",string{});
+                motion.heading = diagnostic.value("heading",string{});
+                motion.headingNode = diagnostic.value("headingNode",string{});
+                motion.headingSource = diagnostic.value("headingSource",string{});
                 g_fleet.observeMotionDiagnostic(agvId,motion);
-            }
         }
     } else if (action == "mutex_request") {
         auto zones = g_arbiter.toJson();
         auto fleet = g_fleet.toJson();
+        const auto selected = fleet.value("trial_robot_id",string{});
+        if (!selected.empty() && selected != agvId) { pushLog("[LOI] Xe khong duoc chon xin mutex"); return; }
         bool online = false;
         for (const auto& robot : fleet["agvs"]) if (robot["id"] == agvId && robot.value("online", false) && robot.value("position_valid", false) && robot["state"] != "ERROR") online = true;
         if (!zones.contains(payload) || !online) { pushLog("[LOI] Mutex request khong hop le"); return; }
@@ -648,7 +668,56 @@ static bool startMqtt(const string& brokerIp, int port) {
 // =========================================================================
 // PHẦN D — MAIN
 // =========================================================================
-int main() {
+static bool enabled(const char* name) {
+    const auto value = std::getenv(name);
+    return value && string(value) == "1";
+}
+
+static string startupMode(int argc, char** argv, bool& quit) {
+    string mode = std::getenv("AGV_TEST_MODE") ? std::getenv("AGV_TEST_MODE") : "";
+    bool menu = false;
+    for (int i = 1; i < argc; ++i) {
+        const string arg = argv[i];
+        if (arg == "--select-mode") menu = true;
+        else if (arg == "--mode" && i + 1 < argc) mode = argv[++i];
+        else throw std::invalid_argument("Dung --select-mode hoac --mode robot01|robot02|both|normal");
+    }
+#if defined(_WIN32)
+    const bool terminal = _isatty(_fileno(stdin)) != 0;
+#else
+    const bool terminal = isatty(STDIN_FILENO) != 0;
+#endif
+    const bool configured = enabled("AGV_ONE_ROBOT_TRIAL") || enabled("AGV_TWO_ROBOT_TRIAL") || enabled("AGV_MONITOR_ONLY_02");
+    if (menu || (mode.empty() && terminal && !configured)) {
+        cout << "\n========== CHON CHE DO CORE AGV ==========\n"
+             << "  1. Thu rieng xe 01 (tram S1, mutex bat)\n"
+             << "  2. Thu rieng xe 02 (tram S2, mutex bat)\n"
+             << "  3. Thu ca hai xe 01 + 02 (mutex bat)\n"
+             << "  4. Che do van hanh thuong\n"
+             << "  0. Thoat\n"
+             << "Chon che do khong tu mo ca/cho xe chay.\n";
+        string choice;
+        for (;;) {
+            cout << "Nhap lua chon (0-4), roi Enter: " << flush;
+            if (!getline(cin,choice) || !g_running) {quit = true;return "";}
+            stringstream input(choice);string token, extra;input >> token;
+            if (!(input >> extra)) {
+                if (token == "0") {quit = true;return "";}
+                if (token == "1") {mode = "robot01";break;}
+                if (token == "2") {mode = "robot02";break;}
+                if (token == "3") {mode = "both";break;}
+                if (token == "4") {mode = "normal";break;}
+            }
+            cout << "Lua chon khong hop le. Nhap 1, 2, 3, 4 hoac 0.\n";
+        }
+    }
+    if (!mode.empty() && mode != "robot01" && mode != "robot02" && mode != "both" && mode != "normal")
+        throw std::invalid_argument("Che do khong hop le: " + mode);
+    if (!mode.empty()) cout << "[MODE] " << mode << "\n" << flush;
+    return mode;
+}
+
+int main(int argc, char** argv) {
     if (const char* token = std::getenv("AGV_CORE_TOKEN")) {
         if (strlen(token) < 32 || string(token).find_first_of("\r\n") != string::npos) throw std::invalid_argument("AGV_CORE_TOKEN can >=32 ky tu");
     }
@@ -659,6 +728,12 @@ int main() {
 #if !defined(_WIN32)
     std::signal(SIGPIPE,SIG_IGN);
 #endif
+
+    bool quit = false;
+    string mode;
+    try { mode = startupMode(argc,argv,quit); }
+    catch (const std::exception& e) { cerr << "[MODE] " << e.what() << "\n";return 1; }
+    if (quit) return 0;
 
     // Giữ cổng trước mọi ghi map/counter và MQTT: bản chạy trùng phải thoát
     // mà không đẩy core đang chạy khỏi broker có cùng client ID.
@@ -719,16 +794,15 @@ int main() {
     g_fleet.setPublishCallback(publishTo);
     g_fleet.setStateChangedCallback(requestWake);
     g_fleet.setChargeThresholds(20, 40, 90); // <=20% -> di sac; can >=40% moi nhan task moi; sac xong ~90% neu ESP32 khong bao pin that
-    const bool singleRobotTrial = std::getenv("AGV_ONE_ROBOT_TRIAL") &&
-                                  std::string(std::getenv("AGV_ONE_ROBOT_TRIAL")) == "1";
-    const bool twoRobotTrial = std::getenv("AGV_TWO_ROBOT_TRIAL") &&
-                               std::string(std::getenv("AGV_TWO_ROBOT_TRIAL")) == "1";
-    const bool monitorRobot02 = std::getenv("AGV_MONITOR_ONLY_02") &&
-                                std::string(std::getenv("AGV_MONITOR_ONLY_02")) == "1";
+    const bool singleRobotTrial = mode.empty() && enabled("AGV_ONE_ROBOT_TRIAL");
+    const bool twoRobotTrial = mode.empty() ? enabled("AGV_TWO_ROBOT_TRIAL") : mode == "both";
+    const bool monitorRobot02 = mode.empty() && enabled("AGV_MONITOR_ONLY_02");
+    const string trialRobot = mode == "robot01" ? "01" : mode == "robot02" ? "02" : "";
     if (twoRobotTrial && (singleRobotTrial || monitorRobot02))
         throw std::invalid_argument("Khong ket hop che do thu hai xe voi thu mot xe/giam sat xe 02");
     g_fleet.setSingleRobotTrial(singleRobotTrial);
     g_fleet.setTwoRobotTrial(twoRobotTrial);
+    g_fleet.setTrialRobot(trialRobot);
     if (monitorRobot02) g_fleet.setMonitorOnlyRobot("02");
     g_fleet.setOfflineTimeout(10);    // >10s không telemetry -> OFFLINE, task gián đoạn, giữ vùng
     g_fleet.setAckTimeout(3000);             // 3s khong thay ACK lenh -> gui lai
@@ -738,24 +812,22 @@ int main() {
         : std::filesystem::path(MAP_SAVE_PATH).parent_path()/"runtime_state.json";
     g_runtime = std::make_unique<RuntimeStore>(runtimePath);
     if (const auto saved = g_runtime->load()) {
-        auto canonical = [](json map) {
-            map.erase("revision");map.erase("obstacles");map.erase("obstacle_deadlines");
-            for (auto field : {"nodes","edges","mutex_zones","charging_stations"}) std::sort(map[field].begin(),map[field].end(),[](const json& a,const json& b){return a.dump() < b.dump();});
-            return map;
-        };
-        if (canonical(g_map.toJson()) != canonical(saved->at("map"))) throw std::runtime_error("Runtime checkpoint khong khop map; can doi soat, khong tu xoa file");
+        if (!RuntimeStore::mapsCompatible(g_map.toJson(),saved->at("map"))) throw std::runtime_error("Runtime checkpoint khong khop map; can doi soat, khong tu xoa file");
         g_map.loadFromJson(saved->at("map"));g_arbiter.restore(saved->at("mutex"));g_fleet.restore(saved->at("fleet"));
         pushLog("Da khoi phuc queue/mutex; robot cho RFID va xac minh");
     }
     std::unordered_map<string,string> homes = {{"01","S1"},{"02","S2"}};
     if (std::getenv("AGV_HOME_STATIONS")) homes = json::parse(std::getenv("AGV_HOME_STATIONS")).get<decltype(homes)>();
-    if (singleRobotTrial) homes = {{"01",""}};
+    if (singleRobotTrial) homes = {{"01","S1"}};
+    if (!trialRobot.empty()) homes = {{trialRobot,trialRobot == "01" ? "S1" : "S2"}};
+    if (!mode.empty() && trialRobot.empty() && twoRobotTrial) homes = {{"01","S1"},{"02","S2"}};
     const auto shiftFile = std::getenv("AGV_SHIFT_STATE_PATH") ? std::filesystem::path(std::getenv("AGV_SHIFT_STATE_PATH"))
         : std::filesystem::path(MAP_SAVE_PATH).parent_path()/"shift_state.json";
-    g_shift = std::make_unique<ShiftController>(g_map,g_fleet,g_arbiter,shiftFile,homes,singleRobotTrial,twoRobotTrial);
-    if (std::getenv("AGV_HOME_STATIONS") && !homes.empty() && !g_shift->supported())
+    g_shift = std::make_unique<ShiftController>(g_map,g_fleet,g_arbiter,shiftFile,homes,singleRobotTrial,twoRobotTrial,trialRobot);
+    if ((std::getenv("AGV_HOME_STATIONS") || !mode.empty()) && !homes.empty() && !g_shift->supported())
         throw std::invalid_argument("AGV_HOME_STATIONS phai dung robot ID va tram sac hop le/khong trung");
     g_commands.setShiftController(g_shift.get());
+    g_commands.setSimulationMode(std::getenv("AGV_SIMULATION") && std::string(std::getenv("AGV_SIMULATION")) == "1");
     if (!g_shift->supported()) g_fleet.setAcceptingTasks(true);
     checkpointAndPublish();
     cout << "[SHIFT] " << g_shift->snapshot().dump() << "\n";
@@ -781,9 +853,14 @@ int main() {
     //    Dùng condition_variable thay vì sleep_for cố định: chờ tối đa 700ms NHƯNG được đánh
     //    thức SỚM HƠN ngay khi luồng MQTT gọi requestWake() (vật cản/lỗi từ ESP32) -- loại bỏ
     //    độ trễ tĩnh khi cần replanning gấp, mà vẫn giữ 700ms làm chu kỳ tick() nền bình thường.
+    auto lastStorageRetry = chrono::steady_clock::now();
     while (g_running) {
         { lock_guard<recursive_mutex> stateLock(g_stateMtx);
           try {
+            if (!g_storageHealthy && chrono::steady_clock::now()-lastStorageRetry >= chrono::seconds(2)) {
+                lastStorageRetry = chrono::steady_clock::now();
+                checkpointAndPublish(true);
+            }
             if (g_storageHealthy) {
                 g_fleet.tick(); if (g_shift && g_mqttConnected) g_shift->tick();
                 if (g_mqttConnected) {

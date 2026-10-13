@@ -1,7 +1,9 @@
 const {SimulatorMqtt} = require('./mqtt');
+const motion = require('./public/motion');
 class VirtualRobot {
   constructor(id,home,runtime) {
     this.id = id;this.home = home;this.node = home;this.runtime = runtime;this.battery = 85;
+    this.headingDeg = motion.parkedHeading(runtime.map,home);
     this.path = [];this.grants = new Map();this.lastCommand = 0;this.commandCache = new Map();this.edge = null;this.connected = false;
     this.distanceCm = 0;this.routeCost = 0;this.waitSeconds = 0;this.travelSeconds = 0;
     this.charging = false;this.paused = false;this.fault = '';this.cargo = false;this.dropAcks = 0;
@@ -45,7 +47,7 @@ class VirtualRobot {
   }
   command(command) {
     if (!Number.isInteger(command.cmd_id) || command.cmd_id <= 0 || command.cmd_id > 2147483647 ||
-        !['GOTO','STOP','WAIT','CHARGE_START'].includes(command.cmd)) throw new Error('command/cmd_id sai');
+        !['GOTO','STOP','WAIT','CHARGE_START','RESET_FAULT'].includes(command.cmd)) throw new Error('command/cmd_id sai');
     const signature = JSON.stringify({cmd:command.cmd,path:command.path,target:command.target});
     if (this.commandCache.has(command.cmd_id) && this.commandCache.get(command.cmd_id) !== signature) throw new Error('Cùng cmd_id nhưng khác nội dung');
     if (command.cmd_id <= this.lastCommand && !this.commandCache.has(command.cmd_id)) {this.log('command_stale',{cmd_id:command.cmd_id});return;}
@@ -85,6 +87,7 @@ class VirtualRobot {
   }
   step(dt) {
     if (!this.connected || this.paused || this.fault) return;
+    if (this.runtime.changingObstacles || this.routeUpdatePending && !this.edge) {this.waitSeconds+=dt;return;}
     if (Date.now()-(this.lastHeartbeat || this.connectedAt) > 3000) return this.stopWithError('Mất heartbeat Core >3s');
     if (!this.lastHeartbeat) return;
     if (this.charging) {
@@ -93,9 +96,11 @@ class VirtualRobot {
       return;
     }
     this.chargeReported = false;
-    if (!this.path.length) return;
+    if (!this.path.length) {this.blockedEdge=false;return;}
     if (this.battery <= 0) return this.stopWithError('Hết pin mô phỏng; xe dừng tại chỗ');
     const next = this.path[0];
+    this.blockedEdge=this.runtime.edgeBlocked?.(this.node,next) || false;
+    if (this.blockedEdge) {this.waitSeconds+=dt;return;}
     if (this.runtime.coreState?.map?.obstacles?.includes(next)) {this.waitSeconds += dt;return;}
     const mutex = this.runtime.map.nodes.find(node=>node.id === next)?.type === 'mutex';
     if (mutex && !this.grants.has(next)) {
@@ -109,6 +114,7 @@ class VirtualRobot {
     if (!this.edge) {
       const edge = this.runtime.edge(this.node,next);if (!edge) return this.stopWithError('Đường Core gửi không có trên map');
       this.edge = {from:this.node,to:next,progress:0,distance:edge.distance,weight:edge.weight};
+      this.headingDeg = motion.edgeHeading(this.runtime.map,this.node,next);
       this.log('edge_start',{...this.edge});
     }
     const travelled = Math.min(this.edge.distance*(1-this.edge.progress),this.runtime.settings.speedCmS*dt);
@@ -118,6 +124,7 @@ class VirtualRobot {
     this.battery = Math.max(0,this.battery-travelled*this.runtime.settings.drainPerCm);
     if (this.edge.progress < 1) return;
     const previous = this.node;this.node = next;this.path.shift();this.edge = null;
+    this.headingDeg = motion.parkedHeading(this.runtime.map,this.node) ?? this.headingDeg;
     if (previous !== next) this.release(previous);
     this.log('rfid',{node:this.node,battery:this.battery});
     if (this.pendingBattery != null) {this.battery = this.pendingBattery;this.pendingBattery = null;this.chargeReported = false;this.log('battery_applied',{battery:this.battery});}
@@ -132,13 +139,14 @@ class VirtualRobot {
   confirmRfid({hold = false} = {}) {
     // Explicit simulated reposition to last read RFID; never done automatically.
     this.edge = null;this.path = [];this.fault = '';this.paused = hold;this.waitingZone = null;this.pendingBattery = null;
+    this.headingDeg = motion.parkedHeading(this.runtime.map,this.node) ?? this.headingDeg;
     for (const zone of this.grants.keys()) if (zone !== this.node) this.release(zone);
     this.telemetry();this.log('manual_rfid_confirmation',{node:this.node});
   }
   snapshot() {
-    return {id:this.id,home:this.home,node:this.node,battery:this.battery,connected:this.connected,
+    return {id:this.id,home:this.home,node:this.node,battery:this.battery,connected:this.connected,headingDeg:this.headingDeg,
       paused:this.paused,fault:this.fault,charging:this.charging,cargo:this.cargo,path:this.path,edge:this.edge,
-      waitingZone:this.waitingZone || null,grants:[...this.grants.keys()],pendingBattery:this.pendingBattery,
+      waitingZone:this.waitingZone || null,grants:[...this.grants.keys()],pendingBattery:this.pendingBattery,blockedEdge:!!this.blockedEdge,routeUpdatePending:!!this.routeUpdatePending,
       distanceCm:this.distanceCm,routeCost:this.routeCost,waitSeconds:this.waitSeconds,travelSeconds:this.travelSeconds};
   }
   close() {this.mqtt?.close();}

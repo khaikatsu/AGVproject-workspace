@@ -36,15 +36,15 @@ bool RFIDModule::hasMapping(const char* node) const {
 }
 bool RFIDModule::readCard() {
     event_.newNode = false;
+    if (cardPending_) return false;
     if (static_cast<uint32_t>(millis() - lastPollMs_) < Config::RFID_POLL_INTERVAL_MS) return false;
     lastPollMs_ = millis();
-    // A stationary tag was HALTed after the previous read. Wake it so a
-    // reconnect can establish position from a fresh physical scan.
-    if (!reader_.PICC_IsNewCardPresent()) {
-        byte atqa[2];
-        byte atqaLength = sizeof(atqa);
-        if (reader_.PICC_WakeupA(atqa, &atqaLength) != MFRC522::STATUS_OK) return false;
-    }
+    // WUPA covers both new and HALTed stationary tags. One presence transaction
+    // avoids doing a REQA timeout followed by another WUPA timeout on every miss.
+    byte atqa[2];
+    byte atqaLength = sizeof(atqa);
+    const auto presence = reader_.PICC_WakeupA(atqa, &atqaLength);
+    if (presence != MFRC522::STATUS_OK && presence != MFRC522::STATUS_COLLISION) return false;
     if (!reader_.PICC_ReadCardSerial()) return false;
     if (reader_.uid.size != 4 && reader_.uid.size != 7 && reader_.uid.size != 10) {
         reader_.PICC_HaltA();
@@ -61,8 +61,20 @@ bool RFIDModule::readCard() {
     event_.newNode = event_.node[0] && std::strcmp(event_.node, lastNode_) != 0;
     if (!event_.node[0]) lastNode_[0] = '\0';
     if (event_.newNode) AGVMath::copyText(lastNode_, sizeof(lastNode_), event_.node);
+    cardPending_ = true;
+    // Return the UID before HALT/logging: the caller can stop the motor first.
+    return true;
+}
+void RFIDModule::finishRead() {
+    if (!cardPending_) return;
     reader_.PICC_HaltA();
     reader_.PCD_StopCrypto1();
-    if (Config::DEBUG_ENABLED) Serial.printf("[RFID] UID=%s node=%s new=%d\n", event_.uid, event_.node, event_.newNode);
-    return true;
+    cardPending_ = false;
+    const uint32_t now = millis();
+    if (Config::DEBUG_ENABLED && (event_.newNode || std::strcmp(lastLoggedUid_, event_.uid) != 0 ||
+                                 static_cast<uint32_t>(now-lastLogMs_) >= 1000)) {
+        Serial.printf("[RFID] UID=%s node=%s new=%d\n", event_.uid, event_.node, event_.newNode);
+        AGVMath::copyText(lastLoggedUid_, sizeof(lastLoggedUid_), event_.uid);
+        lastLogMs_ = now;
+    }
 }

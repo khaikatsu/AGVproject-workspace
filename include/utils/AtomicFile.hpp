@@ -18,13 +18,15 @@
 // Caller closes the temporary file before committing. Never remove the old file first.
 inline void durableReplaceFile(const std::filesystem::path& temporary,const std::filesystem::path& destination) {
 #if defined(_WIN32)
-    auto retry = [](auto operation) {
+    const auto started=GetTickCount64();
+    auto retry = [&](auto operation) {
         DWORD error = ERROR_SUCCESS;
-        for (int attempt=0;attempt<11;++attempt) {
+        for (int attempt=0;attempt<41;++attempt) {
             if (operation()) return;
             error = GetLastError();
-            if (attempt == 10 || (error != ERROR_SHARING_VIOLATION && error != ERROR_LOCK_VIOLATION && error != ERROR_ACCESS_DENIED)) break;
-            Sleep(20); // Antivirus/backup readers can briefly deny replacement; bounded to 200 ms.
+            if (attempt == 40 || GetTickCount64()-started >= 2000 ||
+                (error != ERROR_SHARING_VIOLATION && error != ERROR_LOCK_VIOLATION && error != ERROR_ACCESS_DENIED)) break;
+            Sleep(50); // One 2 s retry budget across open/replace, within the 3 s Core heartbeat watchdog.
         }
         throw std::runtime_error("Atomic file commit failed; Windows error="+std::to_string(error));
     };

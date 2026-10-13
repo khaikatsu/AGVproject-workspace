@@ -49,8 +49,31 @@ bool CoreProtocol::decodeCommand(const uint8_t* payload, size_t length, CoreComm
     else if (std::strcmp(cmd.c_str(), "STOP") == 0) command.type = CoreCommandType::Stop;
     else if (std::strcmp(cmd.c_str(), "CHARGE_START") == 0) command.type = CoreCommandType::ChargeStart;
     else if (std::strcmp(cmd.c_str(), "RESET_FAULT") == 0) command.type = CoreCommandType::ResetFault;
+    else if (std::strcmp(cmd.c_str(), "NODE_ORDER") == 0) command.type = CoreCommandType::NodeOrder;
     else return false;
 
+    if (command.type == CoreCommandType::NodeOrder) {
+        const auto route = doc["route_cmd_id"];
+        if (!route.is<int32_t>() || route.as<int32_t>() < 1 || route.as<int32_t>() >= command.cmdId ||
+            !doc["path_index"].is<unsigned int>() || doc["path_index"].as<unsigned int>() > Config::MAX_PATH_NODES ||
+            !doc["turn_crossings"].is<unsigned int>() || doc["turn_crossings"].as<unsigned int>() > 2 ||
+            !nodeText(doc["node"],command.node,sizeof(command.node)) ||
+            !nodeText(doc["next_node"],command.nextNode,sizeof(command.nextNode)) ||
+            !doc["maneuver"].is<const char*>()) return false;
+        const JsonString maneuver = doc["maneuver"].as<JsonString>();
+        if (maneuver.size() != std::strlen(maneuver.c_str()) ||
+            !AGVMath::copyText(command.maneuver,sizeof(command.maneuver),maneuver.c_str())) return false;
+        const bool pivot = std::strcmp(command.maneuver,"LEFT") == 0 || std::strcmp(command.maneuver,"RIGHT") == 0 ||
+                           std::strcmp(command.maneuver,"TURN_AROUND_RIGHT") == 0 || std::strcmp(command.maneuver,"STATION_TURN_RIGHT") == 0;
+        if (!pivot && std::strcmp(command.maneuver,"STRAIGHT") != 0 && std::strcmp(command.maneuver,"REVERSE") != 0) return false;
+        command.routeCmdId = route.as<int32_t>();
+        command.pathIndex = doc["path_index"].as<unsigned int>();
+        command.turnCrossings = doc["turn_crossings"].as<unsigned int>();
+        if (pivot ? command.turnCrossings < 1 : command.turnCrossings != 0) return false;
+        if ((std::strcmp(command.maneuver,"LEFT") == 0 || std::strcmp(command.maneuver,"RIGHT") == 0 ||
+             std::strcmp(command.maneuver,"STATION_TURN_RIGHT") == 0) && command.turnCrossings != 1) return false;
+        return true;
+    }
     if (command.type != CoreCommandType::Goto) return true;
     if (!nodeText(doc["target"], command.target, sizeof(command.target))) return false;
     JsonArrayConst path = doc["path"].as<JsonArrayConst>();
@@ -67,10 +90,35 @@ bool CoreProtocol::decodeCommand(const uint8_t* payload, size_t length, CoreComm
 
 bool CoreProtocol::sameCommand(const CoreCommand& a, const CoreCommand& b) {
     if (a.type != b.type || a.cmdId != b.cmdId || a.pathLength != b.pathLength ||
+        a.routeCmdId != b.routeCmdId || a.pathIndex != b.pathIndex || a.turnCrossings != b.turnCrossings ||
+        std::strcmp(a.node,b.node) != 0 || std::strcmp(a.nextNode,b.nextNode) != 0 || std::strcmp(a.maneuver,b.maneuver) != 0 ||
         std::strcmp(a.target, b.target) != 0) return false;
     for (uint8_t i = 0; i < a.pathLength; ++i)
         if (std::strcmp(a.path[i], b.path[i]) != 0) return false;
     return true;
+}
+
+bool CoreProtocol::decodeGrant(const uint8_t* payload, size_t length, CoreGrant& grant) {
+    grant = CoreGrant{};
+    if (!payload || !length || length > 128) return false;
+    for (size_t i=0;i<length;++i) if (!payload[i]) return false;
+    StaticJsonDocument<256> doc;
+    PayloadReader reader{payload,length};
+    if (deserializeJson(doc,reader) || !doc.is<JsonObject>()) return false;
+    for (size_t i=reader.offset;i<length;++i)
+        if (payload[i]!=' ' && payload[i]!='\t' && payload[i]!='\r' && payload[i]!='\n') return false;
+    if (!nodeText(doc["zone"],grant.zone,sizeof(grant.zone)) ||
+        grant.zone[0]!='M' || grant.zone[1]<'1' || grant.zone[1]>'6' || grant.zone[2] ||
+        !doc["grant_id"].is<int32_t>() || doc["grant_id"].as<int32_t>()<1) return false;
+    grant.grantId = doc["grant_id"].as<int32_t>();
+    return true;
+}
+bool CoreProtocol::grantAck(const CoreGrant& grant, char* output, size_t capacity) {
+    if (!output || !capacity || grant.grantId<1 || grant.zone[0]!='M' ||
+        grant.zone[1]<'1' || grant.zone[1]>'6' || grant.zone[2]) return false;
+    const int count=std::snprintf(output,capacity,"{\"zone\":\"%s\",\"grant_id\":%ld}",
+        grant.zone,static_cast<long>(grant.grantId));
+    return count>0 && static_cast<size_t>(count)<capacity;
 }
 
 bool CoreProtocol::telemetry(const char* node, int battery, bool obstacle, char* output, size_t capacity) {

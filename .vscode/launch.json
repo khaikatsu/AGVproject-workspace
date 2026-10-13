@@ -7,12 +7,13 @@
       "request": "launch",
       "preLaunchTask": "Build AGV core",
       "program": "${workspaceFolder}/build/agv_core.exe",
-      "args": [],
+      "args": ["--select-mode"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        { "name": "AGV_CORE_WS_HOST", "value": "127.0.0.1" }
+        { "name": "AGV_CORE_WS_HOST", "value": "127.0.0.1" },
+        { "name": "PATH", "value": "C:/msys64/ucrt64/bin;${env:PATH}" }
       ],
-      "externalConsole": false,
+      "externalConsole": true,
       "MIMode": "gdb",
       "miDebuggerPath": "C:/msys64/ucrt64/bin/gdb.exe"
     }

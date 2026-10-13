@@ -9,6 +9,7 @@ class SimulationRuntime {
     this.settings = {speedCmS:25,timeScale:1,drainPerCm:0.002,chargeRate:2,serviceSeconds:2};
     this.started = Date.now();this.simSeconds = 0;this.events = [];this.jobs = [];this.orders = [];this.sequence = 0;this.orderAdvanceBusy = false;
     this.tasks = new Map();this.coreState = null;this.health = 'Đang khởi động';this.base = null;this.actionBusy = new Set();
+    this.pendingReplans = new Set();this.changingObstacles = false;
     this.logStream = fs.createWriteStream(directory+'/events.jsonl',{flags:'a'});
     this.logStream.on('error',error=>{this.health = 'Lỗi ghi nhật ký: '+error.message;for (const robot of this.robots || []) robot.paused = true;});
     this.event('run_start',{settings:this.settings,map:map.map_name,model:'S1 point robot; map coordinates assumed cm'});
@@ -26,6 +27,38 @@ class SimulationRuntime {
     return {weight:edge.weight,distance:Math.max(0.001,Math.hypot(b.x-a.x,b.y-a.y))};
   }
   robot(id) {const robot = this.robots.find(r=>r.id === id);if (!robot) throw fail('Chỉ có hai xe mô phỏng 01 và 02',400);return robot;}
+  edgeBlocked(from,to) {
+    return (this.map.blocked_edges || []).some(e=>e.from===from && e.to===to || e.from===to && e.to===from);
+  }
+  async setEdgeObstacle(body) {
+    if (!body || typeof body.from!=='string' || typeof body.to!=='string' || typeof body.blocked!=='boolean' ||
+        (!this.edge(body.from,body.to) && !this.edge(body.to,body.from))) throw fail('Chọn cạnh có trên bản đồ',400);
+    if (this.changingObstacles || this.replanBusy) throw fail('Đang cập nhật tuyến, thử lại');
+    this.changingObstacles=true;
+    const deferred=this.robots.filter(r=>r.edge).map(r=>r.id);
+    try {
+      const result=await this.coreCommand({cmd:'sim_edge_obstacle',from:body.from,to:body.to,blocked:body.blocked,deferred_agvs:deferred});
+      this.map.blocked_edges=(this.map.blocked_edges || []).filter(e=>!(e.from===body.from && e.to===body.to || e.from===body.to && e.to===body.from));
+      if (body.blocked) this.map.blocked_edges.push({from:body.from,to:body.to});
+      for (const id of deferred) {this.pendingReplans.add(id);this.robot(id).routeUpdatePending=true;}
+      this.event('edge_obstacle',{from:body.from,to:body.to,blocked:body.blocked,deferred});
+      return {ok:true,...result,message:body.blocked ? 'Đã đặt vật cản' : 'Đã gỡ vật cản'};
+    } finally {this.changingObstacles=false;}
+  }
+  async applyPendingReplans() {
+    if (this.replanBusy || this.changingObstacles || !this.pendingReplans.size) return;
+    const ready=this.robots.filter(r=>this.pendingReplans.has(r.id) && !r.edge && r.connected && !r.fault &&
+      this.coreState?.fleet?.agvs?.some(a=>a.id===r.id && a.node===r.node));
+    if (!ready.length) return;
+    this.replanBusy=true;
+    try {
+      const deferred=this.robots.filter(r=>!ready.includes(r)).map(r=>r.id);
+      await this.coreCommand({cmd:'sim_replan',deferred_agvs:deferred});
+      for (const r of ready) {this.pendingReplans.delete(r.id);r.routeUpdatePending=false;}
+      this.event('edge_replan',{robots:ready.map(r=>r.id)});
+    } catch(error) {this.event('edge_replan_error',{message:error.message});}
+    finally {this.replanBusy=false;}
+  }
   async api(method,route,body) {
     const response = await fetch(this.base+route,{method,signal:AbortSignal.timeout(7000),headers:body ? {'Content-Type':'application/json'} : undefined,body:body ? JSON.stringify(body) : undefined});
     const data = await response.json();if (!response.ok) throw fail(data.error || 'Core từ chối',response.status);return data;
@@ -49,6 +82,12 @@ class SimulationRuntime {
           this.map = state.map;
         }
         this.health = state.core_ready && state.mqtt_connected ? 'Sẵn sàng' : 'Đang chờ Core / MQTT';
+        for (const robot of this.robots) if (!this.activeJob(robot.id)) {
+          const item=(state.orders || []).flatMap(order=>order.items || []).find(item=>item.robot===robot.id &&
+            !['queued','delivered','interrupted'].includes(item.status));
+          robot.cargo=!!item && ['ready_dropoff','dispatching_dropoff','to_dropoff','dropoff_service'].includes(item.status);
+        }
+        await this.applyPendingReplans();
         for (const task of state.fleet?.tasks || []) {
           const previous = this.tasks.get(task.task_id);
           if (previous?.status !== task.status || previous?.assigned_agv !== task.assigned_agv) {
@@ -322,7 +361,7 @@ class SimulationRuntime {
   }
   snapshot() {
     return {simulation:true,model:'S1 point robots with linear display interpolation',health:this.health,directory:this.directory,started:this.started,wallSeconds:(Date.now()-this.started)/1000,
-      simSeconds:this.simSeconds,settings:this.settings,robots:this.robots.map(r=>r.snapshot()),jobs:this.jobs.slice(-100),orders:this.orders.slice(-20),
+      simSeconds:this.simSeconds,settings:this.settings,robots:this.robots.map(r=>r.snapshot()),jobs:this.jobs.slice(-100),orders:this.orders.slice(-20),warehouseOrders:this.coreState?.orders || [],blockedEdges:this.map.blocked_edges || [],
       tasks:[...this.tasks.values()].slice(-100),totals:{completed:[...this.tasks.values()].filter(t=>t.status === 'completed').length,
         interrupted:[...this.tasks.values()].filter(t=>t.status === 'interrupted').length},events:this.events.slice(-60),ports:this.ports};
   }

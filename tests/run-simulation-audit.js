@@ -11,10 +11,10 @@ const coreTests = process.env.AGV_CORE_TEST_BIN || path.join(root,'build',proces
 const suites = [
   ['core',coreTests,[]],
   ['gateway-security',process.execPath,['--test','--test-isolation=none','tests/gateway.test.js','tests/security.test.js']],
-  ...['simulation.robot.test','simulation.faults','simulation.low-battery','simulation.integration','simulation.mutex',
+  ...['simulation.robot.test','simulation.public.test','simulation.faults','simulation.low-battery','simulation.integration','simulation.mutex',
     'system.integration','map.integration','hardening.integration','shift.integration','firmware.integration','tls.integration',
     ...(process.platform === 'win32' ? ['startup.integration'] : [])].map(name=>[name,process.execPath,[`tests/${name}.js`]]),
-  ...(process.argv.includes('--browser') ? ['browser.integration','simulation.browser'].map(name=>[name,process.execPath,[`tests/${name}.js`]]) : [])
+  ...(process.argv.includes('--browser') ? ['browser.integration','simulation.browser','simulation.connection.browser','simulation.public.browser'].map(name=>[name,process.execPath,[`tests/${name}.js`]]) : [])
 ];
 console.log('Audit directory: '+directory);
 for (const [name,command,args] of suites) {

@@ -3,16 +3,70 @@
   "title": "AGV current v0 command contract",
   "description": "Documented desired command shape. Runtime validation is not yet connected.",
   "type": "object",
-  "required": ["cmd", "cmd_id"],
+  "required": [
+    "cmd",
+    "cmd_id"
+  ],
   "properties": {
-    "cmd": { "enum": ["GOTO", "STOP", "WAIT", "CHARGE_START", "RESET_FAULT"] },
-    "cmd_id": { "type": "integer", "minimum": 1 },
-    "path": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-    "target": { "type": "string", "minLength": 1 }
+    "cmd": {
+      "enum": [
+        "GOTO",
+        "STOP",
+        "WAIT",
+        "CHARGE_START",
+        "RESET_FAULT",
+        "NODE_ORDER"
+      ]
+    },
+    "cmd_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "path": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1
+    },
+    "route_cmd_id": {"type":"integer","minimum":1,"maximum":2147483647},
+    "path_index": {"type":"integer","minimum":0,"maximum":32},
+    "node": {"type":"string","minLength":1,"maxLength":7},
+    "next_node": {"type":"string","minLength":1,"maxLength":7},
+    "maneuver": {"enum":["STRAIGHT","LEFT","RIGHT","REVERSE","TURN_AROUND_RIGHT","STATION_TURN_RIGHT"]},
+    "turn_crossings": {"type":"integer","minimum":0,"maximum":2}
   },
-  "allOf": [{
-    "if": { "properties": { "cmd": { "const": "GOTO" } } },
-    "then": { "required": ["path", "target"] }
-  }],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "cmd": {
+            "const": "GOTO"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "path",
+          "target"
+        ]
+      }
+    },
+    {
+      "if": {"properties":{"cmd":{"const":"NODE_ORDER"}}},
+      "then": {
+        "required":["route_cmd_id","path_index","node","next_node","maneuver","turn_crossings"],
+        "allOf":[
+          {"if":{"properties":{"maneuver":{"enum":["LEFT","RIGHT","STATION_TURN_RIGHT"]}}},"then":{"properties":{"turn_crossings":{"const":1}}}},
+          {"if":{"properties":{"maneuver":{"enum":["STRAIGHT","REVERSE"]}}},"then":{"properties":{"turn_crossings":{"const":0}}}},
+          {"if":{"properties":{"maneuver":{"const":"TURN_AROUND_RIGHT"}}},"then":{"properties":{"turn_crossings":{"minimum":1}}}}
+        ]
+      }
+    }
+  ],
   "additionalProperties": true
 }

@@ -9,7 +9,8 @@ const path = require('path');
 const {randomUUID} = require('crypto');
 const {createDatabase} = require('./db');
 const {createSecurity} = require('./security');
-const {createOrderService} = require('./orders');
+const {createOrderService,SERVICE_MS} = require('./orders');
+const {createWarehouseActions}=require('./warehouse-actions');
 const INCIDENT_RE = /^AGV_(\S+)\s+(BAO LOI|KHONG ACK lenh|MAT KET NOI)/;
 const emptyState = () => ({map:{nodes:[],edges:[],obstacles:[]},fleet:{agvs:[],pending_tasks:[],tasks:[]},mutex:{},logs:[]});
 function batteryForDisplay(agv) {
@@ -64,6 +65,9 @@ function createGateway(options = {}) {
     if (process.env.AGV_SECURITY_REQUIRED && (!tls || !security.token)) throw new Error('Chế độ secure cần HTTPS và AGV_AUTH_TOKEN');
     const server = tls ? https.createServer(tls,app) : http.createServer(app);
     const wss = new WebSocket.Server({server,path:'/ws',maxPayload:4096,verifyClient:({req},done)=>done(security.authorized(req),401,'Unauthorized')});
+    // ws chuyển tiếp lỗi HTTP listener. start() nhận lỗi bind qua Promise;
+    // listener này ngăn EventEmitter ném lỗi chưa bắt trước khi CLI báo cổng bận.
+    wss.on('error',error=>{if (server.listening) console.error('[WS]',error.message);});
     let latestState = emptyState(),socket = null,connected = false,stopped = false;
     let receivedAt = 0,session = null,reconnectTimer = null,wasFresh = false;
     const requests = new Map();
@@ -72,9 +76,12 @@ function createGateway(options = {}) {
     let streamState = null;
     const fresh = () => connected && receivedAt > 0 && Date.now() - receivedAt <= staleMs;
     const supported = () => latestState.protocol_version === 1;
-    const browserState = () => ({...latestState,agv_connected:connected,core_ready:fresh(),protocol_supported:supported(),
+    const ready = () => fresh() && latestState.storage_healthy !== false;
+    const browserState = () => ({...latestState,agv_connected:connected,core_ready:ready(),protocol_supported:supported(),
         state_received_at:receivedAt ? new Date(receivedAt).toISOString() : null,stale_after_ms:staleMs,
-        task_history:db.getTaskHistory(50),orders:orders.list().slice(0,50)});
+        // Keep each broadcast immutable: the scheduler mutates order/item objects.
+        task_history:db.getTaskHistory(50),orders:JSON.parse(JSON.stringify(orders.list().slice(0,50))),
+        warehouse_actions:JSON.parse(JSON.stringify(warehouseActions.list()))});
     function broadcast(extra = {}) {
         Object.assign(broadcastExtra,extra);
         if (broadcastTimer) return;
@@ -109,8 +116,10 @@ function createGateway(options = {}) {
         receivedAt = Date.now();
         db.enqueueState(latestState,session,INCIDENT_RE);
         if (latestState.mqtt_connected === false) orders.interruptAll('Mất MQTT; đối soát xe và kiện hàng');
+        if (latestState.storage_healthy === false) orders.interruptAll('Core lỗi ghi checkpoint; đối soát xe và kiện hàng');
         broadcast();
         void orders.tick();
+        void warehouseActions.tick();
     }
     function failRequests(message) {
         for (const [key,request] of requests) {
@@ -156,6 +165,7 @@ function createGateway(options = {}) {
     }
     function requireCore() {
         if (!fresh()) throw httpError(503,'Core chưa có dữ liệu mới hoặc đã mất kết nối');
+        if (latestState.storage_healthy === false) throw httpError(503,'Core chưa ghi được checkpoint; đang thử lại, chưa thể điều khiển xe');
         if (!supported()) throw httpError(409,'Core chưa hỗ trợ phản hồi lệnh; hãy build bản core trong workspace');
         if (latestState.mqtt_connected === false) throw httpError(503,'Core đang mất kết nối MQTT broker');
     }
@@ -173,8 +183,10 @@ function createGateway(options = {}) {
             });
         });
     }
-    const orders = createOrderService({db,getState:()=>fresh() && supported() ? latestState : null,
+    const orders = createOrderService({db,getState:()=>ready() && supported() ? latestState : null,
         getSession:()=>session,send:command,publish:()=>broadcast()});
+    const warehouseActions=createWarehouseActions({getState:()=>ready()&&supported()?latestState:null,
+      getSession:()=>session,send:command,publish:()=>broadcast()});
     const route = fn => (req,res,next) => Promise.resolve().then(()=>fn(req,res)).catch(next);
     function target(value) {
         const node = id(value,'target');
@@ -188,7 +200,7 @@ function createGateway(options = {}) {
         const data = await command({cmd:robot ? 'direct_goto' : 'add_task',target:destination,priority:prio,...(robot ? {agv_id:robot} : {})});
         res.json({ok:true,...data});
     }
-    app.get('/api/health',(req,res)=>res.json({ok:true,backend:'online',agv_connected:connected,core_ready:fresh(),protocol_supported:supported(),mqtt_connected:latestState.mqtt_connected ?? null,agv_ws_url:coreUrl,time:new Date().toISOString()}));
+    app.get('/api/health',(req,res)=>res.json({ok:true,backend:'online',agv_connected:connected,core_ready:ready(),protocol_supported:supported(),mqtt_connected:latestState.mqtt_connected ?? null,storage_healthy:latestState.storage_healthy ?? null,warehouse_service_ms:SERVICE_MS,warehouse_test_actions:true,agv_ws_url:coreUrl,time:new Date().toISOString()}));
     app.get('/api/state',(req,res)=>res.json(browserState()));
     app.get('/api/shift',(req,res)=>res.json(latestState.shift || {supported:false,phase:'UNAVAILABLE'}));
     app.post('/api/shift/start',route(async (req,res)=>res.json({ok:true,...await command({cmd:'start_shift'})})));
@@ -204,6 +216,7 @@ function createGateway(options = {}) {
     app.get('/api/tasks',(req,res)=>res.json(latestState.fleet.pending_tasks));
     app.get('/api/tasks/history',route((req,res)=>res.json(db.getTaskHistory(limit(req)))));
     app.get('/api/orders',(req,res)=>res.json(orders.list()));
+    app.post('/api/agvs/:id/warehouse-action',route(async(req,res)=>{requireCore();res.status(201).json({ok:true,action:await warehouseActions.create(id(req.params.id),req.body)});}));
     app.post('/api/orders',route((req,res)=>{requireCore();res.status(201).json({ok:true,order:orders.create(req.body)});}));
     app.post('/api/orders/:id/resolve',route((req,res)=>res.json({ok:true,order:orders.resolve(id(req.params.id,'order id'),req.body.physically_clear)})));
     app.get('/api/agvs/:id/history',route((req,res)=>res.json(db.getAgvHistory(id(req.params.id),limit(req)))));
@@ -280,12 +293,13 @@ function createGateway(options = {}) {
     async function close() {
         stopped = true;clearInterval(monitor);clearTimeout(reconnectTimer);clearTimeout(broadcastTimer);failRequests('Gateway đóng');
         await orders.close();
+        await warehouseActions.close();
         if (socket) {socket.removeAllListeners();socket.on('error',()=>{});socket.terminate();}
         for (const ws of wss.clients) ws.terminate();
         await new Promise(resolve=>wss.close(resolve));
         if (server.listening) await new Promise(resolve=>server.close(resolve));
         if (!options.db) db.close();
     }
-    return {app,server,start,close};
+    return {app,server,start,close,command};
 }
 module.exports = {createGateway};

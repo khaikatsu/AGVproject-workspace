@@ -1,17 +1,18 @@
 #pragma once
 
 // Xe 01, môi trường esp32dev_two_robot_bench_01.
-// Chỉ chỉnh các giá trị đã đo trên chính xe 01; chân GPIO và chốt an toàn ở Config.h.
+// Tăng thử +15 PWM theo yêu cầu 10/10/2026; cần xác nhận lực kéo trên xe 01.
+// Chân GPIO và chốt an toàn ở Config.h.
 #define AGV_PROFILE_ID "01"
-#define AGV_BENCH_MOTOR_SPEED 230
+#define AGV_BENCH_MOTOR_SPEED 220
 #define AGV_BENCH_LEFT_SPEED_TRIM -40
 #define AGV_BENCH_RIGHT_SPEED_TRIM 0
-#define AGV_BENCH_TURN_SPEED 230
+#define AGV_BENCH_TURN_SPEED 220
 #define AGV_BENCH_TURN_LEFT_SPEED_TRIM 0
 #define AGV_BENCH_TURN_RIGHT_SPEED_TRIM 0
-#define AGV_BENCH_CORRECTION_SPEED 230
-#define AGV_BENCH_GENTLE_CORRECTION_SPEED 230
-#define AGV_BENCH_LINE_LOSS_CONFIRM_MS 0
+#define AGV_BENCH_CORRECTION_SPEED 220
+#define AGV_BENCH_GENTLE_CORRECTION_SPEED 220
+#define AGV_BENCH_LINE_LOSS_CONFIRM_MS 5000
 #define AGV_BENCH_SEGMENT_TIMEOUT_MS 15000
 #define AGV_BENCH_RFID_STOP_DWELL_MS 1000
 #define AGV_BENCH_BATTERY_VOLTAGE_SCALE 5.0f

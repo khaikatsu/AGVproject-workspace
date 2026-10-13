@@ -6,8 +6,10 @@
 class RFIDModule {
 public:
     void begin();
-    void update() { readCard(); }
+    void update() { if (readCard()) finishRead(); }
     bool readCard();
+    // Call after the controller has stopped/applied the arrival event.
+    void finishRead();
     const char* getUID() const { return event_.uid; }
     const char* getNodeFromUID(const char* uid) const;
     bool isNewNode() const { return event_.newNode; }
@@ -20,4 +22,7 @@ private:
     char lastNode_[NODE_TEXT_SIZE]{};
     uint32_t lastPollMs_ = 0;
     bool mappingsValid_ = true;
+    bool cardPending_ = false;
+    uint32_t lastLogMs_ = 0;
+    char lastLoggedUid_[UID_TEXT_SIZE]{};
 };

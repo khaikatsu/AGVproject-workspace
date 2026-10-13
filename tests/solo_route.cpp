@@ -1,4 +1,5 @@
 #include "map/MapGraph.hpp"
+#include "core/NodeManeuver.hpp"
 #include "../firmware/NCKHAGV/NCKHAGV/src/core/RoutePlanner.h"
 #include <cstring>
 #include <iostream>
@@ -51,6 +52,30 @@ int main() {
                     !RoutePlanner::oneRobotTrialRoute("01", start.c_str(), command, route))
                     throw std::runtime_error("Firmware cannot follow " + start + " -> " + target +
                                              " after arriving from " + previous);
+                if (!RoutePlanner::reverseAllowed(start.c_str(),command,route,false,true))
+                    throw std::runtime_error("Unexpected non-bay reverse " + start + " -> " + target);
+                for (unsigned i=0;i<route.count;++i) {
+                    const char* from=i ? command.path[i-1] : start.c_str();
+                    const auto front = i == 0 ? RoutePlanner::bayHeading(from) : RobotHeading::Unknown;
+                    const auto incoming = front != RobotHeading::Unknown ? front : i == 0 ?
+                        RoutePlanner::edgeHeading(previous.c_str(),from,previousReverse) :
+                        RoutePlanner::edgeHeading(i == 1 ? start.c_str() : command.path[i-2],from,
+                            route.departure[i-1] == RouteTurn::Reverse);
+                    const auto docking = RoutePlanner::bayHeading(from);
+                    const auto actualFront = docking != RobotHeading::Unknown ? docking : incoming;
+                    const char* heading = actualFront == RobotHeading::North ? "N" : actualFront == RobotHeading::East ? "E" :
+                        actualFront == RobotHeading::South ? "S" : actualFront == RobotHeading::West ? "W" : "UNKNOWN";
+                    const auto order = NodeManeuver::plan(map.toJson(),from,command.path[i],heading);
+                    const unsigned crossings = route.departure[i] == RouteTurn::TurnAround ? route.turnCrossings[i] :
+                        route.departure[i] == RouteTurn::Left || route.departure[i] == RouteTurn::Right ? 1 : 0;
+                    if (order.is_null() || order["maneuver"] != RoutePlanner::turnName(route.departure[i]) || order["turn_crossings"] != crossings)
+                        throw std::runtime_error("Server/MCU node maneuver disagreement " + start + " -> " + target + " at " + from);
+                    const bool reverse=route.departure[i] == RouteTurn::Reverse;
+                    if (RoutePlanner::bayExit(from,command.path[i]) && reverse == RoutePlanner::station(from))
+                        throw std::runtime_error("Warehouse must reverse out; station must depart forward");
+                    if (RoutePlanner::bayGate(command.path[i]) && reverse)
+                        throw std::runtime_error("Warehouse and station must enter forward");
+                }
                 ++checked;
             }
         }

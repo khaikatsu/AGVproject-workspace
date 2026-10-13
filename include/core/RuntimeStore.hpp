@@ -1,6 +1,8 @@
 #pragma once
 #include "commands/CommandIds.hpp"
+#include <algorithm>
 #include <optional>
+#include <vector>
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <unistd.h>
@@ -10,6 +12,22 @@
 class RuntimeStore {
 public:
     explicit RuntimeStore(std::filesystem::path path) : path_(std::move(path)) {}
+    static bool mapsCompatible(const nlohmann::json& current, const nlohmann::json& saved) {
+        if (!current.is_object() || !saved.is_object()) return false;
+        // Runtime obstacles and revision may differ; the physical graph must match.
+        for (const char* key : {"nodes", "edges", "mutex_zones", "charging_stations"}) {
+            if (!current.contains(key) || !saved.contains(key) ||
+                !current.at(key).is_array() || !saved.at(key).is_array()) return false;
+            auto canonical = [key](const nlohmann::json& map) {
+                std::vector<std::string> values;
+                for (const auto& item : map.at(key)) values.push_back(item.dump());
+                std::sort(values.begin(), values.end());
+                return values;
+            };
+            if (canonical(current) != canonical(saved)) return false;
+        }
+        return true;
+    }
     std::optional<nlohmann::json> load() {
         if (!std::filesystem::exists(path_)) return {};
         std::ifstream in(path_); nlohmann::json data; in >> data;

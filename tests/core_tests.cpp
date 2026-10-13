@@ -59,6 +59,47 @@ int main() {
             auto folder = std::filesystem::temp_directory_path()/("agv-runtime-test-"+std::to_string(Clock::now().time_since_epoch().count()));
             RuntimeStore store(folder/"runtime.json");const json data = {{"version",1},{"map",map.toJson()},{"fleet",saved},{"mutex",arbiter.toJson()}};
             store.save(data);CHECK(store.load().value() == data);
+            auto sameGraph = map.toJson();
+            std::reverse(sameGraph["nodes"].begin(),sameGraph["nodes"].end());
+            sameGraph["revision"] = 999;
+            sameGraph["obstacles"] = json::array({"A"});
+            CHECK(RuntimeStore::mapsCompatible(map.toJson(),sameGraph));
+            sameGraph["edges"][0]["weight"] = 999;
+            CHECK(!RuntimeStore::mapsCompatible(map.toJson(),sameGraph));
+        {
+            MapGraph map;map.loadDefaultDemoMap();MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.setTrialRobot("01");fleet.setHomeStations({{"01","S1"}});WebCommands web(map,fleet,arbiter);
+            std::vector<json> commands;
+            fleet.setPublishCallback([&](const std::string&,const std::string& p){commands.push_back(json::parse(p));});
+            fleet.updateTelemetry("01","GS1",-1,false);fleet.reportError("01","LINE_LOST");
+            auto result=web.execute({{"cmd","clear_error"},{"id","01"}});
+            CHECK(result["ok"].get<bool>());CHECK(commands.back()["cmd"]=="RESET_FAULT");
+            CHECK(fleet.toJson()["agvs"][0]["state"]=="ERROR");
+            fleet.reportAck("01",commands.back()["cmd_id"].get<long>());
+            MotionDiagnostic d{"GS1","AGV_SAFE_STOP","LINE_LOST","STOP",false,true,true,0,0,0};
+            fleet.observeMotionDiagnostic("01",d);CHECK(fleet.toJson()["agvs"][0]["state"]=="ERROR");
+            d.state="AGV_IDLE";d.error="NONE";d.node="M2";
+            fleet.observeMotionDiagnostic("01",d);CHECK(fleet.toJson()["agvs"][0]["state"]=="ERROR");
+            d.node="GS1";d.motor="FORWARD";d.leftDuty=d.rightDuty=245;
+            fleet.observeMotionDiagnostic("01",d);CHECK(fleet.toJson()["agvs"][0]["state"]=="ERROR");
+            d.motor="STOP";d.leftDuty=d.rightDuty=0;d.rfidAgeMs=5000;
+            fleet.observeMotionDiagnostic("01",d);CHECK(fleet.toJson()["agvs"][0]["state"]=="IDLE");
+            CHECK(fleet.directGoto("01","M2","after-mid-route-reset").empty());
+            fleet.updateTelemetry("01","M2",-1,false);CHECK(arbiter.requestZone("M2","01"));
+            const auto grant=arbiter.grant("M2","01");fleet.reportError("01","LINE_LOST");
+            CHECK(web.execute({{"cmd","clear_error"},{"id","01"}})["ok"].get<bool>());
+            d.node="M2";fleet.observeMotionDiagnostic("01",d);
+            CHECK(fleet.toJson()["agvs"][0]["state"]=="IDLE");
+            CHECK(arbiter.currentOwner("M2")=="01");CHECK(arbiter.grant("M2","01")["grant_id"]==grant["grant_id"]);
+            const auto shiftDir=std::filesystem::path(".qa")/("mid-reset-shift-"+std::to_string(Clock::now().time_since_epoch().count()));
+            ShiftController shift(map,fleet,arbiter,shiftDir/"shift.json",{{"01","S1"}},false,false,"01");
+            CHECK(shift.snapshot()["can_start"].get<bool>());CHECK(!shift.snapshot()["all_home"].get<bool>());
+            CHECK(shift.start().empty());CHECK(shift.snapshot()["phase"]=="RUNNING");
+            CHECK(shift.end().empty());CHECK(shift.snapshot()["phase"]=="CLOSED");
+            CHECK(arbiter.currentOwner("M2")=="01");
+            fleet.updateTelemetry("01","UNKNOWN",-1,false);
+            CHECK(!web.execute({{"cmd","clear_error"},{"id","01"}})["ok"].get<bool>());
+        }
 #if defined(_WIN32)
             const auto runtimePath = folder/"runtime.json";
             HANDLE reader = CreateFileW(runtimePath.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
@@ -376,6 +417,33 @@ int main() {
             CHECK(!shift.snapshot()["can_start"].get<bool>());
             CHECK(std::none_of(commands.begin(),commands.end(),[](const json& c){return c.value("cmd","")=="CHARGE_START";}));
         }
+        for (const auto* selected : {"01","02"}) {
+            const std::string id = selected, other = id == "01" ? "02" : "01";
+            const std::string home = id == "01" ? "S1" : "S2", otherHome = id == "01" ? "S2" : "S1";
+            const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+            auto dir = root/".qa"/("selected-trial-unit-" + id + std::to_string(Clock::now().time_since_epoch().count()));
+            MapGraph map;map.loadDefaultDemoMap();MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.setTrialRobot(id);fleet.setNetworkAvailable(true);
+            std::vector<std::pair<std::string,json>> commands;
+            fleet.setPublishCallback([&](const std::string& topic,const std::string& payload){commands.push_back({topic,json::parse(payload)});});
+            ShiftController shift(map,fleet,arbiter,dir/"shift.json",{{id,home}},false,false,id);
+            fleet.updateTelemetry(id,home,-1,false);shift.tick();
+            CHECK(shift.snapshot()["can_start"] == true);
+            CHECK(shift.snapshot()["trial_robot_id"] == id);CHECK(shift.snapshot()["supervised_trial"] == true);
+            CHECK(shift.snapshot()["two_robot_trial"] == false);CHECK(shift.snapshot()["single_robot_trial"] == false);
+            fleet.updateTelemetry(other,"UNKNOWN",-1,false);shift.tick();
+            CHECK(shift.snapshot()["can_start"] == false);
+            fleet.updateTelemetry(other,otherHome,10,false);shift.tick();
+            CHECK(shift.snapshot()["can_start"] == true);CHECK(shift.start().empty());
+            CHECK(!fleet.directGoto(other,"K3","wrong-robot").empty());
+            fleet.addTask(id == "01" ? "GS1" : "M3",0,"selected-auto");
+            CHECK(record(fleet,"selected-auto")["assigned_agv"] == id);
+            CHECK(record(fleet,"selected-auto")["status"] == "dispatched");
+            CHECK(std::none_of(commands.begin(),commands.end(),[&](const auto& entry){return
+                entry.first == "agv/"+other+"/command" && (entry.second.value("cmd","") == "GOTO" || entry.second.value("cmd","") == "CHARGE_START");}));
+            CHECK(arbiter.requestZone("M2",id));CHECK(!arbiter.requestZone("M2",other));
+            fleet.reportOffline(id);CHECK(arbiter.currentOwner("M2") == id);
+        }
         {
             const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
             auto dir = root/".qa"/("two-robot-trial-unit-" + std::to_string(Clock::now().time_since_epoch().count()));
@@ -546,6 +614,156 @@ int main() {
             fleet.observeMotionDiagnostic("01",MotionDiagnostic{"S1","AGV_IDLE","NONE","STOP",false,true,true,0,0,0});
             CHECK(arbiter.currentOwner("M2") == "01"); // map co duong dai nhung tram sat zone
         }
-        std::cout << "PASS core: maps/routes/mutex/task lifecycle/ACK/offline/shift; route reservations, broker-loss interruption, UNKNOWN localization and safe home recovery\n";
+        {
+            MapGraph map;map.loadDefaultDemoMap();MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.setTrialRobot("02");fleet.setHomeStations({{"02","S2"}});
+            std::vector<json> commands;
+            fleet.setPublishCallback([&](const std::string&,const std::string& payload){commands.push_back(json::parse(payload));});
+            fleet.updateTelemetry("02","GS2",-1,false);fleet.reportError("02","NETWORK_UNAVAILABLE");
+            fleet.addTask("M3",0,"after-reset");commands.clear();
+            CHECK(!fleet.clearError("02")); // RFID GS2 after reboot does not establish heading.
+            CHECK(commands.empty());CHECK(record(fleet,"after-reset")["status"]=="pending");
+            fleet.updateTelemetry("02","S2",-1,false);CHECK(fleet.clearError("02"));
+            CHECK(commands.size()==1);CHECK(commands[0]["cmd"]=="RESET_FAULT");
+            CHECK(fleet.toJson()["agvs"][0]["state"]=="ERROR");
+            fleet.reportAck("02",commands[0]["cmd_id"].get<long>());fleet.tick();
+            CHECK(commands.size()==1); // Receipt ACK does not prove RESET_FAULT succeeded.
+            fleet.observeMotionDiagnostic("02",MotionDiagnostic{"S2","AGV_SAFE_STOP","NETWORK_UNAVAILABLE","STOP",false,true,true,0,0,0});
+            CHECK(commands.size()==1);
+            fleet.observeMotionDiagnostic("02",MotionDiagnostic{"S2","AGV_IDLE","NONE","STOP",false,true,true,0,0,0});
+            CHECK(record(fleet,"after-reset")["status"]=="dispatched");
+            CHECK(commands.back()["cmd"]=="GOTO");CHECK(commands.back()["path"]==json::array({"GS2","M3"}));
+        }
+        {
+            MapGraph map;map.loadDefaultDemoMap();MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.setTrialRobot("01");fleet.setHomeStations({{"01","S1"}});
+            std::vector<json> commands;
+            fleet.setPublishCallback([&](const std::string&,const std::string& payload){commands.push_back(json::parse(payload));});
+            fleet.updateTelemetry("01","S1",-1,false);
+            MotionDiagnostic d{"S1","AGV_IDLE","NONE","STOP",false,true,true,0,0,0};
+            d.headingSupported=true;d.headingNode="S1";d.heading="S";d.headingSource="bay_default";
+            fleet.observeMotionDiagnostic("01",d);
+            CHECK(fleet.toJson()["agvs"][0]["heading"]=="S");
+            CHECK(fleet.toJson()["agvs"][0]["heading_source"]=="bay_default");
+            CHECK(std::none_of(commands.begin(),commands.end(),[](const json& c){return c["cmd"]=="SET_HEADING";}));
+            d.headingSource="operator";fleet.observeMotionDiagnostic("01",d);
+            CHECK(fleet.toJson()["agvs"][0]["heading"]=="UNKNOWN");
+            d.headingSource="route";d.headingNode="GS1";fleet.observeMotionDiagnostic("01",d);
+            CHECK(fleet.toJson()["agvs"][0]["heading"]=="UNKNOWN");
+            d.headingNode="S1";fleet.observeMotionDiagnostic("01",d);
+            CHECK(fleet.toJson()["agvs"][0]["heading"]=="S");
+            fleet.reportOffline("01");CHECK(fleet.toJson()["agvs"][0]["heading"]=="UNKNOWN");
+        }
+        {
+            MapGraph map;map.loadDefaultDemoMap();MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.setTrialRobot("01");fleet.setHomeStations({{"01","S1"}});
+            std::vector<json> commands;
+            fleet.setPublishCallback([&](const std::string&,const std::string& payload){commands.push_back(json::parse(payload));});
+            fleet.updateTelemetry("01","GS1",-1,false);
+            MotionDiagnostic d{"GS1","AGV_IDLE","NONE","STOP",false,true,true,0,0,0};
+            d.headingSupported=true;d.stationDockingSupported=true;d.headingNode="GS1";d.heading="N";d.headingSource="route";
+            fleet.observeMotionDiagnostic("01",d);
+            fleet.addTask("S1",0,"station-return");
+            CHECK(record(fleet,"station-return")["status"]=="dispatched");
+            fleet.reportAck("01",commands.back()["cmd_id"].get<long>());
+            fleet.updateTelemetry("01","S1",-1,false);
+            CHECK(record(fleet,"station-return")["status"]=="dispatched"); // RFID/ACK cannot finish the parking turn.
+            const auto commandCount=commands.size();
+            CHECK(!fleet.directGoto("01","GS1","interrupt-parking").empty());
+            CHECK(commands.size()==commandCount);
+            d.node=d.headingNode="S1";d.heading="S";d.headingSource="bay_default";d.stationReady=true;
+            d.taskActive=true;d.state="AGV_MOVING";d.motor="PIVOT_RIGHT";d.leftDuty=d.rightDuty=245;
+            fleet.observeMotionDiagnostic("01",d);
+            CHECK(record(fleet,"station-return")["status"]=="dispatched");
+            d.taskActive=false;d.state="AGV_IDLE";d.motor="STOP";d.leftDuty=d.rightDuty=0;
+            d.rfidAgeMs=251;fleet.observeMotionDiagnostic("01",d);
+            CHECK(record(fleet,"station-return")["status"]=="dispatched");
+            d.rfidAgeMs=0;d.heading="N";fleet.observeMotionDiagnostic("01",d);
+            CHECK(record(fleet,"station-return")["status"]=="dispatched");
+            d.heading="S";d.error="TURN_TIMEOUT";fleet.observeMotionDiagnostic("01",d);
+            CHECK(record(fleet,"station-return")["status"]=="dispatched");
+            d.error="NONE";fleet.observeMotionDiagnostic("01",d);
+            CHECK(record(fleet,"station-return")["status"]=="completed");
+            CHECK(fleet.toJson()["agvs"][0]["state"]=="IDLE");
+            // A stopped ready reading from the previous visit must not complete a new return.
+            fleet.addTask("GS1",0,"depart-again");fleet.updateTelemetry("01","GS1",-1,false);
+            fleet.addTask("S1",0,"station-return-again");fleet.updateTelemetry("01","S1",-1,false);
+            CHECK(record(fleet,"station-return-again")["status"]=="dispatched");
+            d.stationDockingSupported=false;fleet.observeMotionDiagnostic("01",d);
+            CHECK(record(fleet,"station-return-again")["status"]=="dispatched");
+            d.stationDockingSupported=true;fleet.observeMotionDiagnostic("01",d);
+            CHECK(record(fleet,"station-return-again")["status"]=="completed");
+        }
+        {
+            MapGraph map;map.loadFromFile("data/map_layout.json");MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.setTrialRobot("01");std::vector<json> commands;
+            fleet.setPublishCallback([&](const std::string&,const std::string& p){commands.push_back(json::parse(p));});
+            fleet.updateTelemetry("01","S1",-1,false);fleet.addTask("M2",0,"node-orders");
+            const long routeId=commands.back()["cmd_id"].get<long>();
+            MotionDiagnostic d{"S1","AGV_WAITING","NONE","STOP",true,true,true,0,0,0};
+            d.headingSupported=true;d.heading="S";d.headingNode="S1";d.headingSource="bay_default";
+            d.nodeOrdersSupported=true;d.awaitingNodeOrder=true;d.routeCommandId=routeId;d.pathIndex=0;d.nextNode="GS1";
+            d.rfidAgeMs=5000; // A stopped confirmed start remains usable after the operator waits to click GOTO.
+            const auto count=commands.size();d.routeCommandId=routeId+1;fleet.observeMotionDiagnostic("01",d);
+            CHECK(commands.size()==count);d.routeCommandId=routeId;
+            fleet.observeMotionDiagnostic("01",d);CHECK(commands.back()["cmd"]=="NODE_ORDER");
+            CHECK(commands.back()["maneuver"]=="STRAIGHT");const auto first=commands.back();
+            fleet.observeMotionDiagnostic("01",d);CHECK(commands.size()==count+1); // No new ID/action on a duplicate request.
+            fleet.reportAck("01",first["cmd_id"].get<long>());
+            fleet.updateTelemetry("01","GS1",-1,false);d.node=d.headingNode="GS1";d.pathIndex=1;d.nextNode="M2";d.headingSource="route";
+            d.rfidAgeMs=UINT32_MAX;fleet.observeMotionDiagnostic("01",d);CHECK(commands.back()==first);
+            d.rfidAgeMs=0;d.motor="FORWARD";fleet.observeMotionDiagnostic("01",d);CHECK(commands.back()==first);
+            d.motor="STOP";fleet.observeMotionDiagnostic("01",d);
+            CHECK(commands.back()["maneuver"]=="LEFT");CHECK(commands.back()["node"]=="GS1");
+            CHECK(commands.back()["path_index"]==1);CHECK(commands.back()["route_cmd_id"]==routeId);
+            const auto turnCommandCount=commands.size();
+            CHECK(!fleet.directGoto("01","C1","override-turn").empty());CHECK(commands.size()==turnCommandCount);
+            fleet.reportAck("01",commands.back()["cmd_id"].get<long>());
+            CHECK(record(fleet,"node-orders")["status"]=="dispatched"); // Receipt does not prove the turn or arrival.
+            fleet.updateTelemetry("01","M2",-1,false);CHECK(record(fleet,"node-orders")["status"]=="completed");
+            CHECK(NodeManeuver::plan(map.toJson(),"GS1","S1","W")["maneuver"]=="RIGHT");
+            CHECK(NodeManeuver::plan(map.toJson(),"S1","S1","N",true)["maneuver"]=="STATION_TURN_RIGHT");
+            CHECK(NodeManeuver::plan(map.toJson(),"GS1","M4","S").is_null()); // No axis-only shortcut to an unconnected node.
+        }
+#if defined(_WIN32)
+        {
+            const auto dir=std::filesystem::path(".qa")/("atomic-lock-"+std::to_string(Clock::now().time_since_epoch().count()));
+            std::filesystem::create_directories(dir);const auto file=dir/"runtime.json";
+            RuntimeStore store(file);json sample={{"version",1},{"fleet",json::object()},{"mutex",json::object()},{"test",1}};
+            store.save(sample);
+            HANDLE handle=CreateFileW(file.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+            CHECK(handle!=INVALID_HANDLE_VALUE);
+            std::thread unlock([handle]{std::this_thread::sleep_for(std::chrono::milliseconds(650));CloseHandle(handle);});
+            sample["test"]=2;
+            try {store.save(sample);} catch (...) {unlock.join();throw;}
+            unlock.join();CHECK(store.load()->at("test")==2);
+            handle=CreateFileW(file.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+            CHECK(handle!=INVALID_HANDLE_VALUE);sample["test"]=3;bool failed=false;
+            try {store.save(sample);} catch(const std::exception&){failed=true;}
+            CloseHandle(handle);CHECK(failed);CHECK(store.load()->at("test")==2);
+            store.save(sample);CHECK(store.load()->at("test")==3); // Failure did not poison the last saved value or delete the old checkpoint.
+        }
+#endif
+        {
+            MapGraph map;
+            map.loadFromJson({{"nodes",{{{"id","A"}},{{"id","B"}},{{"id","C"}},{{"id","D"}}}},
+                {"edges",{{{"from","A"},{"to","B"},{"weight",1},{"two_way",true}},
+                {{"from","B"},{"to","D"},{"weight",1}},{{"from","A"},{"to","C"},{"weight",3}},
+                {{"from","C"},{"to","D"},{"weight",3}}}}});
+            CHECK(map.findShortestPath("A","D")==std::vector<std::string>({"A","B","D"}));
+            map.setEdgeObstacle("B","A",true);
+            CHECK(map.findShortestPath("A","D")==std::vector<std::string>({"A","C","D"}));
+            CHECK(map.findShortestPath("B","A").empty());
+            CHECK(map.findShortestPath("B","D")==std::vector<std::string>({"B","D"}));
+            MapGraph copy;copy.loadFromJson(map.toJson());CHECK(copy.findShortestPath("A","D")==map.findShortestPath("A","D"));
+            auto invalid=map.toJson();invalid["blocked_edges"].push_back({{"from","A"},{"to","D"}});
+            bool rejected=false;try{map.loadFromJson(invalid);}catch(const std::invalid_argument&){rejected=true;}CHECK(rejected);
+            CHECK(map.findShortestPath("A","D")==copy.findShortestPath("A","D"));
+            map.setEdgeObstacle("A","B",false);CHECK(map.findShortestPath("A","D")==std::vector<std::string>({"A","B","D"}));
+            MutexArbiter arbiter;FleetManager fleet(map,arbiter);WebCommands commands(map,fleet,arbiter);
+            CHECK(commands.execute({{"cmd","sim_edge_obstacle"},{"from","A"},{"to","B"},{"blocked",true}})["status"]==403);
+            commands.setSimulationMode(true);CHECK(commands.execute({{"cmd","sim_edge_obstacle"},{"from","A"},{"to","B"},{"blocked",true}})["ok"]==true);
+        }
+        std::cout << "PASS core: routes/mutex/task/ACK/offline/shift/node orders; checkpoint recovery; edge obstacles reroute, roundtrip and simulation gate\n";
     } catch (const std::exception& e) {std::cerr << e.what() << '\n';return 1;}
 }

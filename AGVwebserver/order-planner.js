@@ -1,30 +1,38 @@
 // Planning estimates only. Core remains the authority for routes and motion.
-function shortestCost(map,from,to) {
+function shortestRoute(map,from,to) {
+  const unreachable = {path:[],cost:Infinity};
   const nodes = new Set((map?.nodes || []).map(node=>node.id));
-  if (!nodes.has(from) || !nodes.has(to)) return Infinity;
-  if (from === to) return 0;
+  if (!nodes.has(from) || !nodes.has(to)) return unreachable;
   const blocked = new Set(map.obstacles || []);
-  if (blocked.has(from) || blocked.has(to)) return Infinity;
+  if (blocked.has(from) || blocked.has(to)) return unreachable;
+  if (from === to) return {path:[from],cost:0};
   const adjacent = new Map([...nodes].map(node=>[node,[]]));
   for (const edge of map.edges || []) {
+    if ((map.blocked_edges || []).some(e=>e.from===edge.from && e.to===edge.to || e.from===edge.to && e.to===edge.from)) continue;
     if (!nodes.has(edge.from) || !nodes.has(edge.to) || !Number.isFinite(edge.weight) || edge.weight < 0) continue;
     adjacent.get(edge.from).push([edge.to,edge.weight]);
     if (edge.two_way) adjacent.get(edge.to).push([edge.from,edge.weight]);
   }
-  const distance = new Map([[from,0]]),visited = new Set();
+  const distance = new Map([[from,0]]),previous = new Map(),visited = new Set();
   while (true) {
     let current = null,cost = Infinity;
     for (const [node,value] of distance) if (!visited.has(node) && value < cost) {current = node;cost = value;}
-    if (current === null) return Infinity;
-    if (current === to) return cost;
+    if (current === null) return unreachable;
+    if (current === to) {
+      const path=[to];
+      while (path[0] !== from) path.unshift(previous.get(path[0]));
+      return {path,cost};
+    }
     visited.add(current);
     for (const [next,weight] of adjacent.get(current)) {
       if (blocked.has(next) || visited.has(next)) continue;
       const candidate = cost+weight;
-      if (candidate < (distance.get(next) ?? Infinity)) distance.set(next,candidate);
+      if (candidate < (distance.get(next) ?? Infinity)) {distance.set(next,candidate);previous.set(next,current);}
     }
   }
 }
+
+function shortestCost(map,from,to) {return shortestRoute(map,from,to).cost;}
 
 function planOrder(map,body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Đơn hàng không hợp lệ');
@@ -94,4 +102,4 @@ function planOrder(map,body) {
   return {pickups,deliveries,total,items};
 }
 
-module.exports = {shortestCost,planOrder};
+module.exports = {shortestCost,shortestRoute,planOrder};

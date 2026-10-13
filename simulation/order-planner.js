@@ -8,6 +8,7 @@ function shortestCost(map,from,to) {
   if (blocked.has(to)) return Infinity;
   const neighbors = new Map([...nodes].map(id=>[id,[]]));
   for (const edge of map.edges || []) {
+    if ((map.blocked_edges || []).some(e=>e.from===edge.from && e.to===edge.to || e.from===edge.to && e.to===edge.from)) continue;
     if (!nodes.has(edge.from) || !nodes.has(edge.to) || !Number.isFinite(edge.weight) || edge.weight < 0) continue;
     neighbors.get(edge.from).push([edge.to,edge.weight]);
     if (edge.two_way) neighbors.get(edge.to).push([edge.from,edge.weight]);

@@ -7,6 +7,9 @@
 namespace CoreProtocol {
 bool decodeCommand(const uint8_t* payload, size_t length, CoreCommand& command);
 bool sameCommand(const CoreCommand& a, const CoreCommand& b);
+// Own the zone text before any publish can overwrite PubSubClient's RX buffer.
+bool decodeGrant(const uint8_t* payload, size_t length, CoreGrant& grant);
+bool grantAck(const CoreGrant& grant, char* output, size_t capacity);
 bool telemetry(const char* node, int battery, bool obstacle, char* output, size_t capacity);
 bool ack(int32_t cmdId, char* output, size_t capacity);
 }

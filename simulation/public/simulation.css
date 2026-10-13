@@ -24,6 +24,12 @@
 .sim-metric-grid strong {display:block;font-size:20px;color:#e2e8f0;font-variant-numeric:tabular-nums}
 .sim-metric-grid span {font-size:10px;color:var(--text-muted)}
 .sim-status {font-size:11px;margin:9px 0;color:#67e8f9;overflow-wrap:anywhere}
+.sim-connection p {font-size:12px;line-height:1.6;margin:8px 0;overflow-wrap:anywhere}
+.sim-connection a {text-decoration:none;text-align:center;font-size:11px;padding:7px 8px}
+.sim-connection [hidden] {display:none!important}
+body[data-sim-connection="offline"] .sim-connection {border-color:#f59e0b!important;color:#fcd34d}
+body[data-sim-connection="online"] .sim-connection {border-color:#22c55e!important}
+body[data-sim-connection="offline"] #simMotionG {opacity:.55}
 .sim-downloads {display:flex;gap:6px;margin-top:10px}
 .sim-downloads a {flex:1;text-align:center;color:#7dd3fc;text-decoration:none;border:1px solid var(--border-color);padding:7px;border-radius:6px;font-size:11px}
 .sim-job {font-size:11px;padding:8px 0;border-top:1px solid var(--border-color);line-height:1.6;overflow-wrap:anywhere}
@@ -44,3 +50,18 @@
 .sim-order-warning {color:#fbbf24;margin:5px 0;overflow-wrap:anywhere}
 .sim-order-items {max-height:180px;overflow:auto;margin-top:5px}
 .sim-order-items>div {border-top:1px solid #26384d;padding:4px 0;overflow-wrap:anywhere}
+.sim-recovery {font-size:11px;color:#fbbf24;line-height:1.5}
+.sim-recovery:empty {display:none}
+.sim-obstacle-chip {margin:8px 5px 0 0;border:1px solid #9f3944;background:#3b1c28;color:#fecaca;border-radius:6px}
+.sim-edge-hit {pointer-events:all;cursor:pointer}
+.sim-obstacle-marker {pointer-events:none}
+#simEdgesG {pointer-events:none}
+#simWarehouseOrderPanel #orderPickups {border-left:3px solid #38bdf8;padding-left:7px}
+#simWarehouseOrderPanel #orderDeliveries {border-left:3px solid #34d399;padding-left:7px}
+#simWarehouseOrderPanel .order-lines {margin:6px 0}
+.sim-card .card-header {letter-spacing:0}
+.sim-card .sim-assumptions {margin-top:9px}
+.sim-vehicle .sim-actions>button {flex:1 1 25%}
+.sim-vehicle details .sim-actions>button {flex:1 1 44%}
+body .sim-card input,body .sim-card select {font-size:12px;min-height:33px}
+@media(max-width:720px) {#right-panel {order:0} #left-panel {order:1}}
