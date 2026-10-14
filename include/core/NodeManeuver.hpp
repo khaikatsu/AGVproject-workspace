@@ -29,6 +29,27 @@ inline bool branch(const json& map, const std::string& node, int dir, bool direc
     }
     return false;
 }
+// Authorization belongs to a route triple, not to a node's global degree.
+inline bool straightThrough(const json& map, const std::string& from,
+                            const std::string& node, const std::string& next) {
+    bool allowedType = false, backingOut = false;
+    for (const auto& n : map.at("nodes")) {
+        if (n.at("id") == from && n.value("type",std::string{}) == "station") backingOut = true;
+        if (n.at("id") == node) {
+            const auto type = n.value("type",std::string{});
+            allowedType = type == "waypoint" || type == "mutex";
+        }
+    }
+    const int incoming = direction(map,from,node), outgoing = direction(map,node,next);
+    auto connected = [&](const std::string& a, const std::string& b) {
+        for (const auto& e : map.at("edges"))
+            if ((e.at("from") == a && e.at("to") == b) ||
+                (e.value("two_way",false) && e.at("from") == b && e.at("to") == a)) return true;
+        return false;
+    };
+    return allowedType && !backingOut && incoming >= 0 && incoming == outgoing &&
+           connected(from,node) && connected(node,next);
+}
 inline json plan(const json& map, const std::string& node, const std::string& next,
                  const std::string& front, bool stationTurn = false) {
     const int incoming = heading(front);

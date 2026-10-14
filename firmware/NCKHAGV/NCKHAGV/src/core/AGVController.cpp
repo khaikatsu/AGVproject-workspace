@@ -7,12 +7,28 @@ AGVController::AGVController() : line_(motor_), movement_(motor_, line_, buzzer_
     control_({Config::WIFI_TIMEOUT_MS, Config::MQTT_TIMEOUT_MS, Config::TURN_MIN_MS,
               Config::TURN_TIMEOUT_MS, Config::STRAIGHT_DEPARTURE_MS, Config::SERVO_MOVE_TIME_MS,
               true, true, Config::REVERSE_STEERING_CONFIRMED}) {}
+void AGVController::updateSonars() {
+    if (!Config::ULTRASONIC_MOTION_GUARD) return;
+    sensor_.update(false);
+    if (Config::REAR_ULTRASONIC_ECHO_PIN < 0) { sensor_.update(); return; }
+    rearSensor_.update(false);
+    const uint32_t now = millis();
+    if (static_cast<uint32_t>(now - lastSonarTriggerMs_) < 50) return;
+    if (triggerRearNext_) rearSensor_.update();
+    else sensor_.update();
+    triggerRearNext_ = !triggerRearNext_;
+    lastSonarTriggerMs_ = now;
+}
 void AGVController::begin() {
     buzzer_.begin();
     motor_.begin();
+    encoder_.begin();
     movement_.begin();
     line_.begin();
-    if (Config::ULTRASONIC_MOTION_GUARD) sensor_.begin();
+    if (Config::ULTRASONIC_MOTION_GUARD) {
+        sensor_.begin();
+        if (Config::REAR_ULTRASONIC_ECHO_PIN >= 0) rearSensor_.begin();
+    }
     rfid_.begin();
     servo_.begin();
     battery_.begin();
@@ -38,8 +54,11 @@ ControlInput AGVController::input() const {
                               Config::benchVoltageReady(battery_.readVoltage()) &&
                               Config::OBSTACLE_DISTANCE_CM > 0;
     result.liftConfigured = servo_.liftConfigured();
-    result.distanceValid = !Config::ULTRASONIC_MOTION_GUARD || sensor_.valid();
-    result.obstacle = Config::ULTRASONIC_MOTION_GUARD && sensor_.isObstacleDetected();
+    const bool reverse = navigator_.segmentReverse();
+    const auto& activeSonar = reverse && Config::REAR_ULTRASONIC_ECHO_PIN >= 0 ? rearSensor_ : sensor_;
+    result.distanceValid = !Config::ULTRASONIC_MOTION_GUARD || activeSonar.valid();
+    result.obstacle = Config::ULTRASONIC_MOTION_GUARD && activeSonar.valid() &&
+        activeSonar.readDistanceCm() <= (navigator_.obstaclePaused() ? Config::OBSTACLE_CLEAR_CM : Config::OBSTACLE_DISTANCE_CM);
     result.servoBusy = servo_.busy();
     result.lineConfigured = readings.configured;
     result.linePattern = readings.pattern;
@@ -161,6 +180,7 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
     }
 }
 void AGVController::update() {
+    encoder_.update(millis());
     // Do not latch a WiFi/MQTT timeout during initial association. Once the
     // first healthy Core heartbeat arrives, the normal watchdog stays active.
     if (!controlArmed_ && mqtt_.isConnected()) {
@@ -176,7 +196,7 @@ void AGVController::update() {
         clearance_.reset();
     }
     cargo_.update(millis());
-    if (Config::ULTRASONIC_MOTION_GUARD) sensor_.update();
+    updateSonars();
     battery_.update();
     servo_.update();
     bool inhibited = consumePriority();
@@ -205,13 +225,17 @@ void AGVController::update() {
             else lastRfidSeenMs_ = 0;
             // Periodic telemetry reports a confirmed stationary tag.
             if (event.newNode) {
-                // RFID is the only position source. Stop before changing the
-                // route state; ACK and elapsed time never imply arrival.
+                // Keep moving only at the authorized RFID with safe sensors
+                // and all required grants. Every actual RFID is still reported.
                 const bool reverse = navigator_.segmentReverse() || control_.segmentReverse();
                 const bool expected = priorConfirmed && positionConfirmed_ && navigator_.active() &&
                     std::strcmp(navigator_.nextNode(), event.node) == 0;
-                if (navigator_.active()) movement_.stop();
-                navigator_.reachedNode(event.node, millis());
+                const auto arrivalInput = input();
+                const bool through = expected && control_.error() == ErrorCode::None &&
+                    control_.state() != AGV_SAFE_STOP && control_.state() != AGV_ERROR &&
+                    navigator_.canPassThrough(event.node,arrivalInput);
+                if (navigator_.active() && !through) movement_.stop();
+                navigator_.reachedNode(event.node, millis(),through ? &arrivalInput : nullptr);
                 char fromNode[NODE_TEXT_SIZE]{};
                 AGVMath::copyText(fromNode, sizeof(fromNode), control_.currentNode());
                 if (expected && fromNode[0] && navigator_.error() == ErrorCode::None)
@@ -235,9 +259,11 @@ void AGVController::update() {
             const auto docking = RoutePlanner::bayHeading(control_.currentNode());
             if (docking != RobotHeading::Unknown) { heading_ = docking; headingBayDefault_ = true; }
         }
-        rfid_.finishRead(); // HALT can wait for a timeout; the arrival motor stop has already happened.
+        // Preserve RC522 HALT/WUPA for fresh repeated reads. At an authorized
+        // straight-through RFID the motor keeps following during cleanup.
+        rfid_.finishRead();
     }
-    if (Config::ULTRASONIC_MOTION_GUARD) sensor_.update();
+    updateSonars();
     if (controlArmed_) control_.checkSafety(input());
     if (!navigator_.active() && control_.state() != AGV_MOVING) movement_.stop();
     if (control_.state() == AGV_LOADING && cargo_.stable() && !pickupIrReported_) {
@@ -267,8 +293,8 @@ void AGVController::update() {
     }
     inhibited = consumePriority() || inhibited;
     if (inhibited) { navigator_.stop(); control_.pause(); }
-    if (Config::ULTRASONIC_MOTION_GUARD) sensor_.update();
-    const char* neededZone = navigator_.missingZone();
+    updateSonars();
+    const char* neededZone = navigator_.requestedZone();
     if (neededZone && static_cast<uint32_t>(millis() - lastZoneRequestMs_) >= 1000) {
         if (mqtt_.requestZone(neededZone)) lastZoneRequestMs_ = millis();
     }
@@ -296,6 +322,12 @@ void AGVController::update() {
     if (navigator_.state() == AGV_SAFE_STOP ||
         (!navigator_.active() && control_.state() != AGV_MOVING)) movement_.stop();
     const MotorAction motorAction = movement_.action();
+    if (Config::ENCODER_ENABLED && Config::DEBUG_ENABLED && motorAction != lastMotorAction_) {
+        Serial.printf("[BUZZER] xe=%s motor=%s left=%d right=%d requested=%d gpio=%d level=%d activeLevel=%d\n",
+            Config::AGV_ID, motorActionName(motorAction), motor_.leftDuty(), motor_.rightDuty(),
+            AGVMath::reverseBuzzerRequired(motorAction, motor_.leftDuty(), motor_.rightDuty()),
+            Config::BUZZER_PIN, buzzer_.pinLevel(), Config::BUZZER_ACTIVE_STATE);
+    }
     if (Config::DEBUG_ENABLED && Config::ENABLE_CORE_MOTION && motorAction != lastMotorAction_ &&
         (std::strcmp(control_.currentNode(), "GS1") == 0 || std::strcmp(control_.currentNode(), "GS2") == 0)) {
         Serial.printf("[MOTOR] xe=%s node=%s action=%s left=%d right=%d line=%u next=%s zone=%s\n",
@@ -305,6 +337,21 @@ void AGVController::update() {
                       navigator_.missingZone() ? navigator_.missingZone() : "-");
     }
     lastMotorAction_ = motorAction;
+    if (Config::ENCODER_ENABLED) {
+        const bool localized = positionConfirmed_ && positionSession_ == mqtt_.session() && mqtt_.isConnected();
+        const bool tracking = localized && navigator_.active() && navigator_.nextNode()[0] &&
+            navigator_.error() == ErrorCode::None && control_.error() == ErrorCode::None;
+        const bool translating = tracking && navigator_.following() && motorAction != MotorAction::Stop &&
+            motorAction != MotorAction::PivotLeft && motorAction != MotorAction::PivotRight;
+        encoder_.context(localized ? control_.currentNode() : "", tracking ? navigator_.nextNode() : "",
+            tracking ? navigator_.routeCommandId() : 0, tracking ? navigator_.pathIndex() : 0,
+            mqtt_.session(), tracking, translating, navigator_.segmentReverse());
+        const uint32_t now = millis();
+        if (static_cast<uint32_t>(now - lastOdometryMs_) >= Config::ODOMETRY_INTERVAL_MS) {
+            mqtt_.publishOdometry(encoder_.snapshot());
+            lastOdometryMs_ = now;
+        }
+    }
     observeState();
     if (static_cast<uint32_t>(millis() - lastTelemetryMs_) >= Config::TELEMETRY_INTERVAL_MS) publishTelemetry();
     if (Config::DEBUG_ENABLED && !Config::ENABLE_CORE_MOTION &&
@@ -351,8 +398,13 @@ void AGVController::publishTelemetry() {
     snapshot.rightDuty = motor_.rightDuty();
     snapshot.wifi = wifi_.isConnected();
     snapshot.mqtt = mqtt_.isConnected();
-    snapshot.obstacle = sensor_.isObstacleDetected();
-    snapshot.ultrasonicCm = sensor_.readDistanceCm();
+    const auto& activeSonar = navigator_.segmentReverse() && Config::REAR_ULTRASONIC_ECHO_PIN >= 0 ? rearSensor_ : sensor_;
+    snapshot.obstacle = Config::ULTRASONIC_MOTION_GUARD && activeSonar.valid() &&
+        activeSonar.readDistanceCm() <= (navigator_.obstaclePaused() ? Config::OBSTACLE_CLEAR_CM : Config::OBSTACLE_DISTANCE_CM);
+    snapshot.ultrasonicCm = activeSonar.readDistanceCm();
+    snapshot.frontUltrasonicCm = sensor_.readDistanceCm();
+    snapshot.rearUltrasonicCm = Config::REAR_ULTRASONIC_ECHO_PIN >= 0 ? rearSensor_.readDistanceCm() : UNKNOWN_VALUE;
+    snapshot.obstacleDirection = navigator_.segmentReverse() ? "rear" : "front";
     snapshot.batteryAdcMv = battery_.adcMillivolts();
     snapshot.batteryCalibrated = battery_.calibrated();
     snapshot.batteryVoltage = battery_.readVoltage();
@@ -360,6 +412,7 @@ void AGVController::publishTelemetry() {
     snapshot.cargoStable = cargo_.stable();
     snapshot.cargoPresent = cargo_.present();
     snapshot.buzzerOn = AGVMath::reverseBuzzerRequired(movement_.action(), motor_.leftDuty(), motor_.rightDuty());
+    snapshot.buzzerPinLevel = buzzer_.pinLevel();
     snapshot.uptimeMs = millis();
     if (positionConfirmed_ && positionSession_ == currentSession && lastRfidSeenMs_)
         snapshot.rfidAgeMs = static_cast<uint32_t>(snapshot.uptimeMs - lastRfidSeenMs_);

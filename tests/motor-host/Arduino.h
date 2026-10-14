@@ -5,8 +5,10 @@
 #define HIGH 1
 #define LOW 0
 #define OUTPUT 1
+#define INPUT 0
 namespace MotorIo { inline std::unordered_map<int,int> pwm, pins; }
 inline void digitalWrite(int pin,int value) { MotorIo::pins[pin]=value; }
+inline int digitalRead(int pin) { return MotorIo::pins[pin]; }
 inline void pinMode(int,int) {}
 inline void ledcSetup(int,int,int) {}
 inline void ledcAttachPin(int,int) {}

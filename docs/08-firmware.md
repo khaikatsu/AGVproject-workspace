@@ -1,5 +1,9 @@
 # Giao tiếp vi điều khiển và điều khiển robot
 
+14/10/2026: giảm nhẹ PWM xoay xe01 từ220 xuống200, trái/phải duty ngược chiều±200 để thử bắt line khi quay. Giữ tiến220/lùi190 và chốt line/timeout; cần nạp env01 và kiểm chứng trên sàn. [ADR-054](decisions/ADR-054-robot01-slower-pivot.md).
+
+14/10/2026: riêng `esp32dev_two_robot_bench_01` đọc encoder bánh trước trái GPIO16/phải GPIO4, RISING/INPUT_PULLUP, lọc >300 µs, hệ số thử 161 xung/100 cm. ISR đếm raw ticks, quãng đường chặng chỉ cộng khi navigator bám line tiến/lùi; gửi odometry 200 ms. Chưa PID/nhả mutex theo encoder. [ADR-050](decisions/ADR-050-robot01-encoder-position-speed.md), [contract](../contracts/robot01-odometry.md) cập nhật việc loại encoder trước đây; profile 02/legacy chưa bật.
+
 Cập nhật 01/10/2026: mutex đã chuyển sang JSON có grant_id/ACK/retry, sketch có LWT, TLS tùy cấu hình, watchdog và cmd_id trong NVS. [Thiết kế hiện tại và cấu hình](18-hardening.md) thay thế mô tả giao thức/phục hồi cũ bên dưới. Motor/phanh thật vẫn OPEN.
 
 Người dùng đã xác nhận **ESP32 DevKit + Arduino IDE + PubSubClient + RC522**. [Sketch](../firmware/AGV_Connection_Test/README.md) có 26 UID node nạp sẵn, `learn` để thay thẻ, boot UNKNOWN đến khi quét; core/web đồng bộ Chờ quét RFID. [ADR-013](decisions/ADR-013-preloaded-rfid-uid-map.md). Bảng chân mới 03/10/2026 thay RC522 SS21 bằng SS5 để dành GPIO21 cho servo; L298N/line/HC-SR04 đã có module driver và liên động với MQTT/route nhưng motor khóa mặc định. [ADR-012](decisions/ADR-012-motor-firmware-integration.md). Chưa upload/đo board thật; đo pin, sạc và điều khiển rẽ vẫn OPEN.
@@ -71,3 +75,6 @@ Cập nhật pin 08/10/2026: firmware dùng GPIO36 và mạch chia 30 kΩ/7.5 k�
 Sau quan sát pin 65–70% trên xe, `BatteryModule` mới lấy 16 mẫu ADC không chặn trong mỗi đợt, bỏ mẫu cao nhất/thấp nhất, lọc giữa các đợt và thêm biên 1,5 điểm cho phần trăm. Bản `esp32dev_trial` đã build thành công ngày 08/10/2026; chưa nạp hoặc đo xe thật với bộ lọc này.
 
 Cập nhật REQ-FW-NCKH-26: `010` là mẫu bám line hợp lệ; web báo `LINE_LOST` do lỗi firmware đã chốt từ một mẫu `000` trước đó, còn marker GS1 là RFID cuối. Để tránh chốt lỗi vì một mẫu thoáng qua, bản trial dừng motor ngay ở `000`, xác nhận mất line liên tục 120 ms rồi mới báo lỗi; Serial ghi mẫu `[LINE]` tại lúc xử lý. Cần nạp và quan sát xe thật để biết nguyên nhân gốc.
+## Xe 01: sonar trước/sau (15/10/2026)
+
+Profile `esp32dev_two_robot_bench_01` nhận HC-SR04 trước TRIG/ECHO GPIO12/13, sau GPIO0/15; còi active LOW dùng GPIO21 theo ảnh người dùng. Firmware kích xen kẽ cách 50 ms, timeout echo 30 ms; sonar phía di chuyển ≤15 cm giữ STOP và tuyến, chỉ nhả khi >20 cm hoặc timeout với ECHO LOW (ngoài tầm theo sketch thử). ECHO kẹt HIGH/dữ liệu cũ dừng lỗi cảm biến; dây ECHO đứt LOW không thể phân biệt với ngoài tầm đo. FirmwareBuild `20261015-robot01-dual-sonar`; xe 02 giữ pin và behavior cũ. Xem [ADR-055](decisions/ADR-055-robot01-dual-sonar-edge-warning.md), [hợp đồng](07-network.md). Chưa nạp/đo quãng phanh thực tế; ECHO 5 V phải qua chia áp/chuyển mức 3,3 V và cần kiểm tra GPIO0 lúc boot trước thử motor.

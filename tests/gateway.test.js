@@ -36,11 +36,14 @@ async function fixture(t,options = {}) {
         model.fleet.pending_tasks = model.fleet.tasks.filter(r=>r.status === 'pending');result.data.cancelled = 1;
       } else if (request.cmd === 'load_map_data') {model.map = request.map;result.data.map_revision = 2;}
       else if (request.cmd === 'set_obstacle' && options.noObstacleReply) return;
-      if (options.delay) setTimeout(()=>ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({...result,state:model})),options.delay);
+      if (options.delay) {
+        const response=JSON.stringify({...result,state:model});
+        setTimeout(()=>ws.readyState === WebSocket.OPEN && ws.send(response),options.delay);
+      }
       else ws.send(JSON.stringify({...result,state:model}));
     });
   });
-  const gateway = createGateway({db,coreUrl:`ws://127.0.0.1:${core.address().port}`,commandTimeoutMs:options.timeout || 500,staleMs:options.staleMs || 5000,reconnectMs:50});
+  const gateway = createGateway({db,coreUrl:`ws://127.0.0.1:${core.address().port}`,commandTimeoutMs:options.timeout || 500,staleMs:options.staleMs || 5000,reconnectMs:50,broadcastIntervalMs:options.broadcastIntervalMs});
   const address = await gateway.start(0,'127.0.0.1'),base = `http://127.0.0.1:${address.port}`;
   const api = async (method,route,body)=>{
     const r = await fetch(base+route,{method,headers:body ? {'Content-Type':'application/json'} : undefined,body:body ? JSON.stringify(body) : undefined});
@@ -50,6 +53,47 @@ async function fixture(t,options = {}) {
   t.after(async ()=>{await gateway.close();for (const client of core.clients) client.terminate();await new Promise(resolve=>core.close(resolve));db.close();});
   return {db,model,push,api,commands,peer:()=>peer,base};
 }
+test('RFID position preempts a pending ordinary broadcast and keeps delta sequence',async t=>{
+  const f=await fixture(t,{broadcastIntervalMs:1500});
+  f.model.fleet.agvs=[{id:'01',node:'A',position_valid:true,state:'IDLE',online:true}];f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.fleet.agvs[0]?.node==='A');
+  const socket=new WebSocket(f.base.replace('http:','ws:')+'/ws?delta=1');t.after(()=>socket.terminate());
+  const messages=[];let baseline;
+  socket.on('message',raw=>{
+    const message=JSON.parse(raw);messages.push(message);
+    if(message.type==='state_delta'){
+      assert.equal(message.base_state_seq,baseline.state_seq);
+      baseline={...baseline,...message.changes,state_seq:message.state_seq};
+    }else baseline=message;
+  });
+  await once(socket,'open');await until(()=>baseline?.fleet.agvs[0]?.node==='A');
+  const before=messages.length;
+  f.model.logs=[{seq:1,msg:'ordinary update',time:'00:00:00'}];f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.logs[0]?.seq===1);
+  await pause(40);assert.equal(messages.length,before); // Ordinary update is waiting for its throttle window.
+  const start=Date.now();f.model.fleet.agvs[0].node='T';f.push();
+  await until(()=>baseline?.fleet.agvs[0]?.node==='T',600);
+  assert(Date.now()-start<600);assert.equal(baseline.logs[0].seq,1);
+  assert.equal(f.db.getAgvHistory('01',10)[0].node,'T');
+});
+
+test('late command snapshot cannot roll back a newer RFID; snapshot seq resets with Core session',async t=>{
+  const f=await fixture(t,{delay:220});
+  f.model.core_snapshot_seq=10;f.model.fleet.agvs=[{id:'01',node:'A',position_valid:true,state:'IDLE',online:true}];f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.core_snapshot_seq===10);
+  const request=f.api('POST','/api/tasks',{target:'T'});
+  await until(()=>f.commands.length===1);
+  f.model.core_snapshot_seq=11;f.model.fleet.agvs[0].node='T';f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.core_snapshot_seq===11);
+  assert.equal((await request).status,200);
+  let latest=(await f.api('GET','/api/state')).data;
+  assert.equal(latest.core_snapshot_seq,11);assert.equal(latest.fleet.agvs[0].node,'T');
+  assert.equal(f.db.getAgvHistory('01',10)[0].node,'T');
+  f.model.core_session_id='session-2';f.model.core_snapshot_seq=1;f.model.fleet.agvs[0].node='A';f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.core_session_id==='session-2');
+  latest=(await f.api('GET','/api/state')).data;assert.equal(latest.core_snapshot_seq,1);assert.equal(latest.fleet.agvs[0].node,'A');
+});
+
 test('failed checkpoint reports Core unready and rejects commands until a healthy state',async t=>{
   const f=await fixture(t);f.model.storage_healthy=false;f.push();
   await until(async()=>(await f.api('GET','/api/health')).data.storage_healthy===false);

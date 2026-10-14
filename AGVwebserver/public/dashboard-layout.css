@@ -237,7 +237,8 @@ th { background: #16253a; color: #a8bdd5; border-bottom-width: 1px; }
 .map-live { padding: 5px 9px; border: 1px solid #365274; border-radius: 999px; color: #b4d4ff; font-size: 11px; white-space: nowrap; }
 #selectionBar { min-height: 36px; padding: 7px 14px; flex-wrap: wrap; background: #142339; font-size: 12px; }
 #selectionBar button { min-height: 28px; }
-.map-viewport { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
+.map-viewport { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; }
+.map-heading, #selectionBar, .map-foot { flex: 0 0 auto; }
 #mapSvg {
   flex: 1 1 auto;
   min-height: 0;
@@ -313,6 +314,7 @@ th { background: #16253a; color: #a8bdd5; border-bottom-width: 1px; }
   #toastContainer { left: 10px; right: 10px; max-width: none; }
 }
 @media (min-width: 1101px) {
+  html:has(body[data-map-expanded="true"]:not([data-view="reports"])) {height:auto;min-height:100vh;overflow:auto;}
   body[data-map-expanded="true"]:not([data-view="reports"]) {height:auto;min-height:100vh;overflow:auto;}
   body[data-map-expanded="true"]:not([data-view="reports"]) #main-container {position:relative;grid-template-columns:minmax(0,1fr) minmax(0,1fr);overflow:visible;flex:0 0 auto;}
   body[data-map-expanded="true"]:not([data-view="reports"]) #center-panel {grid-column:1 / -1;grid-row:1;height:max(720px,calc(100vh - 184px));}

@@ -1,0 +1,15 @@
+{
+  "status": "documentation-only",
+  "topic": "agv/01/diagnostic",
+  "core_context": {"task_id":"task-example","target":"S1","node":"S1","path":[],"state":"WORKING"},
+  "payload": {
+    "version":1,"agvId":"01","session":1,"uptimeMs":230965,
+    "node":"S1","headingNode":"S1","heading":"S","headingSource":"bay_default",
+    "headingSupported":true,"stationDockingSupported":true,"stationReady":true,
+    "state":"AGV_IDLE","error":"NONE","motor":"STOP","leftDuty":0,"rightDuty":0,
+    "taskActive":false,"wifi":true,"mqtt":true,"rfidAgeMs":175278,
+    "batteryCalibrated":true,"batteryPercentage":65
+  },
+  "expected": {"task_id":"task-example","task_status":"completed","robot_task_id":"","robot_target":"","robot_state":"IDLE"},
+  "note": "Diagnostic mới xác nhận đỗ sau RFID đích; tuổi mốc RFID không phải tuổi gói diagnostic. Ví dụ không phải lệnh để publish lên xe thật."
+}

@@ -12,4 +12,6 @@ bool decodeGrant(const uint8_t* payload, size_t length, CoreGrant& grant);
 bool grantAck(const CoreGrant& grant, char* output, size_t capacity);
 bool telemetry(const char* node, int battery, bool obstacle, char* output, size_t capacity);
 bool ack(int32_t cmdId, char* output, size_t capacity);
+bool odometry(const OdometrySnapshot& snapshot, uint32_t bootId, const char* coreSession,
+              char* output, size_t capacity);
 }

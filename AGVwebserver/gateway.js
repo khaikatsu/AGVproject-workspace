@@ -72,6 +72,11 @@ function createGateway(options = {}) {
     let receivedAt = 0,session = null,reconnectTimer = null,wasFresh = false;
     const requests = new Map();
     let broadcastTimer = null,lastBroadcastAt = 0,broadcastExtra = {};
+    const broadcastIntervalMs = options.broadcastIntervalMs ?? 200;
+    if (!Number.isInteger(broadcastIntervalMs) || broadcastIntervalMs < 0) throw new Error('Broadcast interval không hợp lệ');
+    const positions = state => JSON.stringify((state.fleet?.agvs || []).map(a=>[a.id,a.node,a.position_valid,
+        a.odometry?.seq,a.odometry?.valid,a.speed_cm_s,a.estimated_position])
+        .sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
     let browserSequence = 0;
     let streamState = null;
     const fresh = () => connected && receivedAt > 0 && Date.now() - receivedAt <= staleMs;
@@ -82,10 +87,13 @@ function createGateway(options = {}) {
         // Keep each broadcast immutable: the scheduler mutates order/item objects.
         task_history:db.getTaskHistory(50),orders:JSON.parse(JSON.stringify(orders.list().slice(0,50))),
         warehouse_actions:JSON.parse(JSON.stringify(warehouseActions.list()))});
-    function broadcast(extra = {}) {
+    function broadcast(extra = {},positionChanged = false) {
         Object.assign(broadcastExtra,extra);
-        if (broadcastTimer) return;
-        const wait = Math.max(0,200-(Date.now()-lastBroadcastAt));
+        if (broadcastTimer) {
+            if (!positionChanged) return;
+            clearTimeout(broadcastTimer);broadcastTimer = null;
+        }
+        const wait = positionChanged ? 0 : Math.max(0,broadcastIntervalMs-(Date.now()-lastBroadcastAt));
         broadcastTimer = setTimeout(()=>{
             broadcastTimer = null;lastBroadcastAt = Date.now();
             const state = {...browserState(),...broadcastExtra};broadcastExtra = {};const seq = ++browserSequence;
@@ -108,7 +116,13 @@ function createGateway(options = {}) {
     function onState(state) {
         if (!state || !state.map || !state.fleet || !Array.isArray(state.map.nodes) ||
             !Array.isArray(state.map.edges) || !Array.isArray(state.fleet.agvs)) return;
+        const positionChanged = positions(latestState) !== positions(state);
         const nextSession = typeof state.core_session_id === 'string' ? state.core_session_id : 'legacy';
+        // A command response may arrive after a newer priority RFID snapshot.
+        // Keep its request result, but never roll back the displayed fleet.
+        if (nextSession === session && Number.isSafeInteger(state.core_snapshot_seq) &&
+            Number.isSafeInteger(latestState.core_snapshot_seq) &&
+            state.core_snapshot_seq <= latestState.core_snapshot_seq) return;
         if (session !== nextSession) {session = nextSession;db.interruptPreviousSession(session,state.fleet.tasks || []);}
         latestState = {...state,map:{...state.map,obstacles:state.map.obstacles || []},
             fleet:{...state.fleet,pending_tasks:state.fleet.pending_tasks || [],tasks:state.fleet.tasks || []},
@@ -117,7 +131,7 @@ function createGateway(options = {}) {
         db.enqueueState(latestState,session,INCIDENT_RE);
         if (latestState.mqtt_connected === false) orders.interruptAll('Mất MQTT; đối soát xe và kiện hàng');
         if (latestState.storage_healthy === false) orders.interruptAll('Core lỗi ghi checkpoint; đối soát xe và kiện hàng');
-        broadcast();
+        broadcast({},positionChanged);
         void orders.tick();
         void warehouseActions.tick();
     }
@@ -133,6 +147,7 @@ function createGateway(options = {}) {
         const current = socket = new WebSocket(coreUrl,{maxPayload:8*1024*1024,headers:coreToken ? {Authorization:`Bearer ${coreToken}`} : undefined});
         current.on('open',() => {connected = true;receivedAt = 0;broadcast();});
         current.on('message',raw => {
+            if (current !== socket || stopped) return;
             try {
                 const payload = JSON.parse(raw.toString());
                 if (payload.type === 'state_delta') {

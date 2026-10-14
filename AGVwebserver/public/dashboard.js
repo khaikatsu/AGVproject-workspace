@@ -13,6 +13,81 @@ const seenLogs = new Set(), recentLogs = [];
 const $ = id => document.getElementById(id);
 const views = new Set(['overview','tasks','map','reports']);
 let mapDockFrame = 0;
+const robotMarkerMotion = new Map();
+let robotMotionFrame = 0;
+function encoderFresh(robot) {
+  return dataFresh() && lastState?.mqtt_connected !== false && lastState?.storage_healthy !== false &&
+    robot?.online === true && robot.position_valid !== false && !['ERROR','OFFLINE','UNLOCALIZED'].includes(robot.state) &&
+    robot.odometry?.valid === true && typeof robot.odometry.age_ms === 'number' &&
+    robot.odometry.age_ms + snapshotAge()*1000 <= (robot.odometry.stale_after_ms || 1000);
+}
+function robotSpeedText(robot) {
+  return encoderFresh(robot) && typeof robot.speed_cm_s === 'number' && Number.isFinite(robot.speed_cm_s)
+    ? `${Math.max(0,robot.speed_cm_s).toFixed(1)} cm/s` : '— cm/s';
+}
+function updateRobotMotionLabels() {
+  document.querySelectorAll('[data-robot-speed]').forEach(el=>{
+    const robot = lastState?.fleet.agvs.find(a=>a.id === el.dataset.robotSpeed);
+    el.textContent = robotSpeedText(robot);
+  });
+  const robot = lastState?.fleet.agvs.find(a=>a.id === '01'),estimate = robot?.estimated_position;
+  $('robot01Speed').textContent = `Xe 01: ${robotSpeedText(robot)}`;
+  $('robot01Speed').title = `Tốc độ ước tính từ hai encoder${robot?.odometry?.pulses_per_100cm ? `, hệ số thử ${robot.odometry.pulses_per_100cm} xung/100 cm` : ''}`;
+  const live = encoderFresh(robot),held = robotMarkerMotion.get('01')?.source === 'encoder_stale';
+  $('robot01Position').textContent = live && estimate
+    ? `Xe 01: ${robotSpeedText(robot)} · ước tính ${estimate.from} → ${estimate.to} · ${finite(estimate.distance_cm).toFixed(1)} / ${finite(estimate.edge_length_cm).toFixed(1)} cm · RFID gần nhất: ${robot.node}`
+    : held || robot?.encoder_supported && !live
+      ? `Xe 01: ${robotSpeedText(robot)} · ${live ? 'vị trí ước tính cuối, chờ chặng/RFID mới' : 'dữ liệu encoder cũ / chưa có, giữ vị trí hiển thị'} · RFID gần nhất: ${robot?.node || '—'}`
+      : `Xe 01: vị trí RFID ${robot?.node || '—'}${live ? ' · tốc độ encoder' : ' · chờ encoder'}`;
+  if (robot?.obstacle_alert) {
+    const alert = robot.obstacle_alert;
+    $('robot01Position').textContent += ` · VẬT CẢN ${alert.direction === 'rear' ? 'PHÍA SAU' : 'PHÍA TRƯỚC'} ${finite(alert.range_cm).toFixed(1)} cm — đang dừng chờ`;
+  }
+}
+function markerPoint(motion, now) {
+  const t = motion.duration ? Math.min(1,Math.max(0,(now-motion.startedAt)/motion.duration)) : 1;
+  return {x:motion.fromX+(motion.x-motion.fromX)*t,y:motion.fromY+(motion.y-motion.fromY)*t};
+}
+function robotMarkerPoint(robot, fallback, transform) {
+  const now = performance.now(),estimate = robot.estimated_position;
+  const context = `${lastState?.core_session_id}:${lastState?.map?.revision}:${robot.node}:${transform.scale}:${transform.ox}:${transform.oy}`;
+  let motion = robotMarkerMotion.get(robot.id);
+  if (motion?.context !== context) motion = null;
+  const live = encoderFresh(robot) && estimate?.source === 'encoder' &&
+    typeof estimate.x === 'number' && Number.isFinite(estimate.x) && typeof estimate.y === 'number' && Number.isFinite(estimate.y);
+  if (live) {
+    const x = estimate.x*transform.scale+transform.ox,y = estimate.y*transform.scale+transform.oy;
+    const key = `${robot.odometry.boot_id}:${robot.odometry.connection_session}:${robot.odometry.seq}`;
+    if (!motion || motion.key !== key) {
+      const current = motion ? {x:motion.displayX,y:motion.displayY} : fallback;
+      motion = {context,key,fromX:current.x,fromY:current.y,x,y,startedAt:now,
+        duration:motion && motion.route === estimate.route_cmd_id ? 180 : 0,route:estimate.route_cmd_id,source:'encoder'};
+    } else motion.source = 'encoder';
+  } else if (motion && robot.encoder_supported && (motion.source.startsWith('encoder') || !encoderFresh(robot))) {
+    motion.fromX = motion.x = motion.displayX;motion.fromY = motion.y = motion.displayY;
+    motion.duration = 0;motion.source = motion.source.startsWith('encoder') ? 'encoder_stale' : 'rfid';
+  } else motion = {context,fromX:fallback.x,fromY:fallback.y,x:fallback.x,y:fallback.y,startedAt:now,duration:0,source:'rfid'};
+  const point = markerPoint(motion,now);motion.displayX = point.x;motion.displayY = point.y;
+  robotMarkerMotion.set(robot.id,motion);
+  return {...point,source:motion.source};
+}
+function animateRobotMarkers() {
+  robotMotionFrame = 0;const now = performance.now();let active = false;
+  for (const [id,motion] of robotMarkerMotion) {
+    const group = Array.from(document.querySelectorAll('#agvsG [data-robot]')).find(el=>el.dataset.robot === id);
+    const robot = lastState?.fleet.agvs.find(a=>a.id === id);
+    if (!group || !robot) continue;
+    if (!encoderFresh(robot) && motion.source.startsWith('encoder')) {
+      motion.fromX = motion.x = motion.displayX;motion.fromY = motion.y = motion.displayY;
+      motion.duration = 0;motion.source = 'encoder_stale';group.dataset.positionSource = motion.source;
+    }
+    const point = markerPoint(motion,now);motion.displayX = point.x;motion.displayY = point.y;
+    group.setAttribute('transform',`translate(${point.x+finite(motion.offset)},${point.y})`);
+    if (motion.duration && now-motion.startedAt < motion.duration && encoderFresh(robot)) active = true;
+  }
+  updateRobotMotionLabels();
+  if (active) robotMotionFrame = requestAnimationFrame(animateRobotMarkers);
+}
 function scheduleMapDocking() {
   if (mapDockFrame) return;
   mapDockFrame = requestAnimationFrame(()=>{
@@ -247,13 +322,17 @@ function renderFleet(agvs) {
     if (a.battery_display_available === true) battery.title = 'Ước tính từ điện áp; chưa dùng cho ngưỡng điều phối';
     const state = document.createElement('div');state.textContent = labels[a.state] || a.state || 'Chưa xác định';state.style.color = colors[a.state] || colors.UNKNOWN;
     const age = document.createElement('small');age.dataset.robotAge = a.id;state.append(document.createElement('br'),age);
+    if (a.id === '01') {
+      const speed = document.createElement('small');speed.dataset.robotSpeed = a.id;
+      speed.textContent = robotSpeedText(a);state.append(document.createElement('br'),speed);
+    }
     if (a.error) {const error = document.createElement('div');error.className = 'robot-error';error.textContent = a.error;state.append(error);}
     const actions = document.createElement('div');
     if (a.state === 'ERROR') actions.append(action('Xóa lỗi',button=>clearAgvError(a.id,button)));
     if (a.state === 'OFFLINE') actions.append(action('Gỡ xe',button=>removeAGV(a.id,button)));
     else if (['IDLE','WORKING','BLOCKED'].includes(a.state)) {const choose = action('Chọn',()=>selectAgv(a.id));choose.setAttribute('data-task-control','');actions.append(choose);}
     appendRow(tbody,[name,node,battery,state,actions]);
-  });updateRobotAges();
+  });updateRobotAges();updateRobotMotionLabels();
 }
 function updateRobotAges() {
   document.querySelectorAll('[data-robot-age]').forEach(el=>{
@@ -509,7 +588,7 @@ function render(state) {
 }
 function renderEmpty() {
   renderShift(null);
-  renderFleet([]);renderTasks([]);renderTaskHistory([]);renderOrders([]);$('nodesG').replaceChildren();$('edgesG').replaceChildren();$('agvsG').replaceChildren();$('routesG').replaceChildren();
+  renderFleet([]);renderTasks([]);renderTaskHistory([]);renderOrders([]);$('nodesG').replaceChildren();$('edgesG').replaceChildren();$('agvsG').replaceChildren();$('routesG').replaceChildren();$('sonarObstaclesG').replaceChildren();
   populateNodeOptions(null);renderSummary(null);renderObstacleAction();
 }
 function setSelectionText(text,picking) {$('selectionText').textContent = text;$('selectionBar').className = picking ? 'picking' : 'idle';$('cancelSelectBtn').style.display = picking ? 'inline-block' : 'none';}
@@ -670,15 +749,24 @@ function computeMapTransform(nodes) {
 function drawMap(map,agvs,prefix = '') {
   const nodesG = $(prefix ? 'previewNodesG' : 'nodesG'),edgesG = $(prefix ? 'previewEdgesG' : 'edgesG');
   nodesG.replaceChildren();edgesG.replaceChildren();
+  if (!prefix) $('sonarObstaclesG').replaceChildren();
   const nodes = Array.isArray(map.nodes) ? map.nodes : [],edges = Array.isArray(map.edges) ? map.edges : [];
   const {scale,ox,oy} = computeMapTransform(nodes),position = new Map();
   nodes.forEach(n=>position.set(n.id,{x:finite(n.x)*scale+ox,y:finite(n.y)*scale+oy}));
+  const detections = prefix ? [] : agvs.filter(robot=>robot.online && robot.obstacle_detection &&
+    Number.isFinite(robot.obstacle_detection.x) && Number.isFinite(robot.obstacle_detection.y));
   const seenEdges = new Set();
   edges.forEach(e=>{
     const a = position.get(e.from),b = position.get(e.to);if (!a || !b) return;
     const key = e.two_way ? [e.from,e.to].sort().join('\n') : `${e.from}\n${e.to}`;
     if (seenEdges.has(key)) return;seenEdges.add(key);
-    const line = svgElement('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'edge'});
+    const blockedBySonar = detections.some(robot=>{
+      const d = robot.obstacle_detection;
+      return d.from === e.from && d.to === e.to || e.two_way && d.from === e.to && d.to === e.from;
+    });
+    const lineAttrs = {x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:blockedBySonar ? 'edge sonar-obstacle-edge' : 'edge'};
+    if (blockedBySonar) Object.assign(lineAttrs,{'data-sonar-obstacle-edge':`${e.from}:${e.to}`});
+    const line = svgElement('line',lineAttrs);
     const length = Math.hypot(b.x-a.x,b.y-a.y) || 1,dx = (b.x-a.x)/length,dy = (b.y-a.y)/length;
     const clearance = prefix ? 19 : 23;
     line.setAttribute('x2',b.x-dx*clearance);line.setAttribute('y2',b.y-dy*clearance);
@@ -688,6 +776,13 @@ function drawMap(map,agvs,prefix = '') {
     const horizontal = Math.abs(dx) > Math.abs(dy);
     edgesG.append(svgElement('text',{x:(a.x+b.x)/2+(horizontal ? 0 : 10),
       y:(a.y+b.y)/2+(horizontal ? -10 : 4),'text-anchor':horizontal ? 'middle' : 'start',class:'edge-label'},e.weight));
+  });
+  detections.forEach(robot=>{
+    const d = robot.obstacle_detection,x=d.x*scale+ox,y=d.y*scale+oy;
+    const dot = svgElement('circle',{cx:x,cy:y,r:8,fill:'#EF4444',stroke:'#FEE2E2','stroke-width':2,
+      'data-sonar-obstacle':robot.id});
+    dot.append(svgElement('title',{},`Xe ${robot.id}: vật cản ${d.direction === 'rear' ? 'phía sau' : 'phía trước'}, đo ${d.range_cm.toFixed(1)} cm; vị trí ước tính theo encoder`));
+    $('sonarObstaclesG').append(dot);
   });
   const obstacles = new Set(map.obstacles || []);
   const nodeTypes = {mutex:'RFID / vùng chung',station:'Kho',charging:'Trạm sạc',waypoint:'Điểm đường / cửa'};
@@ -722,11 +817,17 @@ function drawMap(map,agvs,prefix = '') {
       const segment = svgElement('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:color,'stroke-width':5,opacity:0.7,'stroke-dasharray':'8 4','data-robot-route':robot.id});
       segment.append(svgElement('title',{},`Kế hoạch ${robot.id}: ${path[i-1]} → ${path[i]}`));routesG.append(segment);
     }
-    const p = position.get(robot.node);if (!p || robot.position_valid === false) return;
+    const p = position.get(robot.node);if (!p || robot.position_valid === false) {robotMarkerMotion.delete(robot.id);return;}
+    const display = robotMarkerPoint(robot,p,{scale,ox,oy});
     const siblings = agvs.filter(a=>a.node === robot.node),offset = siblings.length > 1 ? siblings.indexOf(robot)*20-10 : 0;
-    const group = svgElement('g',{transform:`translate(${p.x+offset},${p.y})`,class:'agv-group','data-robot':robot.id,'pointer-events':'bounding-box'});
-    group.append(svgElement('circle',{cx:0,cy:0,r:14,fill:colors[robot.state] || '#64748B',stroke:color,'stroke-width':selectedAgvId === robot.id ? 4 : 2}),
-      svgElement('text',{x:-14,y:-43,class:'agv-label'},robot.id),svgElement('title',{},`${robot.id}: ${labels[robot.state] || robot.state}; node đo gần nhất ${robot.node}; đầu xe ${robot.heading_supported && headingLabels[robot.heading] || 'chưa biết'}`));
+    robotMarkerMotion.get(robot.id).offset = offset;
+    if (display.source.startsWith('encoder')) agvsG.append(svgElement('circle',{cx:p.x,cy:p.y,r:7,fill:'none',stroke:color,opacity:0.55,'data-rfid-anchor':robot.id,'pointer-events':'none'}));
+    const group = svgElement('g',{transform:`translate(${display.x+offset},${display.y})`,class:'agv-group',
+      'data-robot':robot.id,'data-position-source':display.source,'pointer-events':'bounding-box'});
+    group.append(svgElement('circle',{cx:0,cy:0,r:14,fill:colors[robot.state] || '#64748B',stroke:color,
+      'stroke-width':selectedAgvId === robot.id ? 4 : 2,'stroke-dasharray':display.source.startsWith('encoder') ? '4 2' : 'none'}),
+      svgElement('text',{x:-14,y:-43,class:'agv-label'},robot.id),svgElement('title',{},
+        `${robot.id}: ${labels[robot.state] || robot.state}; ${display.source.startsWith('encoder') ? 'vị trí ước tính encoder; ' : ''}RFID gần nhất ${robot.node}; ${robotSpeedText(robot)}; đầu xe ${robot.heading_supported && headingLabels[robot.heading] || 'chưa biết'}`));
     if (robot.online && robot.heading_supported && headingLabels[robot.heading])
       group.append(svgElement('path',{d:'M18,-6 L29,-6 L29,-10 L40,0 L29,10 L29,6 L18,6 Z',
         transform:`rotate(${headingAngles[robot.heading]})`,fill:color,stroke:'#0B1220','stroke-width':1.5,
@@ -734,6 +835,9 @@ function drawMap(map,agvs,prefix = '') {
     else group.append(svgElement('text',{x:21,y:5,fill:'#94A3B8','font-size':16,'data-heading-unknown':robot.id},'?'));
     group.onclick = event=>{event.stopPropagation();selectAgv(robot.id);};agvsG.append(group);
   });
+  for (const id of robotMarkerMotion.keys()) if (!agvs.some(a=>a.id === id)) robotMarkerMotion.delete(id);
+  if (robotMotionFrame) cancelAnimationFrame(robotMotionFrame);
+  robotMotionFrame = requestAnimationFrame(animateRobotMarkers);
 }
 function renderMap(map,agvs) {drawMap(map,agvs);scheduleMapDocking();}
 function processServerLogs(logs,notify = true) {
@@ -841,4 +945,5 @@ new ResizeObserver(scheduleMapDocking).observe($('mapViewport'));
 $('orderProgressSelect').addEventListener('change',()=>renderOrderProgress(lastState?.orders || []));
 setTaskMode('order');showView('overview');renderEmpty();checkAuthentication().then(ready=>{if (ready) connect();});
 setInterval(()=>{updateConnection();updateRobotAges();},1000);
+setInterval(()=>{if (robotMotionFrame) cancelAnimationFrame(robotMotionFrame);animateRobotMarkers();},200);
 setInterval(updateOrderTimers,1000);

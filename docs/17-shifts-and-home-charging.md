@@ -1,5 +1,7 @@
 # Ca làm việc và tự về trạm sạc
 
+14/10/2026: [ADR-053](decisions/ADR-053-station-completion-rfid-anchor.md) sửa task kẹt WORKING tại S1 dù MCU đã đỗ xong. RFID đích cùng diagnostic mới stationReady/IDLE/NONE/STOP/hướng ra GS chốt task; không đòi đầu đọc còn nằm trên thẻ sau pivot. Task/đích rỗng cho phép ca CLOSING→CLOSED; phục hồi lỗi/mutex giữ250ms.
+
 Cập nhật 01/10: sau Core restart, xe đã biết được giữ dưới dạng OFFLINE/vị trí chưa xác minh, task đang chạy gián đoạn, queue và mutex được khôi phục. RFID mới, xác minh lỗi/vùng và quy trình mở ca vẫn bắt buộc. [Chi tiết phục hồi](18-hardening.md).
 
 Yêu cầu trực tiếp 29/09/2026: xe **01 → S1**, xe **02 → S2**; nút kết thúc ca trên web; hoàn thành task đang chạy rồi về trạm riêng. Người dùng đã duyệt **C3 → G1 → C1**. Sau lần sửa server/web, người dùng cho phép cập nhật firmware: đã có RC522, learn UID và boot chờ quét mới; [hướng dẫn sketch](../firmware/AGV_Connection_Test/README.md).
@@ -66,3 +68,5 @@ Hàng đợi giữ trong RAM của phiên core khi đóng/mở ca. Sau restart, 
 - [Browser](../tests/browser.integration.js): nút ca, trạm, khóa task, vẫn quản lý vật cản, ẩn robot chưa định vị, desktop/mobile.
 
 Các fixture trên không chứng minh chuyển động, sạc hoặc độ chính xác RFID trên xe thật. Kết quả nền tại [hồ sơ kiểm thử](testing-web-server-2026-09-29.md).
+
+Core test01 10/10/2026 (ADR-036): clear_error/RESET_FAULT không yêu cầu ở S1; Core chờ diagnostic khỏe tại RFID hiện tại mới IDLE, ACK không đủ. Test01 mở/đóng ca tại node đã xác nhận, không ép về S1; at_home vẫn dùng trạm thực. Robot02/both giữ home gate. Không đổi command payload/firmware, không cần nạp lại. MCU vẫn kiểm tra line/mạng/vị trí/hướng; không trả mutex chỉ vì reset giữa tuyến.

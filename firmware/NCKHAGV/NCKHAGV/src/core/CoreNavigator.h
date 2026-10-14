@@ -16,14 +16,17 @@ public:
     void stop();
     bool clearFault();
     void fault(ErrorCode reason);
-    void reachedNode(const char* node, uint32_t now);
+    void reachedNode(const char* node, uint32_t now, const ControlInput* input = nullptr);
+    bool canPassThrough(const char* node, const ControlInput& input) const;
     bool grant(const char* zone, int32_t grantId);
     void revokeGrant(const char* zone, int32_t grantId);
     void resetGrants();
     MotorAction update(const ControlInput& input);
     const char* missingZone() const;
+    const char* requestedZone() const;
     bool active() const { return phase_ != Phase::Idle && phase_ != Phase::Fault; }
     bool following() const { return phase_ == Phase::Following; }
+    bool obstaclePaused() const { return obstaclePaused_; }
     bool stationOriented() const { return stationOriented_; }
     AGVState state() const;
     ErrorCode error() const { return error_; }
@@ -43,6 +46,7 @@ private:
     char path_[Config::MAX_PATH_NODES][NODE_TEXT_SIZE]{};
     RouteTurn turns_[Config::MAX_PATH_NODES]{};
     uint8_t turnCrossings_[Config::MAX_PATH_NODES]{};
+    bool passThrough_[Config::MAX_PATH_NODES]{};
     bool stationOriented_ = false;
     uint8_t crossedLines_ = 0;
     uint32_t lastCrossingMs_ = 0;
@@ -56,4 +60,6 @@ private:
     bool soloTrial_ = false;
     bool requireNodeOrders_ = false, nodeOrderReceived_ = false;
     int32_t routeCmdId_ = 0;
+    bool obstaclePaused_ = false;
+    uint32_t obstaclePausedAtMs_ = 0;
 };

@@ -28,6 +28,45 @@ json comparableMap(MapGraph& map) {
 int main() {
     try {
         {
+            MapGraph map;map.loadDefaultDemoMap();const auto layout=map.toJson();
+            CHECK(NodeManeuver::straightThrough(layout,"C4","M4","GS2"));
+            CHECK(NodeManeuver::straightThrough(layout,"M4","GS2","M3"));
+            CHECK(NodeManeuver::straightThrough(layout,"GS2","M3","C3"));
+            CHECK(!NodeManeuver::straightThrough(layout,"C4","M4","G5"));
+            CHECK(!NodeManeuver::straightThrough(layout,"K1","G1","M5")); // Backing out requires a gate pivot.
+            CHECK(!NodeManeuver::straightThrough(layout,"GS1","S1","GS1"));
+            MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.setTrialRobot("01");std::vector<json> sent;
+            fleet.setPublishCallback([&](const std::string&,const std::string& p){sent.push_back(json::parse(p));});
+            CHECK(fleet.updateTelemetry("01","C4",80,false));
+            CHECK(!fleet.updateTelemetry("01","C4",80,false)); // Heartbeat is not a new RFID observation.
+            CHECK(fleet.directGoto("01","C3","legacy-through").empty());
+            CHECK(!sent.back().contains("pass_through"));fleet.cancelTask("","legacy-through");
+            MotionDiagnostic d{"C4","AGV_IDLE","NONE","STOP",false,true,true,0,0,0};
+            d.headingSupported=true;d.heading="W";d.headingNode="C4";d.headingSource="route";
+            d.nodeOrdersSupported=d.straightThroughSupported=true;fleet.observeMotionDiagnostic("01",d);
+            CHECK(fleet.directGoto("01","C3","continuous-trip").empty());
+            CHECK(sent.back()["path"]==json::array({"M4","GS2","M3","C3"}));
+            CHECK(sent.back()["pass_through"]==json::array({0,1,2}));
+            fleet.reportAck("01",sent.back()["cmd_id"].get<long>());
+            for (const auto* node : {"M4","GS2","M3"}) {
+                fleet.updateTelemetry("01",node,80,false);
+                CHECK(record(fleet,"continuous-trip")["status"]=="dispatched");
+                CHECK(fleet.toJson()["agvs"][0]["node"]==node);
+            }
+            fleet.updateTelemetry("01","C3",80,false);CHECK(record(fleet,"continuous-trip")["status"]=="completed");
+            fleet.updateTelemetry("01","C4",80,false);fleet.observeMotionDiagnostic("01",d);
+            CHECK(fleet.directGoto("01","K5","turn-trip").empty());
+            const auto through=sent.back()["pass_through"];
+            CHECK(std::find(through.begin(),through.end(),json(0))==through.end());
+            fleet.cancelTask("","turn-trip");d.straightThroughSupported=false;fleet.observeMotionDiagnostic("01",d);
+            CHECK(fleet.directGoto("01","C3","old-firmware").empty());CHECK(!sent.back().contains("pass_through"));
+            fleet.cancelTask("","old-firmware");fleet.updateTelemetry("01","K1",80,false);
+            d.node=d.headingNode="K1";d.heading="W";d.headingSource="bay_default";d.straightThroughSupported=true;
+            fleet.observeMotionDiagnostic("01",d);CHECK(fleet.directGoto("01","M5","warehouse-exit-through").empty());
+            CHECK(sent.back()["pass_through"].empty()); // Do not reject the valid reverse-exit route at the MCU.
+        }
+        {
             long next = 100;
             MutexArbiter arbiter({"M"});arbiter.setGrantIdAllocator([&]{return ++next;});arbiter.setRetryTimeout(1);
             CHECK(!arbiter.requestZone("invalid","01"));CHECK(arbiter.requestZone("M","01"));
@@ -676,13 +715,13 @@ int main() {
             fleet.observeMotionDiagnostic("01",d);
             CHECK(record(fleet,"station-return")["status"]=="dispatched");
             d.taskActive=false;d.state="AGV_IDLE";d.motor="STOP";d.leftDuty=d.rightDuty=0;
-            d.rfidAgeMs=251;fleet.observeMotionDiagnostic("01",d);
+            d.rfidAgeMs=UINT32_MAX;fleet.observeMotionDiagnostic("01",d);
             CHECK(record(fleet,"station-return")["status"]=="dispatched");
             d.rfidAgeMs=0;d.heading="N";fleet.observeMotionDiagnostic("01",d);
             CHECK(record(fleet,"station-return")["status"]=="dispatched");
             d.heading="S";d.error="TURN_TIMEOUT";fleet.observeMotionDiagnostic("01",d);
             CHECK(record(fleet,"station-return")["status"]=="dispatched");
-            d.error="NONE";fleet.observeMotionDiagnostic("01",d);
+            d.error="NONE";d.rfidAgeMs=175278;fleet.observeMotionDiagnostic("01",d);
             CHECK(record(fleet,"station-return")["status"]=="completed");
             CHECK(fleet.toJson()["agvs"][0]["state"]=="IDLE");
             // A stopped ready reading from the previous visit must not complete a new return.

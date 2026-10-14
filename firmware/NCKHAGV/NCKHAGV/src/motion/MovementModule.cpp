@@ -3,7 +3,7 @@
 
 void MovementModule::moveForward() { motor_.setMotorSpeed(Config::BASE_SPEED); motor_.motorForward(); buzzer_.off(); action_ = MotorAction::Forward; }
 void MovementModule::moveBackward() {
-    motor_.setMotorSpeed(Config::BASE_SPEED);
+    motor_.setMotorSpeed(Config::REVERSE_SPEED);
     motor_.motorBackward();
     action_ = MotorAction::Backward;
     buzzer_.setReverse(AGVMath::reverseBuzzerRequired(action_, motor_.leftDuty(), motor_.rightDuty()));
@@ -11,13 +11,13 @@ void MovementModule::moveBackward() {
 void MovementModule::correctBackwardLeft() {
     // One-sided correction while reversing, separate from a pivot turn.
     motor_.setLeftSpeed(0);
-    motor_.setRightSpeed(Config::CORRECTION_SPEED + Config::RIGHT_SPEED_TRIM);
+    motor_.setRightSpeed(Config::REVERSE_CORRECTION_SPEED + Config::RIGHT_SPEED_TRIM);
     motor_.motorBackward();
     action_ = MotorAction::ReverseCorrectLeft;
     buzzer_.setReverse(AGVMath::reverseBuzzerRequired(action_, motor_.leftDuty(), motor_.rightDuty()));
 }
 void MovementModule::correctBackwardRight() {
-    motor_.setLeftSpeed(Config::CORRECTION_SPEED + Config::LEFT_SPEED_TRIM);
+    motor_.setLeftSpeed(Config::REVERSE_CORRECTION_SPEED + Config::LEFT_SPEED_TRIM);
     motor_.setRightSpeed(0);
     motor_.motorBackward();
     action_ = MotorAction::ReverseCorrectRight;

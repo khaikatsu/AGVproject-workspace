@@ -6,6 +6,8 @@ Danh mục và nguồn license: [docs/11-github-references.md](docs/11-github-re
 
 ## Nhật ký sử dụng sau này
 
+10/10/2026: dùng binary [cloudflared-windows-amd64.exe](https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-windows-amd64.exe) tag2026.10.0, tải vào `.qa/public-simulation-tools`, SHA-256 đối chiếu metadata release. Công cụ chạy độc lập cho `scripts/share-simulation.ps1`; không vendor/copy mã nguồn upstream. [LICENSE Apache-2.0](https://github.com/cloudflare/cloudflared/blob/2026.10.0/LICENSE). Tham khảo [Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) để cấu hình outbound HTTPS và vòng đời link tạm thời.
+
 | Ngày | Repo và URL file | Tag hoặc commit | Phần dùng và file đích | License và notice |
 | --- | --- | --- | --- | --- |
 | Chưa có | Chưa nhập mã upstream trong bộ nền | Chưa pin | Tham khảo thiết kế qua danh mục | Chưa phát sinh notice cho code sao chép |
@@ -16,3 +18,5 @@ Danh mục và nguồn license: [docs/11-github-references.md](docs/11-github-re
 | 29/09/2026 | [ESP32 Preferences](https://github.com/espressif/arduino-esp32/tree/3.3.11/libraries/Preferences/src), [API](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/preferences.html), [SPI](https://github.com/espressif/arduino-esp32/tree/3.3.11/libraries/SPI/src) | Board package 3.3.11 đã cài | Include SPI/Preferences để nối reader và lưu UID/NVS, không lưu vị trí | LGPL-2.1-or-later theo header; dependency qua board package, không vendor source |
 
 `src/json.hpp` đã có trước bộ nền và là mã third party cần xác minh version/notice khi quản lý dependency. Các package Node.js đã có `package-lock.json`; không suy ra mọi dependency mang cùng license với Express hoặc dự án.
+
+10/10/2026: tests/mqtt-buffer-host link dependency cài sẵn PubSubClient v2.8 (https://github.com/knolleary/pubsubclient/blob/v2.8/src/PubSubClient.cpp) và ArduinoJson v6.21.5 (https://github.com/bblanchon/ArduinoJson/tree/v6.21.5/src) để tái hiện ACK ghi đè buffer RX. MIT; giữ LICENSE.txt/notice trong package, không vendor implementation vào repo. Stub I/O và decodeGrant do workspace viết.

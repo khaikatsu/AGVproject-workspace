@@ -17,6 +17,7 @@
 #include "utils/json.hpp"
 #include "map/MapGraph.hpp"
 #include "core/NodeManeuver.hpp"
+#include "core/EncoderOdometry.hpp"
 #include "utils/Mutexarbiter.hpp"
 
 using json = nlohmann::json;
@@ -66,9 +67,18 @@ struct AGV {
     Clock::time_point diagnosticSeen{};
     long routeCommandId = 0;
     bool nodeOrdersSupported = false;
+    bool straightThroughSupported = false;
     std::string routeStart, lastNodeOrderKey, lastNodeOrderPayload;
     std::vector<std::string> commandPath;
     Clock::time_point lastNodeOrderAt{};
+    EncoderObservation encoder;
+    json estimatedPosition = nullptr;
+    bool sonarObstacle = false;
+    double sonarDistanceCm = 0;
+    std::string sonarDirection;
+    std::string sonarNextNode;
+    long sonarRouteCommandId = 0;
+    Clock::time_point sonarSeen{};
 };
 
 struct MotionDiagnostic {
@@ -84,6 +94,10 @@ struct MotionDiagnostic {
     long routeCommandId = 0;
     int pathIndex = -1;
     std::string nextNode;
+    bool straightThroughSupported = false;
+    bool sonarPresent = false, sonarObstacle = false;
+    double sonarDistanceCm = 0;
+    std::string sonarDirection;
 };
 
 struct Task {
@@ -108,7 +122,10 @@ public:
     std::string createTaskId() { std::lock_guard<std::mutex> lk(mtx_);return nextTaskIdNoLock(); }
     json durableSnapshot() {
         auto state = toJson();
-        for (auto& a : state["agvs"]) {a.erase("last_seen_s");a.erase("online");}
+        for (auto& a : state["agvs"]) {
+            a.erase("last_seen_s");a.erase("online");
+            for (const auto* key : {"encoder_supported","speed_cm_s","odometry","estimated_position","obstacle_detection","obstacle_alert"}) a.erase(key);
+        }
         return state;
     }
     void restore(const json& state) {
@@ -322,12 +339,13 @@ public:
 
     // ---------------- Nhận dữ liệu từ ESP32 (telemetry) ----------------
     // obstacleAhead = true nếu cảm biến AGV phát hiện vật cản ngay phía trước
-    void updateTelemetry(const std::string& id, const std::string& rfid, int battery, bool obstacleAhead) {
+    bool updateTelemetry(const std::string& id, const std::string& rfid, int battery, bool obstacleAhead) {
         const bool nodeValid = map_.nodeExists(rfid);
         std::vector<std::string> toReplan;
         bool justFinishedCharging = false;
         bool recovered = false;
         bool unknownNode = false;
+        bool positionChanged = false;
         {
             std::lock_guard<std::mutex> lk(mtx_);
             if (singleRobotTrial_ && id != "01") {
@@ -341,7 +359,7 @@ public:
             }
             auto it = fleet_.find(id);
             if (it == fleet_.end()) {
-                if (!autoRegister_) return;
+                if (!autoRegister_) return false;
                 AGV a; a.id = id;               // state = OFFLINE -> nhánh recovered bên dưới đưa về IDLE
                 it = fleet_.emplace(id, a).first;
             }
@@ -349,6 +367,7 @@ public:
             const std::string prevNode = agv.currentNode;
 
             const bool seenBefore = agv.hasTelemetry;
+            positionChanged = !seenBefore || agv.positionValid != nodeValid || (nodeValid && rfid != prevNode);
             agv.hasTelemetry = true;
             agv.positionValid = nodeValid;
             agv.batteryMeasured = battery >= 0;
@@ -414,6 +433,7 @@ public:
         checkBatteryOne(id);
         dispatchPending();
         notify();
+        return positionChanged;
     }
 
     // Display-only percentage from firmware diagnostics; it never changes task or charge decisions.
@@ -434,9 +454,88 @@ public:
         if (changed) notify();
     }
 
+    // Quan sát hiển thị chỉ ở Core test 01. Không notify/checkpoint, không cập nhật node/task/mutex.
+    bool encoderEnabled(const std::string& id) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        return id == "01" && trialRobotId_ == "01";
+    }
+    bool bindEncoderSession(const std::string& id, uint32_t boot, uint32_t connection, uint32_t uptime) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        const auto it = fleet_.find(id);
+        if (id == "01" && trialRobotId_ == "01" && it != fleet_.end())
+            return it->second.encoder.bind(boot, connection, uptime);
+        return false;
+    }
+    // QoS0 error events may be lost. A current, bound diagnostic must not leave
+    // Core IDLE while the MCU reports a latched fault. It never clears a fault.
+    void observeEncoderFirmwareFault(const std::string& id, const MotionDiagnostic& d) {
+        if (d.error.empty() || d.error == "NONE" || (d.state != "AGV_SAFE_STOP" && d.state != "AGV_ERROR")) return;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            const auto it = fleet_.find(id);
+            if (id != "01" || trialRobotId_ != "01" || it == fleet_.end() || !encoderReadyNoLock(it->second) ||
+                !it->second.encoder.boot || d.node != it->second.currentNode || !d.wifi || !d.mqtt) return;
+        }
+        reportError(id,d.error);
+    }
+    bool observeOdometry(const std::string& id, const EncoderSample& s) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        const auto it = fleet_.find(id);
+        if (id != "01" || trialRobotId_ != "01" || it == fleet_.end()) return false;
+        auto& a = it->second;
+        if (!encoderReadyNoLock(a) || a.currentNode != s.from) return false;
+        if (s.tracking && (a.routeCommandId != s.route || a.activePath.empty() || a.activePath.front() != s.to ||
+            a.commandPath.size() <= static_cast<size_t>(s.index) || a.commandPath[s.index] != s.to)) return false;
+        if (!s.tracking && !a.activePath.empty()) return false;
+        json estimate = nullptr;
+        if (s.tracking) {
+            const auto layout = map_.toJson();
+            bool edge = false;
+            for (const auto& e : layout["edges"]) if ((e["from"] == s.from && e["to"] == s.to) ||
+                (e.value("two_way",false) && e["to"] == s.from && e["from"] == s.to)) {edge = true;break;}
+            json from, to;
+            for (const auto& n : layout["nodes"]) {if (n["id"] == s.from) from = n;if (n["id"] == s.to) to = n;}
+            if (!edge || from.is_null() || to.is_null()) return false;
+            const double ax = from["x"], ay = from["y"], bx = to["x"], by = to["y"];
+            const double length = std::hypot(bx-ax,by-ay);
+            if (!std::isfinite(length) || length <= 0) return false;
+            // Map test 01 dùng cm. Giữ marker trước đích cho tới khi có RFID thật.
+            const double progress = std::clamp(s.distance / length,0.0,0.98);
+            estimate = {{"source","encoder"},{"from",s.from},{"to",s.to},{"progress",progress},
+                {"x",ax+(bx-ax)*progress},{"y",ay+(by-ay)*progress},{"distance_cm",s.distance},
+                {"edge_length_cm",length},{"route_cmd_id",s.route},{"path_index",s.index},{"reverse",s.reverse}};
+        }
+        if (!a.encoder.accept(s)) return false;
+        a.estimatedPosition = estimate;
+        return true;
+    }
+
     // Diagnostic khong retained duoc gui ngay sau telemetry. Chi phuc hoi ca
     // thu hai xe tai tram rieng; telemetry pipe mot minh khong noi len loi MCU.
     void observeMotionDiagnostic(const std::string& id, const MotionDiagnostic& diagnostic) {
+        std::string sonarEvent;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            auto it = fleet_.find(id);
+            if (id == "01" && trialRobotId_ == "01" && it != fleet_.end() &&
+                diagnostic.sonarPresent && diagnostic.wifi && diagnostic.mqtt &&
+                diagnostic.node == it->second.currentNode && networkAvailable_) {
+                auto& a = it->second;
+                if (a.sonarObstacle != diagnostic.sonarObstacle ||
+                    (diagnostic.sonarObstacle && a.sonarDirection != diagnostic.sonarDirection))
+                    sonarEvent = diagnostic.sonarObstacle
+                        ? "AGV_01 VAT CAN PHIA " + std::string(diagnostic.sonarDirection == "rear" ? "SAU" : "TRUOC") +
+                          " (" + std::to_string(static_cast<int>(std::lround(diagnostic.sonarDistanceCm))) + " cm); dang dung cho"
+                        : "AGV_01 DA HET VAT CAN; tiep tuc tuyen neu cac chot an toan hop le";
+                a.sonarObstacle = diagnostic.sonarObstacle;
+                a.sonarDistanceCm = diagnostic.sonarDistanceCm;
+                a.sonarDirection = diagnostic.sonarDirection;
+                a.sonarNextNode = diagnostic.nextNode;
+                a.sonarRouteCommandId = diagnostic.routeCommandId;
+                a.sonarSeen = Clock::now();
+            }
+        }
+        if (!sonarEvent.empty()) { emit(sonarEvent); notify(); }
         observeHeadingDiagnostic(id, diagnostic);
         observeNodeOrderRequest(id, diagnostic);
         observeRobot01Reset(id, diagnostic);
@@ -576,11 +675,13 @@ public:
             const bool station = a.currentNode == "S1" || a.currentNode == "S2";
             const bool capability = d.stationDockingSupported && supported;
             // Invalidate every command's old ready sample. Completion needs a
-            // fresh stopped sample at the matching RFID, facing the GS gate.
+            // fresh stopped diagnostic at the confirmed RFID, facing the GS gate.
+            // The front reader can leave the tag during the parking pivot;
+            // RFID age is an anchor age, not the diagnostic packet's freshness.
             const bool ready = capability && valid && station && d.stationReady &&
                 heading == (a.currentNode == "S1" ? "S" : "N") &&
                 d.state == "AGV_IDLE" && d.error == "NONE" && !d.taskActive &&
-                d.motor == "STOP" && d.leftDuty == 0 && d.rightDuty == 0 && d.rfidAgeMs <= 250;
+                d.motor == "STOP" && d.leftDuty == 0 && d.rightDuty == 0 && d.rfidAgeMs != UINT32_MAX;
             changed = changed || a.stationDockingSupported != capability || a.stationReady != ready;
             a.stationDockingSupported = capability;
             a.stationReady = ready;
@@ -597,6 +698,7 @@ public:
         auto it = fleet_.find(id); if (it == fleet_.end()) return;
         auto& a = it->second;
         a.nodeOrdersSupported = d.nodeOrdersSupported && d.wifi && d.mqtt && networkAvailable_;
+        a.straightThroughSupported = a.nodeOrdersSupported && d.straightThroughSupported;
         if (!d.nodeOrdersSupported || !d.awaitingNodeOrder || !d.taskActive ||
             d.state != "AGV_WAITING" || d.error != "NONE" || d.motor != "STOP" ||
             d.leftDuty != 0 || d.rightDuty != 0 || !d.wifi || !d.mqtt || !networkAvailable_ ||
@@ -888,6 +990,41 @@ public:
         const auto now = Clock::now();
         for (auto& kv : fleet_) {
             const AGV& a = kv.second;
+            const auto& encoder = a.encoder;
+            const long long encoderAge = encoder.received ? std::chrono::duration_cast<std::chrono::milliseconds>(now-encoder.seen).count() : 0;
+            const auto& sample = encoder.sample;
+            const bool context = !sample.tracking ? a.activePath.empty() :
+                (sample.route == a.routeCommandId && !a.activePath.empty() && a.activePath.front() == sample.to);
+            const bool encoderFresh = encoder.received && encoderReadyNoLock(a) && encoderAge <= EncoderObservation::staleMs &&
+                sample.from == a.currentNode && context;
+            json detected = nullptr;
+            if (a.id == "01" && a.sonarObstacle && now-a.sonarSeen <= std::chrono::seconds(3) &&
+                encoderFresh && a.estimatedPosition.is_object() && sample.tracking &&
+                a.sonarRouteCommandId == sample.route && a.sonarNextNode == sample.to &&
+                a.sonarDirection == (sample.reverse ? "rear" : "front") &&
+                std::isfinite(a.sonarDistanceCm) && a.sonarDistanceCm >= 0 && a.sonarDistanceCm <= 20) {
+                const auto& p = a.estimatedPosition;
+                const double length = p.value("edge_length_cm",0.0);
+                if (length > 0 && sample.from == p.value("from",std::string{}) && sample.to == p.value("to",std::string{})) {
+                    const double projected = std::clamp(sample.distance+a.sonarDistanceCm,0.0,length);
+                    const double ratio = projected/length;
+                    const auto layout = map_.toJson();
+                    for (const auto& e : layout["edges"]) {
+                        if (!((e["from"] == sample.from && e["to"] == sample.to) ||
+                            (e.value("two_way",false) && e["from"] == sample.to && e["to"] == sample.from))) continue;
+                        json from, to;
+                        for (const auto& n : layout["nodes"]) {
+                            if (n["id"] == sample.from) from=n;
+                            if (n["id"] == sample.to) to=n;
+                        }
+                        if (!from.is_null() && !to.is_null())
+                            detected = {{"from",sample.from},{"to",sample.to},{"x",from["x"].get<double>()+(to["x"].get<double>()-from["x"].get<double>())*ratio},
+                                {"y",from["y"].get<double>()+(to["y"].get<double>()-from["y"].get<double>())*ratio},
+                                {"range_cm",a.sonarDistanceCm},{"direction",a.sonarDirection},{"source","sonar_encoder_estimate"}};
+                        break;
+                    }
+                }
+            }
             long long silentSec = std::chrono::duration_cast<std::chrono::seconds>(now - a.lastSeen).count();
             agvsJ.push_back({
                 {"id", a.id}, {"node", a.currentNode}, {"battery", a.battery},
@@ -899,6 +1036,18 @@ public:
                 {"task_id", a.taskId}, {"position_valid", a.positionValid},
                 {"battery_measured", a.batteryMeasured}, {"error", a.lastError},
                 {"needs_recharge", a.needsRecharge},
+                {"encoder_supported", a.id == "01" && trialRobotId_ == "01" && encoder.boot != 0},
+                {"speed_cm_s", encoderFresh ? json(sample.speed) : json(nullptr)},
+                {"odometry", encoder.received ? json{{"valid",encoderFresh},{"age_ms",encoderAge},
+                    {"stale_after_ms",EncoderObservation::staleMs},{"seq",sample.seq},{"boot_id",sample.boot},
+                    {"connection_session",sample.connection},{"tracking",sample.tracking},{"translating",sample.translating},
+                    {"distance_cm",sample.distance},{"left_ticks",sample.leftTicks},{"right_ticks",sample.rightTicks},
+                    {"pulses_per_100cm",sample.pulsesPer100Cm}} : json(nullptr)},
+                {"estimated_position", encoderFresh ? a.estimatedPosition : json(nullptr)},
+                {"obstacle_alert", a.id == "01" && a.sonarObstacle && networkAvailable_ &&
+                    now-a.sonarSeen <= std::chrono::seconds(3) && a.hasTelemetry && now-a.lastSeen <= offlineTimeout_
+                    ? json{{"direction",a.sonarDirection},{"range_cm",a.sonarDistanceCm}} : json(nullptr)},
+                {"obstacle_detection", detected},
                 {"uncertain_path", a.uncertainPath},
                 {"heading_supported", a.headingSupported && now-a.diagnosticSeen <= std::chrono::seconds(3) && networkAvailable_},
                 {"heading", a.headingNode == a.currentNode && a.positionValid && now-a.diagnosticSeen <= std::chrono::seconds(3) &&
@@ -925,6 +1074,10 @@ public:
     }
 
 private:
+    bool encoderReadyNoLock(const AGV& a) const {
+        return networkAvailable_ && a.hasTelemetry && a.positionValid && Clock::now()-a.lastSeen <= offlineTimeout_ &&
+            a.state != AGVState::OFFLINE && a.state != AGVState::AGV_ERROR && a.state != AGVState::UNLOCALIZED;
+    }
     bool completeArrivalNoLock(AGV& agv) {
         if (!agv.positionValid || !agv.activePath.empty() || agv.finalTarget.empty() ||
             agv.currentNode != agv.finalTarget ||
@@ -1196,7 +1349,16 @@ private:
         agv.stationReady = false;
         agv.state = newState;
         agv.blockedResume = AGVState::IDLE;
-        agv.routeCommandId = sendCommand(agv, "GOTO", {{"path", path}, {"target", target}});
+        json command = {{"path",path},{"target",target}};
+        if (agv.straightThroughSupported && Clock::now()-agv.diagnosticSeen <= offlineTimeout_) {
+            auto through = json::array();
+            const auto layout = map_.toJson();
+            for (size_t i = 0; i+1 < path.size(); ++i)
+                if (NodeManeuver::straightThrough(layout,i ? path[i-1] : agv.currentNode,path[i],path[i+1]))
+                    through.push_back(i);
+            command["pass_through"] = through;
+        }
+        agv.routeCommandId = sendCommand(agv, "GOTO", command);
     }
 
     // Gửi 1 lệnh JSON có cmd_id xuống xe, theo dõi để gửi lại nếu không có ACK (xem [5]).

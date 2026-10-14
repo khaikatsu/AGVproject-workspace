@@ -10,6 +10,7 @@
       "args": ["--select-mode"],
       "cwd": "${workspaceFolder}",
       "environment": [
+        { "name": "_NO_DEBUG_HEAP", "value": "1" },
         { "name": "AGV_CORE_WS_HOST", "value": "127.0.0.1" },
         { "name": "PATH", "value": "C:/msys64/ucrt64/bin;${env:PATH}" }
       ],

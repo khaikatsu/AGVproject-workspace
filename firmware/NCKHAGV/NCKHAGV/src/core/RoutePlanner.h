@@ -91,6 +91,11 @@ inline bool bayExit(const char* from, const char* to) {
 inline bool dockingReverse(const char* from, const char* to) {
     return !station(from) && bayExit(from,to);
 }
+inline bool straightThrough(const char* from, const char* current, const char* next) {
+    if (!current || station(current) || bayGate(current) || dockingReverse(from,current)) return false;
+    const auto incoming = edgeHeading(from,current), outgoing = edgeHeading(current,next);
+    return incoming != RobotHeading::Unknown && incoming == outgoing;
+}
 inline bool physicalBranch(const char* current, RobotHeading heading) {
     for (const auto& edge : RouteMap::EDGES) {
         if (std::strcmp(edge.from,current) == 0 && edgeHeading(edge.from,edge.to) == heading) return true;

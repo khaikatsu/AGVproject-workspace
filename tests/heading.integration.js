@@ -61,20 +61,30 @@ async function main(){
     node='S1';heading='UNKNOWN';moving=true;docking=true;publish();await pause(400);
     assert.equal((await task()).status,'dispatched'); // RFID at S is still part of the physical parking maneuver.
     assert.equal((await robot()).state,'WORKING');
+    assert.equal((await post('/api/shift/end',{})).status,200);
+    assert.equal((await state()).shift.phase,'CLOSING');
     assert.equal((await post('/api/agvs/01/goto',{target:'GS1'})).status,409);
     moving=false;docking=false;heading='N';headingSource='bay_default';publish();await pause(350);
     assert.equal((await task()).status,'dispatched'); // Stopped but facing inward is insufficient.
-    heading='S';rfidAge=251;publish();await pause(350);
-    assert.equal((await task()).status,'dispatched'); // A stale RFID sample is insufficient.
-    rfidAge=0;publish();await until(async()=>(await task()).status==='completed');
+    heading='S';rfidAge=null;publish();await pause(350);
+    assert.equal((await task()).status,'dispatched'); // No RFID read in this session is insufficient.
+    rfidAge=175278;publish();await until(async()=>(await task()).status==='completed');
+    // The reader left S1 during the completed pivot; fresh diagnostic confirms parking.
     assert.equal((await robot()).state,'IDLE');assert.equal((await robot()).heading,'S');
+    assert.equal((await robot()).task_id,'');assert.equal((await robot()).target,'');
+    await until(async()=>(await state()).shift.phase==='CLOSED');
+    await until(()=>db.getTaskHistory().some(t=>t.core_task_id===returned.data.task_id&&t.status==='completed'));
+    publish();publish();await pause(400);
+    const history=db.getTaskHistory().filter(t=>t.core_task_id===returned.data.task_id);
+    assert.equal(history.length,1);assert.equal(history[0].status,'completed');
+    assert.equal((await state()).fleet.tasks.filter(t=>t.task_id===returned.data.task_id&&t.status==='completed').length,1);
     clearInterval(pump);await pause(350);
     mqtt.publish('agv/01/status','offline');await until(async()=>(await robot()).state==='OFFLINE');
     assert.equal((await robot()).heading,'UNKNOWN');
     assert.equal(commands.filter(c=>c.cmd==='GOTO').length,1);
     assert.equal(commands.filter(c=>c.cmd==='SET_HEADING').length,0);
     fs.writeFileSync(path.join(dir,'verification.json'),JSON.stringify({pass:true,commands},null,2));
-    console.log(`PASS heading: outward station front, RFID/ACK waits for parking, stopped inward/stale RFID rejected, removed manual API, offline unknown; ${dir}`);
+    console.log(`PASS heading: outward station front, RFID/ACK waits for parking, stopped inward/unread RFID rejected, ready with aged RFID completes, removed manual API, offline unknown; ${dir}`);
   }catch(e){console.error(output.slice(-6000));throw e;}
   finally{clearInterval(pump);mqtt?.close();await gateway?.close();db.close();for(const p of children){if(p.exitCode===null){p.kill();await Promise.race([once(p,'exit'),pause(1000)]);}}}
 }

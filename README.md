@@ -1,5 +1,9 @@
 # Workspace nghiên cứu hệ thống AGV trong kho
 
+Ngày 15/10/2026: mã thử xe 01 tích hợp hai HC-SR04 trước/sau theo chân người dùng, dừng ở ≤15 cm và tiếp tục tuyến khi thông; Core test 01/web cảnh báo hướng và đánh dấu vật cản ước tính trên cạnh. Xem [ADR-055](docs/decisions/ADR-055-robot01-dual-sonar-edge-warning.md). Ảnh ESP32 đã build trong workspace; chưa nạp hoặc thử phanh trên xe thật.
+
+Ngày 14/10/2026: firmware xe 01 có [encoder bánh trước trái/phải](docs/decisions/ADR-050-robot01-encoder-position-speed.md) theo sketch test người dùng, GPIO16/4 và hệ số thử 161 xung/100 cm. Core menu **1 — thử xe 01** hiển thị vị trí ước tính liên tục trên chặng; web có tốc độ cm/s. RFID vẫn xác nhận node/task, mutex giữ chốt hiện tại. [Kiểm thử phần mềm](docs/testing-encoder-robot01-2026-10-14.md) dùng môi trường riêng; chưa nạp/hiệu chuẩn xe thật.
+
 Đề tài: **Xây dựng hệ thống quản lý robot tự hành trong kho dựa trên nền tảng IoT**. Workspace phục vụ hai robot đi theo lộ trình định trước và web giám sát bản đồ, lộ trình, pin, lỗi theo thời gian thực.
 
 Đây là bộ nền tài liệu, kỹ năng và quy trình phát triển trên mã đang có. Các lựa chọn phần cứng, tiêu chí nghiệm thu và thiết kế mở rộng vẫn chờ yêu cầu chi tiết. Ngày lập bộ nền: 28/09/2026.
@@ -13,6 +17,8 @@
 5. Mở [AGVproject.code-workspace](AGVproject.code-workspace) nếu dùng VS Code. Kiểm tra tài liệu bằng `python scripts/check_workspace.py`.
 
 ## Bản web/server mới
+
+Core có [menu chọn chế độ khi mở server](docs/16-startup-troubleshooting.md): F5 hiện console, nhập **1** thử riêng xe 01, **2** thử riêng xe 02, **3** thử hai xe, **4** vận hành thường, **0** thoát. Các lựa chọn thử giữ mutex; chọn chế độ chưa tự mở ca hoặc cho xe chạy. [ADR-028](docs/decisions/ADR-028-core-startup-mode-menu.md).
 
 Đã chạy [audit lỗi/xung đột 02/10/2026](docs/testing-simulation-audit-2026-10-02.md): 16 bộ PASS, 15 nhóm lỗi và stress 30 lượt hai xe. Đã sửa đặt trước đường thường/hành lang mutex, mất broker và phục hồi sau restart; giữ Dijkstra/FIFO, payload và dữ liệu vận hành. Runner: `node tests/run-simulation-audit.js --browser` sau khi build/cấu hình theo báo cáo.
 

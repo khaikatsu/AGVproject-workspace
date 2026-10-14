@@ -35,6 +35,7 @@ struct CoreCommand {
     char target[NODE_TEXT_SIZE]{};
     char path[Config::MAX_PATH_NODES][NODE_TEXT_SIZE]{};
     uint8_t pathLength = 0;
+    bool passThrough[Config::MAX_PATH_NODES]{};
     int32_t routeCmdId = 0;
     char node[NODE_TEXT_SIZE]{}, nextNode[NODE_TEXT_SIZE]{}, maneuver[24]{};
     uint8_t pathIndex = 0, turnCrossings = 0;
@@ -102,16 +103,30 @@ struct TelemetrySnapshot {
     int leftDuty = 0, rightDuty = 0;
     MotorAction motor = MotorAction::Stop;
     float ultrasonicCm = UNKNOWN_VALUE;
+    float frontUltrasonicCm = UNKNOWN_VALUE, rearUltrasonicCm = UNKNOWN_VALUE;
+    const char* obstacleDirection = "front";
     uint32_t batteryAdcMv = 0, uptimeMs = 0, localSession = 0;
     uint32_t rfidAgeMs = std::numeric_limits<uint32_t>::max();
     float batteryVoltage = UNKNOWN_VALUE, batteryPercentage = UNKNOWN_VALUE;
     bool cargoStable = false, cargoPresent = false;
     bool buzzerOn = false;
+    int buzzerPinLevel = -1;
     RobotHeading heading = RobotHeading::Unknown;
     bool headingBayDefault = false;
     bool stationReady = false;
     bool awaitingNodeOrder = false, stationTurnRequired = false;
     int32_t routeCmdId = 0;
+};
+
+// Dữ liệu hiển thị; không cấp quyền chuyển động hoặc hoàn thành nhiệm vụ.
+struct OdometrySnapshot {
+    uint32_t localSession = 0, seq = 0, uptimeMs = 0;
+    uint32_t leftTicks = 0, rightTicks = 0;
+    char fromNode[NODE_TEXT_SIZE]{}, toNode[NODE_TEXT_SIZE]{};
+    int32_t routeCmdId = 0;
+    uint8_t pathIndex = 0;
+    bool tracking = false, translating = false, reverse = false;
+    float distanceCm = 0, speedCmS = 0;
 };
 
 const char* stateName(AGVState state);

@@ -13,4 +13,5 @@ public:
         digitalWrite(Config::BUZZER_PIN, active ? Config::BUZZER_ACTIVE_STATE : !Config::BUZZER_ACTIVE_STATE);
     }
     void off() { setReverse(false); }
+    int pinLevel() const { return digitalRead(Config::BUZZER_PIN); }
 };

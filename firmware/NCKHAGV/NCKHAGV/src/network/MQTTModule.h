@@ -26,6 +26,7 @@ public:
     bool consumeStorageFault() { return storageFault_.exchange(false); }
     bool consumeCoreRestart() { return coreRestart_.exchange(false); }
     void publishStatus(const TelemetrySnapshot& snapshot);
+    void publishOdometry(const OdometrySnapshot& snapshot);
     void publishPosition(const TelemetrySnapshot& snapshot) { publishStatus(snapshot); }
     void publishDistance(const TelemetrySnapshot& snapshot) { publishStatus(snapshot); }
     bool publishEvent(const char* name, const char* node, uint32_t uptimeMs,
@@ -38,6 +39,7 @@ private:
     void onMessage(char* topic, uint8_t* payload, unsigned int length);
     bool enqueue(const Outbound& message);
     void sendTelemetry(const TelemetrySnapshot& snapshot);
+    void sendOdometry(const OdometrySnapshot& snapshot);
     bool configured() const;
     bool buildTopics();
     bool persistCommandId(int32_t cmdId);
@@ -48,11 +50,13 @@ private:
     PubSubClient client_;
     Preferences commandStore_;
     QueueHandle_t commands_ = nullptr, events_ = nullptr, telemetry_ = nullptr;
+    QueueHandle_t odometry_ = nullptr;
     QueueHandle_t grants_ = nullptr, zoneRequests_ = nullptr, zoneReleases_ = nullptr;
     TaskHandle_t worker_ = nullptr;
     std::atomic<bool> ready_{false}, stop_{false}, queueFault_{false}, storageFault_{false}, coreRestart_{false}, heartbeatSeen_{false};
     std::atomic<uint32_t> servicedAtMs_{0}, session_{0}, lastHeartbeatMs_{0};
     uint32_t lastAttemptMs_ = 0;
+    uint32_t encoderBootId_ = 0;
     CoreCommand recentCommands_[Config::RECENT_COMMAND_IDS]{};
     int32_t highwater_ = 0;
     int32_t pendingAckId_ = 0;
@@ -60,6 +64,7 @@ private:
     char coreSession_[96]{};
     char commandTopic_[64]{}, ackTopic_[64]{}, telemetryTopic_[64]{}, statusTopic_[64]{};
     char errorTopic_[64]{}, eventTopic_[64]{}, diagnosticTopic_[64]{};
+    char odometryTopic_[64]{};
     char grantTopic_[64]{}, requestTopic_[64]{}, grantAckTopic_[64]{}, releaseTopic_[64]{};
     char pendingZone_[NODE_TEXT_SIZE]{};
     Outbound pending_{};

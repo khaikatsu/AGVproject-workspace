@@ -1,0 +1,39 @@
+{
+  "active": {
+    "topic": "agv/01/diagnostic",
+    "payload_fragment": {
+      "version": 1,
+      "agvId": "01",
+      "node": "C4",
+      "nextNode": "M4",
+      "obstacle": true,
+      "obstacleDirection": "front",
+      "ultrasonicCm": 12.0,
+      "frontUltrasonicCm": 12.0,
+      "rearUltrasonicCm": null
+    },
+    "odometry_fragment": {"from_node": "C4", "to_node": "M4", "distance_cm": 20.0},
+    "state_fragment": {
+      "obstacle_detection": {
+        "from": "C4",
+        "to": "M4",
+        "x": 168.0,
+        "y": 140.0,
+        "range_cm": 12.0,
+        "direction": "front",
+        "source": "sonar_encoder_estimate"
+      }
+    }
+  },
+  "clear": {
+    "topic": "agv/01/diagnostic",
+    "payload_fragment": {
+      "obstacle": false,
+      "obstacleDirection": "front",
+      "ultrasonicCm": 25.0,
+      "frontUltrasonicCm": 25.0,
+      "rearUltrasonicCm": null
+    },
+    "state_fragment": {"obstacle_detection": null}
+  }
+}

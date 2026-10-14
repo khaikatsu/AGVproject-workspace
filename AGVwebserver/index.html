@@ -226,6 +226,7 @@
       stroke-width: 3;
       marker-end: url(#arrow);
     }
+    .edge.sonar-obstacle-edge { stroke: #EF4444; stroke-width: 8; }
 
     .agv-group {
       cursor: pointer;
@@ -593,7 +594,7 @@
     @media(max-width:680px) {#main-container {display:flex;flex-direction:column;} #center-panel {min-height:480px;order:-1;} #topbar input {width:210px;} #mapPreviewSvg {height:350px;} #toastContainer {left:8px;right:8px;bottom:8px;max-width:none;} }
     #headingStatus {flex-basis:100%;}
   </style>
-  <link rel="stylesheet" href="/dashboard-layout.css?v=20261008-core-mode">
+  <link rel="stylesheet" href="/dashboard-layout.css?v=20261014-encoder">
 </head>
 
 <body data-view="overview" data-map-expanded="true">
@@ -664,15 +665,15 @@
       </section>
     </aside>
     <section id="center-panel" aria-label="Bản đồ kho">
-      <div class="map-heading"><div><span class="eyebrow">SƠ ĐỒ VẬN HÀNH</span><div id="mapTitle">Bản đồ kho</div></div><div class="map-actions"><span class="map-live">Node xe báo gần nhất</span><button id="mapExpandBtn" type="button" class="btn-outline" aria-pressed="true" onclick="toggleMapExpanded()">Thu gọn</button><button id="mapZoomBtn" type="button" class="btn-outline" aria-pressed="false" onclick="toggleMapZoom()">Phóng to</button></div></div>
+      <div class="map-heading"><div><span class="eyebrow">SƠ ĐỒ VẬN HÀNH</span><div id="mapTitle">Bản đồ kho</div></div><div class="map-actions"><span id="robot01Speed" class="map-live">Xe 01: chưa có tốc độ</span><button id="mapExpandBtn" type="button" class="btn-outline" aria-pressed="true" onclick="toggleMapExpanded()">Thu gọn</button><button id="mapZoomBtn" type="button" class="btn-outline" aria-pressed="false" onclick="toggleMapZoom()">Phóng to</button></div></div>
       <div id="selectionBar" class="idle"><span id="selectionText">Bấm node để Core chọn xe gần nhất; bấm robot trước nếu muốn chỉ định xe.</span><button id="cancelSelectBtn" onclick="cancelSelection()" style="display:none">Huỷ chọn (Esc)</button></div>
       <div id="mapViewport" class="map-viewport" data-zoom="fit">
         <svg id="mapSvg" viewBox="20 20 1020 720" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Đồ thị kho, hướng đường, RFID và vị trí xe">
           <defs><marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto-start-reverse"><path d="M0,0 L0,6 L6,3 z" fill="#475569" /></marker></defs>
-          <g id="edgesG"></g><g id="routesG" style="pointer-events:none"></g><g id="nodesG"></g><g id="agvsG"></g>
+          <g id="edgesG"></g><g id="routesG" style="pointer-events:none"></g><g id="nodesG"></g><g id="agvsG"></g><g id="sonarObstaclesG"></g>
         </svg>
       </div>
-      <div class="map-foot"><div id="dataFreshness">Đang chờ bản đồ và telemetry từ core</div><div>Chấm xe: RFID gần nhất · Mũi tên: đầu xe · Kho: tiến vào, lùi ra · Trạm: đầu hướng ra, tiến xuất phát · Nét đứt: tuyến dự kiến</div><div id="mapLegend">M: RFID / vùng chung · K: kho · G: cửa kho · S: trạm sạc · GS: cửa sạc · C: góc</div></div>
+      <div class="map-foot"><div id="dataFreshness">Đang chờ bản đồ và telemetry từ core</div><div id="robot01Position">Xe 01: chờ dữ liệu encoder</div><div>Chấm xe nét đứt: vị trí ước tính từ encoder · Vòng nhỏ: RFID gần nhất · Mũi tên: đầu xe · Nét đứt đường: tuyến dự kiến</div><div id="mapLegend">M: RFID / vùng chung · K: kho · G: cửa kho · S: trạm sạc · GS: cửa sạc · C: góc</div></div>
     </section>
     <aside id="right-panel" aria-label="Điều khiển và cấu hình">
       <section class="card compact panel-card" data-views="overview tasks">
@@ -790,7 +791,7 @@
       <button class="btn full-width" type="submit">Đăng nhập</button>
     </form>
   </dialog>
-  <script src="/dashboard.js?v=20261010-warehouse-actions"></script>
+  <script src="/dashboard.js?v=20261014-encoder"></script>
 </body>
 
 </html>

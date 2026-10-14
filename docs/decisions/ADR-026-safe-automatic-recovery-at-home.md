@@ -2,6 +2,8 @@
 
 Ngày 09/10/2026. Trạng thái: IMPLEMENTED trong mã, chưa nạp Core/firmware mới lên hệ thống thật.
 
+Cập nhật rà soát GS2 ngày 09/10/2026: áp dụng cùng điều kiện trạm/diagnostic cho nút `clear_error` thủ công trong ca thử `robot01/robot02/both`. Trước sửa, nút này mở IDLE và giao task chờ ngay sau khi gửi RESET_FAULT; firmware vừa reboot tại GS2 không còn heading nên có thể trả INVALID_COMMAND. Sau sửa, từ chối reset giữa tuyến bằng 409 có lý do; tại trạm chỉ gửi reset rồi giữ ERROR đến diagnostic MCU khỏe và đủ bằng chứng vùng đã trống theo điều kiện bên dưới. Không tự trả zone hoặc coi ACK là reset thành công; giữ tương thích luồng normal/legacy01.
+
 ## Bối cảnh
 
 `SOURCE`: người dùng muốn xe gửi telemetry khi đã trở lại bình thường để Core tự gỡ lỗi; mutex của xe lỗi cần được trả để tránh khóa hệ thống. Hai ảnh người dùng cho thấy 01/02 mất telemetry, ca `CLOSING`, quyền M2/M3 còn giữ. Snapshot Core đọc tại thời điểm chẩn đoán cho thấy gateway–Core–broker vẫn kết nối nhưng hai xe `OFFLINE`.
@@ -21,3 +23,5 @@ Ngày 09/10/2026. Trạng thái: IMPLEMENTED trong mã, chưa nạp Core/firmwar
 Core C++ build và unit PASS với: LWT giữ M2; RFID M2 không trả quyền; telemetry S1 một mình không trả quyền; diagnostic dừng và RFID mới ở S1 trả M2; reset lỗi mạng một lần; diagnostic khỏe mới xóa lỗi; `LINE_LOST` không tự reset. Đây là fixture logic, chưa chứng minh vị trí/thân xe thật.
 
 Fixture MQTT riêng `tests/two-robot-recovery.integration.js` đã tạo nhưng không chạy xong trong sandbox: lệnh `net.connect` tới listener loopback trả `EACCES`. PlatformIO build firmware cũng bị chặn ghi vào `C:\Users\DELL\.platformio`; chưa nạp hai ESP32. Trước khi thay Core đang chạy và nạp firmware, cần chạy fixture MQTT, build hai env bench và thử bàn: quét thẻ S1/S2 liên tục, đưa thẻ ra khỏi đầu đọc, ngắt mạng ở trong vùng và ở trạm, kiểm tra motor dừng cùng quyền mutex. Chưa xác nhận tính tin cậy của RC522 và biên khoảng cách trên xe thật.
+
+Cập nhật10/10/2026: [ADR-036](ADR-036-robot01-reset-at-current-node.md) thay riêng chốt home-only cho clear_error/mở ca thủ công của Core --mode robot01 theo yêu cầu người dùng. Robot01 reset tại RFID hiện tại, chờ MCU khỏe; không trả mutex giữa tuyến. Các chế độ robot02/both và tự phục hồi tại trạm ở trên giữ nguyên.

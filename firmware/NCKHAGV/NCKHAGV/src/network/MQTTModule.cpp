@@ -1,6 +1,7 @@
 #include "MQTTModule.h"
 #include "core/CoreProtocol.h"
 #include "core/ControlLogic.h"
+#include "NetworkHealth.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <esp_system.h>
@@ -72,6 +73,7 @@ bool MQTTModule::buildTopics() {
         topic(errorTopic_, sizeof(errorTopic_), Config::AGV_ID, "error") &&
         topic(eventTopic_, sizeof(eventTopic_), Config::AGV_ID, "event") &&
         topic(diagnosticTopic_, sizeof(diagnosticTopic_), Config::AGV_ID, "diagnostic") &&
+        topic(odometryTopic_, sizeof(odometryTopic_), Config::AGV_ID, "odometry") &&
         topic(grantTopic_, sizeof(grantTopic_), Config::AGV_ID, "mutex_grant") &&
         topic(requestTopic_, sizeof(requestTopic_), Config::AGV_ID, "mutex_request") &&
         topic(grantAckTopic_, sizeof(grantAckTopic_), Config::AGV_ID, "mutex_ack") &&
@@ -94,6 +96,12 @@ bool MQTTModule::begin() {
     commands_ = xQueueCreate(Config::COMMAND_QUEUE_LENGTH, sizeof(CoreCommand));
     events_ = xQueueCreate(Config::EVENT_QUEUE_LENGTH, sizeof(Outbound));
     telemetry_ = xQueueCreate(1, sizeof(TelemetrySnapshot));
+    if (Config::ENCODER_ENABLED) {
+        odometry_ = xQueueCreate(1, sizeof(OdometrySnapshot));
+        encoderBootId_ = esp_random();
+        if (!encoderBootId_) encoderBootId_ = 1;
+        if (!odometry_) return false;
+    }
     grants_ = xQueueCreate(6, sizeof(CoreGrant));
     zoneRequests_ = xQueueCreate(1, NODE_TEXT_SIZE);
     zoneReleases_ = xQueueCreate(6, sizeof(ZoneRelease));
@@ -123,10 +131,10 @@ void MQTTModule::workerEntry(void* argument) {
 }
 
 bool MQTTModule::isConnected() const {
-    const uint32_t now = millis();
-    return ready_.load() && wifi_.isConnected() && heartbeatSeen_.load() && !coreRestart_.load() &&
-        static_cast<uint32_t>(now - servicedAtMs_.load()) < Config::NETWORK_WORKER_STALE_MS &&
-        static_cast<uint32_t>(now - lastHeartbeatMs_.load()) < Config::CORE_HEARTBEAT_TIMEOUT_MS;
+    return NetworkHealth::connected([this] {
+        return NetworkHealth::Snapshot{ready_.load(),wifi_.isConnected(),heartbeatSeen_.load(),coreRestart_.load(),
+            servicedAtMs_.load(),lastHeartbeatMs_.load()};
+    }, [] { return millis(); });
 }
 
 bool MQTTModule::subscribeTopics() {
@@ -161,6 +169,7 @@ void MQTTModule::connect() {
         ready_ = false; stop_ = true; return;
     }
     xQueueReset(telemetry_); // Do not replay a position measured before reconnect.
+    if (odometry_) xQueueReset(odometry_);
     xQueueReset(grants_);
     xQueueReset(zoneRequests_);
     xQueueReset(zoneReleases_);
@@ -192,6 +201,7 @@ void MQTTModule::loop() {
             static_cast<uint32_t>(millis() - lastHeartbeatMs_.load()) >= Config::CORE_HEARTBEAT_TIMEOUT_MS) {
             heartbeatSeen_ = false; stop_ = true; coreRestart_ = true;
             xQueueReset(telemetry_);
+            if (odometry_) xQueueReset(odometry_);
             uint32_t generation = session_.fetch_add(1) + 1;
             if (!generation) session_ = 1;
         }
@@ -217,6 +227,8 @@ void MQTTModule::loop() {
                 xQueueReceive(events_, &pending_, 0);
             TelemetrySnapshot snapshot;
             if (xQueueReceive(telemetry_, &snapshot, 0) == pdTRUE) sendTelemetry(snapshot);
+            OdometrySnapshot odometry;
+            if (odometry_ && xQueueReceive(odometry_, &odometry, 0) == pdTRUE) sendOdometry(odometry);
         }
     } else {
         if (ready_.exchange(false)) stop_ = true;
@@ -277,6 +289,7 @@ void MQTTModule::onMessage(char* topicName, uint8_t* payload, unsigned int lengt
             coreRestart_ = true; stop_ = true;
             xQueueReset(commands_);
             xQueueReset(telemetry_);
+            if (odometry_) xQueueReset(odometry_);
             xQueueReset(grants_);
             xQueueReset(zoneRequests_);
             xQueueReset(zoneReleases_);
@@ -376,7 +389,9 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     // Keep the control telemetry unmeasured while battery display is being tested.
     // The percentage stays on diagnostic until battery thresholds are enabled.
     char wire[64];
-    if (!CoreProtocol::telemetry(node, -1, s.obstacle, wire, sizeof(wire)) ||
+    // Xe 01 báo vật cản theo diagnostic có hướng/khoảng cách. Cờ pipe cũ
+    // khóa node kế và lập lại tuyến, trái với yêu cầu dừng/chạy tiếp tại cạnh.
+    if (!CoreProtocol::telemetry(node, -1, Config::REAR_ULTRASONIC_ECHO_PIN < 0 && s.obstacle, wire, sizeof(wire)) ||
         !client_.publish(telemetryTopic_, wire, false)) {
         ready_ = false; stop_ = true; heartbeatSeen_ = false;
         transport_.stop(); secureTransport_.stop();
@@ -392,11 +407,17 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     object["resetReasonCode"] = static_cast<int>(esp_reset_reason());
     object["firmwareMode"] = Config::TWO_ROBOT_BENCH_TRIAL ? "bench" : Config::ONE_ROBOT_TRIAL ? "solo" : "locked";
     object["firmwareBuild"] = Config::FIRMWARE_BUILD;
+    if (Config::ENCODER_ENABLED) {
+        object["encoderSupported"] = true;
+        object["encoderBootId"] = encoderBootId_;
+        object["encoderCoreSessionId"] = coreSession_;
+    }
     object["motionEnabled"] = Config::ENABLE_CORE_MOTION;
     object["headingSupported"] = true;
     object["stationDockingSupported"] = true;
     object["stationReady"] = s.stationReady;
     object["nodeOrdersSupported"] = true;
+    object["straightThroughSupported"] = true;
     object["awaitingNodeOrder"] = s.awaitingNodeOrder;
     object["stationTurnRequired"] = s.stationTurnRequired;
     object["routeCommandId"] = s.routeCmdId;
@@ -416,10 +437,27 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     object["linePattern"] = s.linePattern;
     object["leftDuty"] = s.leftDuty;
     object["rightDuty"] = s.rightDuty;
+    if (Config::ENCODER_ENABLED) {
+        object["buzzerOn"] = s.buzzerOn; // Yêu cầu theo motor; không khẳng định đã phát âm.
+        object["buzzerPinLevel"] = s.buzzerPinLevel; // GPIO0 đọc tại lúc chụp snapshot.
+    }
     object["wifi"] = s.wifi;
     object["mqtt"] = s.mqtt;
+    if (Config::ENCODER_ENABLED) {
+        const uint32_t now = millis(); // Worker owns these timestamps; callback cannot change them here.
+        object["networkServiceAgeMs"] = static_cast<uint32_t>(now-servicedAtMs_.load());
+        if (heartbeatSeen_.load()) object["coreHeartbeatAgeMs"] = static_cast<uint32_t>(now-lastHeartbeatMs_.load());
+        else object["coreHeartbeatAgeMs"] = nullptr;
+        object["mqttClientState"] = client_.state();
+        object["wifiRssi"] = WiFi.RSSI();
+    }
     object["obstacle"] = s.obstacle;
     number(object, "ultrasonicCm", s.ultrasonicCm);
+    if (Config::REAR_ULTRASONIC_ECHO_PIN >= 0) {
+        object["obstacleDirection"] = s.obstacleDirection;
+        number(object, "frontUltrasonicCm", s.frontUltrasonicCm);
+        number(object, "rearUltrasonicCm", s.rearUltrasonicCm);
+    }
     object["batteryAdcMv"] = s.batteryAdcMv;
     object["batteryCalibrated"] = s.batteryCalibrated;
     number(object, "batteryVoltage", s.batteryVoltage);
@@ -428,4 +466,16 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     object["cargoPresent"] = s.cargoStable ? s.cargoPresent : false;
     char payload[Config::MAX_PUBLISH_BYTES];
     if (serialize(doc, payload, sizeof(payload))) client_.publish(diagnosticTopic_, payload, false);
+}
+
+void MQTTModule::publishOdometry(const OdometrySnapshot& snapshot) {
+    if (Config::ENCODER_ENABLED && odometry_ && worker_) xQueueOverwrite(odometry_, &snapshot);
+}
+void MQTTModule::sendOdometry(const OdometrySnapshot& s) {
+    if (!Config::ENCODER_ENABLED || s.localSession != session_.load() ||
+        static_cast<uint32_t>(millis() - s.uptimeMs) > 500) return;
+    char payload[Config::MAX_PUBLISH_BYTES];
+    // Luồng hiển thị không phát command, không thay chốt motor hoặc mutex.
+    if (CoreProtocol::odometry(s,encoderBootId_,coreSession_,payload,sizeof(payload)))
+        client_.publish(odometryTopic_, payload, false);
 }

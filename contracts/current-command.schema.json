@@ -33,6 +33,11 @@
       "type": "string",
       "minLength": 1
     },
+    "pass_through": {
+      "type":"array","maxItems":31,"uniqueItems":true,
+      "items":{"type":"integer","minimum":0,"maximum":30},
+      "description":"Optional zero-based path indexes authorized to continue after actual RFID. Must exclude final node; firmware validates straight geometry and grants."
+    },
     "route_cmd_id": {"type":"integer","minimum":1,"maximum":2147483647},
     "path_index": {"type":"integer","minimum":0,"maximum":32},
     "node": {"type":"string","minLength":1,"maxLength":7},

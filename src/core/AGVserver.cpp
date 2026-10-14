@@ -117,10 +117,12 @@ static std::recursive_mutex g_stateMtx;
 static std::unique_ptr<RuntimeStore> g_runtime;
 static vector<pair<string,string>> g_outbound;
 static bool g_storageHealthy = true;
+static std::uint64_t g_snapshotSequence = 0;
 static const string CORE_SESSION = to_string(chrono::system_clock::now().time_since_epoch().count()) + "-" + to_string(std::random_device{}());
 static json stateSnapshot() {
     lock_guard<recursive_mutex> lk(g_stateMtx);
     json state = {{"protocol_version", 1}, {"core_session_id", CORE_SESSION},
+            {"core_snapshot_seq",++g_snapshotSequence},
             {"mqtt_connected", g_mqttConnected.load()}, {"storage_healthy",g_storageHealthy}, {"map", g_map.toJson()}, {"fleet", g_fleet.toJson()}, {"mutex", g_arbiter.toJson()}};
     if (g_shift) state["shift"] = g_shift->snapshot();
     return state;
@@ -397,10 +399,10 @@ static void wsAcceptLoop(SOCKET listenSock) {
     }
 }
 
-static void broadcastState() {
+static void broadcastState(bool positionChanged = false) {
     lock_guard<recursive_mutex> stateLock(g_stateMtx);
     static auto last = Clock::time_point{};
-    const auto now = Clock::now();if (now-last < chrono::milliseconds(200)) return;
+    const auto now = Clock::now();if (!positionChanged && now-last < chrono::milliseconds(200)) return;
     last = now;
     json snap = stateSnapshot();
     snap["logs"] = recentLogsJson(); // nhat ky su kien gan nhat, xem "NHAT KY SU KIEN HE THONG" o Phan A
@@ -483,6 +485,7 @@ static void on_connect(mosquitto* mosq, void*, int rc) {
         }
         mosquitto_subscribe(mosq, NULL, "agv/+/telemetry", 0);
         mosquitto_subscribe(mosq, NULL, "agv/+/diagnostic", 0);
+        mosquitto_subscribe(mosq, NULL, "agv/01/odometry", 0);
         mosquitto_subscribe(mosq, NULL, "agv/+/mutex_request", 0);
         mosquitto_subscribe(mosq, NULL, "agv/+/mutex_release", 0);
         mosquitto_subscribe(mosq, NULL, "agv/+/obstacle", 0);
@@ -512,6 +515,7 @@ static long grantId(const json& value) {
 static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
     lock_guard<recursive_mutex> stateLock(g_stateMtx);
     try {
+    bool positionChanged = false;
 
     string topic = msg->topic;
     if (msg->payloadlen < 0 || msg->payloadlen > 4096) return;
@@ -521,7 +525,12 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
     if (msg->retain && action != "status") return;
     if (!g_storageHealthy) return;
 
-    if (action == "telemetry") {
+    if (action == "odometry") {
+        const auto sample = EncoderSample::parse(json::parse(payload));
+        if (agvId == "01" && sample.coreSession == CORE_SESSION && g_fleet.observeOdometry(agvId,sample))
+            broadcastState(true);
+        return; // dữ liệu hiển thị không ghi checkpoint hoặc điều phối
+    } else if (action == "telemetry") {
         // Cu phap: "RFID|battery" hoac "RFID|battery|obstacle(0/1)"
         vector<string> parts; stringstream ss(payload); string tok;
         while (getline(ss, tok, '|')) parts.push_back(tok);
@@ -534,7 +543,7 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
             if (battery > 100) throw std::invalid_argument("Pin telemetry ngoai 0..100");
             if (parts.size() == 3 && parts[2] != "0" && parts[2] != "1") throw std::invalid_argument("Co vat can khong hop le");
             bool obstacle = (parts.size() == 3 && parts[2] == "1");
-            g_fleet.updateTelemetry(agvId, rfid, battery, obstacle);
+            positionChanged = g_fleet.updateTelemetry(agvId, rfid, battery, obstacle);
             if (obstacle) requestWake(); // vat can bao qua telemetry -> replanning ngay, khong doi het 700ms
         } else throw std::invalid_argument("Telemetry phai la node|battery[|0/1]");
     } else if (action == "diagnostic") {
@@ -550,6 +559,18 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
             const double percent = value->get<double>();
             if (!std::isfinite(percent) || percent < 0.0 || percent > 100.0) return;
             displayPercent = static_cast<int>(std::lround(percent));
+        }
+        bool encoderBound = false;
+        if (diagnostic.value("encoderSupported",false) && g_fleet.encoderEnabled(agvId)) {
+            if (diagnostic.value("encoderCoreSessionId",string{}) != CORE_SESSION) return;
+            for (const auto* key : {"encoderBootId","session","uptimeMs"}) {
+                if (!diagnostic.contains(key) || !diagnostic[key].is_number_integer() ||
+                    diagnostic[key].get<int64_t>() < 0 || diagnostic[key].get<uint64_t>() > UINT32_MAX)
+                    throw std::invalid_argument("Encoder diagnostic session sai");
+            }
+            if (!g_fleet.bindEncoderSession(agvId,diagnostic["encoderBootId"].get<uint32_t>(),
+                diagnostic["session"].get<uint32_t>(),diagnostic["uptimeMs"].get<uint32_t>())) return;
+            encoderBound = true;
         }
         g_fleet.updateBatteryDisplay(agvId, displayPercent);
         if (diagnostic.contains("node") && diagnostic["node"].is_string() &&
@@ -579,6 +600,7 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                 motion.stationDockingSupported = diagnostic.value("stationDockingSupported",false);
                 motion.stationReady = diagnostic.value("stationReady",false);
                 motion.nodeOrdersSupported = diagnostic.value("nodeOrdersSupported",false);
+                motion.straightThroughSupported = diagnostic.value("straightThroughSupported",false);
                 motion.awaitingNodeOrder = diagnostic.value("awaitingNodeOrder",false);
                 motion.stationTurnRequired = diagnostic.value("stationTurnRequired",false);
                 motion.routeCommandId = diagnostic.value("routeCommandId",0L);
@@ -587,7 +609,21 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                 motion.heading = diagnostic.value("heading",string{});
                 motion.headingNode = diagnostic.value("headingNode",string{});
                 motion.headingSource = diagnostic.value("headingSource",string{});
+                if (encoderBound && agvId == "01" && diagnostic.contains("obstacle") && diagnostic["obstacle"].is_boolean() &&
+                    diagnostic.contains("ultrasonicCm") &&
+                    diagnostic.contains("obstacleDirection") && diagnostic["obstacleDirection"].is_string()) {
+                    const double cm = diagnostic["ultrasonicCm"].is_number() ? diagnostic["ultrasonicCm"].get<double>() : -1;
+                    const string direction = diagnostic["obstacleDirection"].get<string>();
+                    if ((!diagnostic["obstacle"].get<bool>() || cm >= 0) && std::isfinite(cm) && cm <= 500 &&
+                        (direction == "front" || direction == "rear")) {
+                        motion.sonarPresent = true;
+                        motion.sonarObstacle = diagnostic["obstacle"].get<bool>();
+                        motion.sonarDistanceCm = cm;
+                        motion.sonarDirection = direction;
+                    }
+                }
                 g_fleet.observeMotionDiagnostic(agvId,motion);
+                if (encoderBound) g_fleet.observeEncoderFirmwareFault(agvId,motion);
         }
     } else if (action == "mutex_request") {
         auto zones = g_arbiter.toJson();
@@ -639,6 +675,9 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
         g_fleet.reportAck(agvId, stol(payload));
     }
     checkpointAndPublish();
+    // Actual RFID changes reach subscribers immediately after durable commit.
+    // Do not wait for the background tick; unchanged heartbeat stays throttled.
+    if (positionChanged) broadcastState(true);
     } catch (const std::exception& e) { pushLog(string("[LOI] MQTT: ") + e.what()); }
 }
 

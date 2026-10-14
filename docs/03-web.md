@@ -1,5 +1,11 @@
 # Phát triển web giám sát AGV
 
+14/10/2026, test 01: marker nét đứt là vị trí ước tính encoder giữa hai RFID, vòng nhỏ là RFID gần nhất. Tốc độ cm/s hiện ở đầu/bên dưới bản đồ và dòng xe 01; chưa đo/cũ là `—`. Web nối hai mẫu đã nhận bằng animation 180 ms, dừng/giữ marker và ghi dữ liệu cũ sau 1000 ms hoặc mất liên kết/lỗi. Chỉ RFID xác nhận node/hoàn thành. [ADR-050](decisions/ADR-050-robot01-encoder-position-speed.md) thay quy ước chấm chỉ ở node của xe 01 trong đoạn lịch sử bên dưới; mode khác giữ RFID.
+
+Yêu cầu mới test01 ngày10/10/2026: hai nút Lấy/Hạ riêng, chọn kho, tới kho/chờ5s/lùi gate; ẩn form/lịch sử đơn và không giữ xe bởi bản ghi cũ. Gate đứng chờ rồi xoay khi có tuyến tiếp. [ADR-045](decisions/ADR-045-standalone-warehouse-tests-without-orders.md) thay luồng đơn hàng test01 bên dưới.
+
+Ngày10/10/2026: luồng lấy/giao dừng5s trong mỗi kho rồi lùi ra gate; sau giao chỉ kết thúc lượt khi task exit completed và RFID/IDLE đúng gate. Lý do chờ xe nêu ID đơn cũ giữ xe; đơn chưa từng phát lệnh không giữ robot. [ADR-044](decisions/ADR-044-five-second-warehouse-service-and-gate-exit.md).
+
 Nền `OBSERVED`: `AGVwebserver/index.html`, REST tại gateway và WebSocket `/ws`. Giữ HTML/JS hiện có; chuyển React/Vue/TypeScript chỉ khi nhu cầu bảo trì hoặc yêu cầu mới có căn cứ.
 
 ## Luồng người vận hành
@@ -12,6 +18,8 @@ Nền `OBSERVED`: `AGVwebserver/index.html`, REST tại gateway và WebSocket `/
 Đây là định hướng giao diện. Những trang/chức năng chưa được yêu cầu hoặc kiểm thử không được đánh dấu hoàn tất.
 
 ## Dữ liệu và ý nghĩa hiển thị
+
+Cập nhật 10/10/2026: chấm xe là RFID gần nhất, mũi tên phía trước biểu diễn đầu xe. Kho K hướng vào trong khi xử lý hàng: tiến vào/lùi ra. Trạm S1/S2 hướng ra cửa: tiến vào trạm rồi quay đầu tại S, tiến ra bắt đầu tuyến mới. Lúc lùi mũi tên đầu xe giữ hướng. Không còn bộ chọn hướng thủ công. ESP32 gửi heading mặc định hoặc heading tuyến; khi chưa biết/mất mạng/vị trí chưa xác minh thì không vẽ hướng chắc chắn. S1 ↓ ra GS1, S2 ↑ ra GS2, K1–K3 ←, K4–K6 → theo map hiện tại. Đặt xe thực tế khớp quy ước trước thử. [ADR-033](decisions/ADR-033-stations-face-outward.md).
 
 Web nhận state chứa `map`, `fleet`, `mutex`, `logs`, cùng `agv_connected` do gateway thêm. `fleet.agvs` có các trường như `id`, `node`, `battery`, `state`, `path`, `target` theo `toJson()` của core. Đọc implementation trước khi thêm type/schema; không mặc định state có timestamp của robot.
 
@@ -60,3 +68,6 @@ Chế độ Đơn hàng kho hiện thanh tiến độ theo đơn được chọn
 Khi Core trả `shift.single_robot_trial=true`, form Đi tới node chọn xe 01 trực tiếp thay cho tùy chọn tự phân xe. Nếu pin chỉ có `battery_display_percent` mà `battery_measured=false` ở Core thường, form giải thích % này chưa được dùng để cấp nhiệm vụ. Giao diện không tự biến % hiển thị thành pin điều khiển hoặc thay ngưỡng 20%/40%.
 
 Khung Ca làm việc hiện rõ Core đang ở chế độ thường hay thử một xe 01. Khi Core thường và xe chỉ có % pin display-only, khung này cảnh báo rằng số % chưa được dùng để cấp nhiệm vụ; người vận hành không cần suy ra trạng thái trial từ lời báo lỗi pin.
+## Cảnh báo vật cản xe 01 (15/10/2026)
+
+Core test 01 nhận hai sonar và encoder: khi dừng vì vật cản, cạnh đang đi được tô đỏ và một chấm đỏ biểu diễn vị trí ước tính của vật cản. Tooltip cho biết phía trước/sau và khoảng cách đo cm. Điểm dùng tọa độ map cm, không phải pixel cố định; thiếu mẫu encoder/sonar mới thì ẩn cảnh báo vị trí. Khi vật cản rời đi và firmware đọc >20 cm, trạng thái đỏ biến mất, xe tiếp tục tuyến cũ nếu mọi chốt an toàn khác còn hợp lệ. Độ chính xác điểm và quãng phanh cần thử xe thật; xem [ADR-055](decisions/ADR-055-robot01-dual-sonar-edge-warning.md).

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "robot_id": "01",
+  "core_session_id": "example-core-session",
+  "boot_id": 1234,
+  "connection_session": 1,
+  "seq": 17,
+  "uptime_ms": 3400,
+  "left_ticks": 16,
+  "right_ticks": 16,
+  "pulses_per_100cm": 161,
+  "route_cmd_id": 42,
+  "path_index": 0,
+  "from_node": "C4",
+  "to_node": "M4",
+  "tracking": true,
+  "translating": true,
+  "reverse": false,
+  "distance_cm": 9.93789,
+  "speed_cm_s": 24.84472
+}

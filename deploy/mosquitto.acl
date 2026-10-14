@@ -8,6 +8,8 @@ pattern write agv/%u/obstacle
 pattern write agv/%u/error
 pattern write agv/%u/charging_done
 pattern write agv/%u/status
+pattern write agv/%u/diagnostic
+pattern write agv/%u/odometry
 pattern read agv/%u/command
 pattern read agv/%u/mutex_grant
 user 01
@@ -25,6 +27,8 @@ topic read agv/+/obstacle
 topic read agv/+/error
 topic read agv/+/charging_done
 topic read agv/+/status
+topic read agv/+/diagnostic
+topic read agv/01/odometry
 topic write agv/+/command
 topic write agv/+/mutex_grant
 topic write agv/server/heartbeat

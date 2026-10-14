@@ -4,6 +4,7 @@
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 
 namespace {
 struct PayloadReader {
@@ -32,7 +33,7 @@ bool CoreProtocol::decodeCommand(const uint8_t* payload, size_t length, CoreComm
     if (!payload || !length || length > Config::MAX_COMMAND_BYTES) return false;
     for (size_t i = 0; i < length; ++i) if (payload[i] == 0) return false;
 
-    StaticJsonDocument<2048> doc;
+    StaticJsonDocument<3072> doc;
     PayloadReader reader{payload, length};
     if (deserializeJson(doc, reader) || !doc.is<JsonObject>()) return false;
     for (size_t i = reader.offset; i < length; ++i)
@@ -85,6 +86,17 @@ bool CoreProtocol::decodeCommand(const uint8_t* payload, size_t length, CoreComm
         if (i && std::strcmp(command.path[i - 1], command.path[i]) == 0) return false;
         ++i;
     }
+    if (doc.containsKey("pass_through")) {
+        if (!doc["pass_through"].is<JsonArrayConst>()) return false;
+        const auto through = doc["pass_through"].as<JsonArrayConst>();
+        if (through.size() > Config::MAX_PATH_NODES) return false;
+        for (JsonVariantConst step : through) {
+            if (!step.is<unsigned int>()) return false;
+            const auto index = step.as<unsigned int>();
+            if (index+1 >= command.pathLength || index >= Config::MAX_PATH_NODES || command.passThrough[index]) return false;
+            command.passThrough[index] = true;
+        }
+    }
     return command.pathLength == 0 || std::strcmp(command.path[command.pathLength - 1], command.target) == 0;
 }
 
@@ -94,7 +106,7 @@ bool CoreProtocol::sameCommand(const CoreCommand& a, const CoreCommand& b) {
         std::strcmp(a.node,b.node) != 0 || std::strcmp(a.nextNode,b.nextNode) != 0 || std::strcmp(a.maneuver,b.maneuver) != 0 ||
         std::strcmp(a.target, b.target) != 0) return false;
     for (uint8_t i = 0; i < a.pathLength; ++i)
-        if (std::strcmp(a.path[i], b.path[i]) != 0) return false;
+        if (std::strcmp(a.path[i], b.path[i]) != 0 || a.passThrough[i] != b.passThrough[i]) return false;
     return true;
 }
 
@@ -134,4 +146,23 @@ bool CoreProtocol::ack(int32_t cmdId, char* output, size_t capacity) {
     if (cmdId < 1 || !output || capacity == 0) return false;
     const int written = std::snprintf(output, capacity, "%ld", static_cast<long>(cmdId));
     return written > 0 && static_cast<size_t>(written) < capacity;
+}
+
+bool CoreProtocol::odometry(const OdometrySnapshot& s, uint32_t bootId, const char* coreSession,
+                            char* output, size_t capacity) {
+    if (!output || !capacity || !bootId || !coreSession || !coreSession[0] || std::strlen(coreSession) > 95 ||
+        !s.localSession || !std::isfinite(s.distanceCm) || !std::isfinite(s.speedCmS) ||
+        s.distanceCm < 0 || s.speedCmS < 0) return false;
+    StaticJsonDocument<1024> doc;
+    auto o = doc.to<JsonObject>();
+    o["schema_version"] = 1; o["robot_id"] = Config::AGV_ID; o["core_session_id"] = coreSession;
+    o["boot_id"] = bootId; o["connection_session"] = s.localSession;
+    o["seq"] = s.seq; o["uptime_ms"] = s.uptimeMs;
+    o["from_node"] = s.fromNode; o["to_node"] = s.toNode;
+    o["route_cmd_id"] = s.routeCmdId; o["path_index"] = s.pathIndex;
+    o["tracking"] = s.tracking; o["translating"] = s.translating; o["reverse"] = s.reverse;
+    o["left_ticks"] = s.leftTicks; o["right_ticks"] = s.rightTicks;
+    o["distance_cm"] = s.distanceCm; o["speed_cm_s"] = s.speedCmS;
+    o["pulses_per_100cm"] = Config::ENCODER_PULSES_PER_100CM;
+    return !doc.overflowed() && measureJson(doc) < capacity && serializeJson(doc,output,capacity) > 0;
 }

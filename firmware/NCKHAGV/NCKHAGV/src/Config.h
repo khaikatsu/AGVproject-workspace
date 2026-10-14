@@ -70,17 +70,24 @@ constexpr int LINE_CENTER_PIN = 34;
 constexpr int LINE_RIGHT_PIN = 35;
 constexpr int ULTRASONIC_TRIG_PIN = 12;
 constexpr int ULTRASONIC_ECHO_PIN = 13;
+#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+constexpr int REAR_ULTRASONIC_TRIG_PIN = 0;
+constexpr int REAR_ULTRASONIC_ECHO_PIN = 15;
+#else
+constexpr int REAR_ULTRASONIC_TRIG_PIN = -1;
+constexpr int REAR_ULTRASONIC_ECHO_PIN = -1;
+#endif
 constexpr int BATTERY_ADC_PIN = 36;
 constexpr int RFID_SCK_PIN = 18;
 constexpr int RFID_MISO_PIN = 19;
 constexpr int RFID_MOSI_PIN = 23;
 constexpr int RFID_SS_PIN = 5;
 constexpr int RFID_RST_PIN = 22;
-constexpr int SERVO_1_PIN = 15;
+constexpr int SERVO_1_PIN = REAR_ULTRASONIC_ECHO_PIN < 0 ? 15 : -1;
 constexpr int SERVO_2_PIN = 17;
-constexpr int SERVO_3_PIN = 21;
-// Both are ESP32 strapping pins; verify boot with the attached modules.
-constexpr int BUZZER_PIN = 0;
+constexpr int SERVO_3_PIN = REAR_ULTRASONIC_ECHO_PIN < 0 ? 21 : -1;
+// GPIO0 sonar sau (xe 01) và GPIO2 IR là boot strapping; thử boot khi đã nối thiết bị.
+constexpr int BUZZER_PIN = REAR_ULTRASONIC_ECHO_PIN < 0 ? 0 : 21;
 constexpr int CARGO_IR_PIN = 2;
 constexpr int BUZZER_ACTIVE_STATE = 0;
 constexpr int CARGO_IR_ACTIVE_STATE = 1;
@@ -119,10 +126,9 @@ static_assert(!ONE_ROBOT_TRIAL && !TWO_ROBOT_BENCH_TRIAL,
               "Robot 02 monitor must keep motion locked");
 #endif
 constexpr bool ENABLE_CORE_MOTION = ONE_ROBOT_TRIAL || TWO_ROBOT_BENCH_TRIAL;
-// Temporary single-robot trial without the ultrasonic module. Restore this
-// guard after the HC-SR04 is wired and verified on the bench.
-// The dual-robot bench build also has no ultrasonic and must remain on stands.
-constexpr bool ULTRASONIC_MOTION_GUARD = !ENABLE_CORE_MOTION;
+// Xe 01 kích chốt hai sonar; các profile motion khác giữ chính sách cũ.
+// Chốt phần mềm vẫn cần thử bàn và đo quãng phanh trước khi chạy trên sàn.
+constexpr bool ULTRASONIC_MOTION_GUARD = !ENABLE_CORE_MOTION || REAR_ULTRASONIC_ECHO_PIN >= 0;
 // Provisional ONE-ROBOT bench figure from the operator, 04/10/2026.
 // This is not a permission to release a mutex: the map scale and
 // swept rear corner have not been verified on the physical vehicle.
@@ -170,6 +176,18 @@ constexpr int CORRECTION_SPEED = DEFAULT_MOTOR_SPEED;
 constexpr int GENTLE_CORRECTION_SPEED = ONE_ROBOT_TRIAL ? 140 : DEFAULT_MOTOR_SPEED;
 #endif
 constexpr int BASE_SPEED = DEFAULT_MOTOR_SPEED;
+#if defined(AGV_REVERSE_SPEED)
+constexpr int REVERSE_SPEED = AGV_REVERSE_SPEED;
+#else
+constexpr int REVERSE_SPEED = BASE_SPEED;
+#endif
+#if defined(AGV_REVERSE_CORRECTION_SPEED)
+constexpr int REVERSE_CORRECTION_SPEED = AGV_REVERSE_CORRECTION_SPEED;
+#else
+constexpr int REVERSE_CORRECTION_SPEED = CORRECTION_SPEED;
+#endif
+static_assert(REVERSE_SPEED > 0 && REVERSE_SPEED <= 255, "Invalid reverse PWM");
+static_assert(REVERSE_CORRECTION_SPEED > 0 && REVERSE_CORRECTION_SPEED <= 255, "Invalid reverse correction PWM");
 constexpr uint32_t MOTOR_PWM_HZ = 5000;
 constexpr int MOTOR_PWM_BITS = 8;
 constexpr std::array<int, 4> MOTOR_PWM_CHANNELS = {0, 1, 2, 3};
@@ -184,6 +202,7 @@ constexpr uint32_t LINE_LOSS_CONFIRM_MS = ONE_ROBOT_TRIAL ? 120 : 0;
 #endif
 // Operator requests stop at or below 15 cm; verify on the physical sensor.
 constexpr float OBSTACLE_DISTANCE_CM = 15.0f;
+constexpr float OBSTACLE_CLEAR_CM = 20.0f;
 // Bounded software trial, not a measured turn time. Pivot exits when a line
 // is reacquired after leaving the original line; bench calibration is pending.
 constexpr uint32_t TURN_MIN_MS = 100;
@@ -203,12 +222,24 @@ constexpr uint32_t RFID_STOP_DWELL_MS = ENABLE_CORE_MOTION ? 1000 : 200;
 #endif
 constexpr uint32_t STRAIGHT_DEPARTURE_MS = 0;
 constexpr uint32_t ULTRASONIC_INTERVAL_MS = 60;
-constexpr uint32_t ULTRASONIC_ECHO_TIMEOUT_US = 25000;
-constexpr uint32_t ULTRASONIC_STALE_MS = 200;
+constexpr uint32_t ULTRASONIC_ECHO_TIMEOUT_US = 30000;
+constexpr uint32_t ULTRASONIC_STALE_MS = 300;
 constexpr uint32_t ULTRASONIC_TRIGGER_US = 10;
 constexpr float ULTRASONIC_SOUND_CM_PER_US = 0.0343f;
 
-// Mechanical wheel diameter only. The firmware has no encoder/odometry input.
+// Encoder chỉ bật ở profile 01; cm/xung lấy từ phép thử, không từ đường kính bánh.
+#if defined(AGV_ENCODER_ENABLED) && AGV_ENCODER_ENABLED == 1
+constexpr bool ENCODER_ENABLED = true;
+constexpr int ENCODER_LEFT_PIN = AGV_ENCODER_LEFT_PIN;
+constexpr int ENCODER_RIGHT_PIN = AGV_ENCODER_RIGHT_PIN;
+constexpr float ENCODER_PULSES_PER_100CM = AGV_ENCODER_PULSES_PER_100CM;
+#else
+constexpr bool ENCODER_ENABLED = false;
+constexpr int ENCODER_LEFT_PIN = -1, ENCODER_RIGHT_PIN = -1;
+constexpr float ENCODER_PULSES_PER_100CM = 161.0f;
+#endif
+constexpr uint32_t ENCODER_DEBOUNCE_US = 300;
+constexpr uint32_t ODOMETRY_INTERVAL_MS = 200;
 constexpr float WHEEL_DIAMETER_CM = 6.5f;
 constexpr float LINE_WIDTH_CM = 4.5f;
 constexpr float FRONT_LINE_SENSOR_TO_AXLE_CM = 5.0f;
@@ -325,16 +356,16 @@ constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261012-line-loss-5s-stop";
+constexpr const char* FIRMWARE_BUILD = "20261015-robot01-dual-sonar";
 #else
-constexpr const char* FIRMWARE_BUILD = "20261010-grant-buffer-fix";
+constexpr const char* FIRMWARE_BUILD = "20261013-straight-through";
 #endif
 constexpr uint32_t SERIAL_BAUD = 115200;
 
-constexpr std::array<int, 22> ALL_PINS = {
+constexpr std::array<int, 24> ALL_PINS = {
     LEFT_ENA, LEFT_IN1, LEFT_IN2, RIGHT_ENB, RIGHT_IN3, RIGHT_IN4,
     LINE_LEFT_PIN, LINE_CENTER_PIN, LINE_RIGHT_PIN,
-    ULTRASONIC_TRIG_PIN, ULTRASONIC_ECHO_PIN, BATTERY_ADC_PIN,
+    ULTRASONIC_TRIG_PIN, ULTRASONIC_ECHO_PIN, REAR_ULTRASONIC_TRIG_PIN, REAR_ULTRASONIC_ECHO_PIN, BATTERY_ADC_PIN,
     RFID_SCK_PIN, RFID_MISO_PIN, RFID_MOSI_PIN, RFID_SS_PIN, RFID_RST_PIN,
     SERVO_1_PIN, SERVO_2_PIN, SERVO_3_PIN,
     BUZZER_PIN, CARGO_IR_PIN
@@ -342,10 +373,15 @@ constexpr std::array<int, 22> ALL_PINS = {
 constexpr bool pinsUnique() {
     for (size_t i = 0; i < ALL_PINS.size(); ++i)
         for (size_t j = i + 1; j < ALL_PINS.size(); ++j)
-            if (ALL_PINS[i] == ALL_PINS[j]) return false;
+            if (ALL_PINS[i] >= 0 && ALL_PINS[i] == ALL_PINS[j]) return false;
+    if (ENCODER_ENABLED) {
+        if (ENCODER_LEFT_PIN < 0 || ENCODER_RIGHT_PIN < 0 || ENCODER_LEFT_PIN == ENCODER_RIGHT_PIN) return false;
+        for (int pin : ALL_PINS) if (pin == ENCODER_LEFT_PIN || pin == ENCODER_RIGHT_PIN) return false;
+    }
     return true;
 }
 static_assert(pinsUnique(), "GPIO collision");
+static_assert(ENCODER_PULSES_PER_100CM > 0 && ODOMETRY_INTERVAL_MS >= 100, "Invalid encoder scale/rate");
 static_assert(LINE_LEFT_PIN >= 34 && LINE_CENTER_PIN >= 34 && LINE_RIGHT_PIN >= 34, "Line inputs must remain input-only pins");
 static_assert(BATTERY_ADC_PIN == 36, "Battery must remain on ADC1 GPIO36");
 static_assert(BUZZER_ACTIVE_STATE == 0 && CARGO_IR_ACTIVE_STATE == 1, "Unexpected buzzer/IR polarity");

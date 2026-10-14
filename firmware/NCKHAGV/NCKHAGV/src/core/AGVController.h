@@ -10,6 +10,7 @@
 #include "MutexClearance.h"
 #include "sensors/CargoModule.h"
 #include "actuators/BuzzerModule.h"
+#include "sensors/EncoderModule.h"
 
 class AGVController {
 public:
@@ -23,8 +24,10 @@ private:
     void handleCommand(const CoreCommand& command, bool inhibited);
     void publishTelemetry();
     void observeState();
+    void updateSonars();
     MotorModule motor_;
     SensorModule sensor_;
+    SensorModule rearSensor_{Config::REAR_ULTRASONIC_TRIG_PIN, Config::REAR_ULTRASONIC_ECHO_PIN};
     RFIDModule rfid_;
     ServoModule servo_;
     LineFollowModule line_;
@@ -32,12 +35,16 @@ private:
     MovementModule movement_;
     BatteryModule battery_;
     CargoModule cargo_;
+    EncoderModule encoder_;
     WiFiModule wifi_;
     MQTTModule mqtt_;
     ControlLogic control_;
     CoreNavigator navigator_;
     MutexClearance clearance_;
     uint32_t lastTelemetryMs_ = 0;
+    uint32_t lastSonarTriggerMs_ = 0;
+    bool triggerRearNext_ = false;
+    uint32_t lastOdometryMs_ = 0;
     uint32_t lastZoneRequestMs_ = 0;
     uint32_t lastBenchPrintMs_ = 0;
     MotorAction lastMotorAction_ = MotorAction::Stop;
