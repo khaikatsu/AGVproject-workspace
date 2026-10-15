@@ -21,6 +21,9 @@ void ServoModule::begin() {
     }
 }
 bool ServoModule::liftConfigured() const {
+    if (Config::SERVO_SINGLE_TEST) return attached_[Config::SERVO_LIFT] && Config::SERVO_MOVE_TIME_MS == 5000 &&
+        Config::SERVO_LIFT_UP_ANGLES[0] >= 0 && Config::SERVO_LIFT_UP_ANGLES[0] <= 180 &&
+        Config::SERVO_LIFT_DOWN_ANGLES[0] >= 0 && Config::SERVO_LIFT_DOWN_ANGLES[0] <= 180;
     const int pair[] = {Config::SERVO_LIFT, Config::SERVO_OTHER};
     if (pair[0] < 0 || pair[0] >= 3 || pair[1] < 0 || pair[1] >= 3 ||
         pair[0] == pair[1] || !attached_[pair[0]] || !attached_[pair[1]] ||
@@ -41,10 +44,12 @@ bool ServoModule::setAngle(size_t index, int angle) {
     return true;
 }
 bool ServoModule::liftUp() {
+    if (Config::SERVO_SINGLE_TEST) return liftConfigured() && !busy_ && setAngle(Config::SERVO_LIFT,Config::SERVO_LIFT_UP_ANGLES[0]);
     return liftConfigured() && setAngle(Config::SERVO_LIFT, Config::SERVO_LIFT_UP_ANGLES[0]) &&
         setAngle(Config::SERVO_OTHER, Config::SERVO_LIFT_UP_ANGLES[1]);
 }
 bool ServoModule::liftDown() {
+    if (Config::SERVO_SINGLE_TEST) return liftConfigured() && !busy_ && setAngle(Config::SERVO_LIFT,Config::SERVO_LIFT_DOWN_ANGLES[0]);
     return liftConfigured() && setAngle(Config::SERVO_LIFT, Config::SERVO_LIFT_DOWN_ANGLES[0]) &&
         setAngle(Config::SERVO_OTHER, Config::SERVO_LIFT_DOWN_ANGLES[1]);
 }

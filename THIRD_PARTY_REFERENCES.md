@@ -6,6 +6,10 @@ Danh mục và nguồn license: [docs/11-github-references.md](docs/11-github-re
 
 ## Nhật ký sử dụng sau này
 
+15/10/2026: tham khảo [STMicroelectronics L298 DS0218 Rev5 (10/2023), bảng5/trang8 và application information](https://www.st.com/resource/en/datasheet/l298.pdf) để đối chiếu `MotorModule::motorStop` hiện đặt EN=0 tương ứng Free running motor stop; fast stop là chế độ khác có ràng buộc dòng. Không sao chép code/hình, không đổi phanh chủ động; tài liệu thuộc ST, không có license mã nguồn áp dụng. Kết luận dùng trong ADR-055/REQ-ROBOT01-STOP-LATENCY-01.
+
+15/10/2026: tham khảo [HC-SR04 Datasheet, trang 2, Elecrow phân phối](https://www.elecrow.com/download/HC_SR04%20Datasheet.pdf), đối chiếu [bản ITEAD 03.11.2010](https://www.mysensors.org/dl/57c3eb62071cb0e34c900579/design/HC-SR04.pdf). Dùng thông số xung không thấy vật khoảng38ms và chu kỳ≥50ms để sửa hạn chờ trong `firmware/NCKHAGV/NCKHAGV/src/sensors/SensorModule.cpp`/`Config.h`, kiểm chứng bằng `tests/sonar-host/no_echo_gate.cpp`. Datasheet PDF không có tag/commit hoặc giấy phép mã nguồn; không sao chép hình, mã thư viện hay implementation upstream.
+
 10/10/2026: dùng binary [cloudflared-windows-amd64.exe](https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-windows-amd64.exe) tag2026.10.0, tải vào `.qa/public-simulation-tools`, SHA-256 đối chiếu metadata release. Công cụ chạy độc lập cho `scripts/share-simulation.ps1`; không vendor/copy mã nguồn upstream. [LICENSE Apache-2.0](https://github.com/cloudflare/cloudflared/blob/2026.10.0/LICENSE). Tham khảo [Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) để cấu hình outbound HTTPS và vòng đời link tạm thời.
 
 | Ngày | Repo và URL file | Tag hoặc commit | Phần dùng và file đích | License và notice |

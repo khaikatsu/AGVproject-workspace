@@ -1,5 +1,44 @@
 # Hồ sơ kiểm thử AGV
 
+## Một servo GPIO17 xe01, 0/45° và kiện ảo — 15/10/2026
+
+[ADR-057](../docs/decisions/ADR-057-robot01-servo-lift-test.md), REQ-ROBOT01-SERVO-LIFT-01. Host [servo-host/test_main.cpp](servo-host/test_main.cpp) link ServoModule/CoreProtocol/LiftCycle thật, Arduino GPIO/time adapter: PASS01 kênh5/GPIO17 duy nhất, boot duty0/không góc,50Hz/16bit, nâng45 danh định PWM4095 (1250µs), hạ0 PWM3276 (1000µs), đủ5000ms, busy/STOP/mất an toàn/trànmillis/parser/dedup identity. Profile02 PASS servo disabled. Dải1000–2000µs và0/45 là quy ước test, không số đo góc ngoài đời.
+
+[servo_core.cpp](servo_core.cpp) PASS: ID/node/capability/dừng tại kho, ACK không hoàn tất, kết quả sai ID/đến sớm/4999ms không chốt, khóa GOTO, đủ5s nâng/hạ đổi cargo, gián đoạn không tự replay. Core unit hiện có PASS, native01 **28/28**, native02 **27/27**, buildESP env01/02 PASS (`20261015-robot01-servo45-test` cho01). Core build riêng `.qa/servo45-build/agv_core.exe`, không ghi đè executable vận hành.
+
+Gateway/orders/warehouse **31/31** PASS: API/history/WS/đơn cũ giữ nguyên; mới kiểm tra timer gateway/ACK/sai ID/stale không tạo cargo hoặc lùi, gián đoạn/đổi phiên/rời kho dừng lượt, và race RFID trước diagnostic phải chờ `lift.ready/fresh/observed_node` đúng kho. Lượt gateway chạy sandbox đầu gặp EACCES loopback, đã dừng và chạy lại với quyền loopback PASS; không diễn giải là lỗi sản phẩm. Regression Edge/mobile firmware cũ `.qa/warehouse-actions-browser-PULXqS` PASS, không tạo thêm order.
+
+[servo.integration.js](servo.integration.js) chạy broker/Core/gateway/DB/map/counter riêng với receiver host thật: nâng/hạ từ hai nút kho, mấtACK đầu rồi retry cùngcmd_id không tăng số lần phátPWM; đủ5s mới cargo/mới cấp tuyến lùi. Có Edge headless xác minh nhãn nâng/hạ, đúng một kiện trên marker sau nâng, bỏ sau hạ, không pageerror; screenshot đã xem. `.qa/servo-integration-lFbYwZ/verification.json`: PASS/browsertrue, độ trễ lệnhnâng→lùigate5332ms, hạ→gate5129ms (loopback, không độ trễ thực của xe); writes PWM lần lượt2/3 kể cả boot/dedup. RFID/chạy đường của fixture được cấp giả, không nghiệm thu AGVController với cảm biến thật. Hai lượt đầu phát hiện race RFID–diagnostic, đã sửa và thêm unit hồi quy rồi chạy PASS.
+
+Xác nhận cuối với Core mới: `.qa/servo-integration-6rNTrH/verification.json` PASS/browsertrue; thêm assert lý do trong khung ca là Đang nâng/Đang hạ, không nhầm Đang về S1 khi đang chạy servo. Core unit hiện có PASS sau build cuối; servo_core mở rộng PASS đổi boot/sai node/servo chạy ngoài lệnh hiện tại đều ERROR, không nhận cargo. Không thay artifact live trong quá trình build lại.
+
+Chạy lại: compile Core entrypoint src/core/AGVserver.cpp với include/ và libs như scripts/build-core.ps1 vào `.qa/servo45-build`; servo_core.cpp g++17/include; host test cần `-Itests/servo-host`, include src MCU/ArduinoJson, macro bench/profile tương ứng, link ServoModule.cpp/CoreProtocol.cpp/ControlLogic.cpp. Đặt AGV_CORE_BIN/AGV_SERVO_HOST tới binary riêng; `node tests/servo.integration.js`; thêm AGV_SERVO_BROWSER=1 và AGV_PLAYWRIGHT_MODULE tới bundled playwright để kiểm UI. Gateway tests: `node --test --test-isolation=none tests/gateway.test.js tests/orders.test.js tests/warehouse-actions.test.js`.
+
+Chưa nạp COM6, chạy servo/motor, restart Core/gateway thật hoặc sửa DB/counter vận hành. Cần nguồn hạ áp/chungGND và tháo tải/kiểm tra giới hạn cơ khí trước thử. DONE chỉ xác nhận chu kỳ lệnh PWM5000ms, không vị trí/có hàng thật; STOP giữ targetPWM cuối, không đảm bảo trục đã dừng hoặc tải được khóa.
+
+## Xe01 xoay tại GS1 rồi lùi S1 — 15/10/2026
+
+REQ-ROBOT01-REVERSE-HOME-01/[ADR-056](../docs/decisions/ADR-056-robot01-reverse-home-request.md): native01 **28/28**, native02 **27/27**, Core unit, audit **650 tuyến/profile**, route-map check và host [reverse_home.cpp](sonar-host/reverse_home.cpp) PASS. Host sonar dùng SensorModule/DirectionalSonar/CoreNavigator thật với GPIO stub: xoay dùng trước → STOP khi bắt nhánh → xóa mẫu cũ/chờ sonar sau → cản sau giữ route → thông đường lùi → RFID S1 dừng/không xoay trạm. Native kiểm tra E/W/N/S, cờ thiếu/sai/parser/dedup, rời/bắt line, RFID khi chờ không đến đích, STOP/mất mạng/line/timeout/mẫu hỏng; giữ hồi quy grant/mutex/kho/S2.
+
+Build ESP32 env `esp32dev_two_robot_bench_01` và `_02` PASS. Profile01 RAM57364 byte/flash958693 byte; profile02 RAM56884 byte/flash950369 byte. Bản xe01 `20261015-robot01-reverse-home`. Core mới `.qa/reverse-home-build/agv_core.exe`, không ghi đè/restart Core vận hành. Script build chính bị sandbox từ chối CIM; đã compile đúng entrypoint/include/libs bằng g++ trực tiếp, chạy Core unit với TEMP/TMP trong `.qa/reverse-home-build/tmp` PASS.
+
+`tests/node-order.integration.js` PASS hai lượt với AGV_CORE_BIN trỏ Core mới: mặc định capability mới, RIGHT + reverse_after_turn từ heading E tại GS1; chưa hoàn thành khi chỉ xoay/lùi hoặc mới có thẻ mà MCU chưa IDLE/ready; S1 ready hoàn thành một lần/đóng ca, không STATION_TURN_RIGHT. Với AGV_TEST_REVERSE_HOME=0, firmware cũ vẫn LEFT tiến vào/quay tại S1. Artifact `.qa/node-order-test-rSJTiB/verification.json` (mới), `.qa/node-order-test-6zNN1c/verification.json` (cũ). Lượt sandbox đầu không kết nối được broker riêng; hai lượt PASS sau cấp quyền loopback. Cổng/map/counter/DB riêng, không dùng broker1883 hoặc dữ liệu vận hành. Chưa nạp, chạy motor hoặc nghiệm thu sàn; kết quả phần mềm không chứng minh góc/quãng phanh thực, độ ổn định line/RFID hoặc khoảng trống thân xe khi xoay.
+
+Chạy lại: build Core riêng bằng `./scripts/build-core.ps1 -Tests -OutputDirectory .qa/reverse-home-build`, đặt AGV_CORE_BIN rồi chạy `node tests/node-order.integration.js` hai lần (lần cũ đặt AGV_TEST_REVERSE_HOME=0). Firmware build PlatformIO env01/02 không target upload. Audit solo_route.cpp cần include `include` và `firmware/NCKHAGV/NCKHAGV/src`, macro AGV_TWO_ROBOT_BENCH_TRIAL=1/profile tương ứng. Host reverse_home.cpp dùng include tests/sonar-host cùng src MCU, link SensorModule.cpp/CoreNavigator.cpp/ControlLogic.cpp, macro bench/profile01.
+
+Ưu tiên STOP sonic xe01 ngày15/10/2026: 3 host probe HAL/no_echo_gate/directional_test PASS; review Controller đảm bảo STOP sau cập nhật mẫu trước RFID/SPI/command. Build profile01 `20261015-robot01-priority-sonar-stop` PASS (RAM57332byte, flash957949byte). Chưa kiểm thử thời gian thực hoặc quãng trôi, chưa nạp; không xem host probe là phép đo giảm trễ trên xe. [ADR-055](../docs/decisions/ADR-055-robot01-dual-sonar-edge-warning.md).
+
+PWM xoay210 xe01 ngày15/10/2026: `tests/motor-host/reverse_speed.cpp` link MotorModule/MovementModule/LineFollowModule/ControlLogic thật với adapter motor-host PASS01/02. Xe01 pivot duty±210/PWM210 hai channel, xe02 giữ±230; hồi quy tiến/lùi/chỉnh line/còi/STOP PASS, static_assert timeout2500ms cả hai profile. Đầu ra `.qa/turn-line-tuning-build/motor_01.exe`/`motor_02.exe`. FirmwareBuild xe01 `20261015-robot01-pivot210`, chưa nạp/thử line thực tế. [ADR-054](../docs/decisions/ADR-054-robot01-slower-pivot.md).
+
+Lọc pin 15/10/2026: adapter `tests/battery-host/battery_smoothing.cpp` link `BatteryModule` và `ControlLogic` thật, giả lập ADC/clock theo từng ms. Kiểm tra trung bình bỏ mẫu biên, sụt áp ngắn, giữ % lúc motor chạy nhưng điện áp vẫn sống, nghỉ ngắn không mở giữ số, 3 đợt xác nhận, tối đa 1%/5 giây, hồi pin, hai đầu 0%/100%, tràn millis và khởi tạo lại. Chạy từ gốc workspace (thư mục `.qa/battery-smoothing-build` cần tồn tại):
+
+```powershell
+g++ -std=c++17 -Wall -Wextra -Itests/battery-host -Ifirmware/NCKHAGV/NCKHAGV/src tests/battery-host/battery_smoothing.cpp firmware/NCKHAGV/NCKHAGV/src/sensors/BatteryModule.cpp firmware/NCKHAGV/NCKHAGV/src/core/ControlLogic.cpp -o .qa/battery-smoothing-build/battery_smoothing.exe
+& .qa/battery-smoothing-build/battery_smoothing.exe
+```
+
+Host và build ESP32 `esp32dev_two_robot_bench_01`/`02` PASS; chưa nạp hoặc quan sát độ mượt trên xe thật. Artifact/firmwareBuild ghi tại REQ-BATTERY-04/[ADR-021](../docs/decisions/ADR-021-display-only-battery.md).
+
 Giảm PWM xoay xe01 ngày14/10/2026: probe `tests/motor-host/reverse_speed.cpp` link module motor/movement/line thật PASS01/02 cho pivot trái/phải±200/±230, PWM hai channel, tiến/lùi/còi/STOP. PlatformIO build ESP3201/02 PASS; native01/02 tổng52/52 PASS cho bắt line sau rời junction, NODE_ORDER/quay trạm và chốt mạng/mutex. [ADR-054](../docs/decisions/ADR-054-robot01-slower-pivot.md). Chưa nạp/đo trên sàn.
 
 Hoàn thành đỗ trạm14/10/2026: build/unit `.qa/station-completion-build`; `$env:AGV_CORE_BIN=(Resolve-Path .qa/station-completion-build/agv_core.exe).Path; node tests/heading.integration.js` dùng broker/gateway/DB riêng. RFIDage175278 cùng ready mới phải completed/IDLE/task_id-targetrỗng/CLOSED, lịch sử cùng phiên một record sau lặp diagnostic; chưa quay xong/hướng vào/null RFID/lỗi vẫn giữ task. Fixture `.qa/heading-test-fH7caJ` PASS. [ADR-053](../docs/decisions/ADR-053-station-completion-rfid-anchor.md).
@@ -207,6 +246,18 @@ Build riêng: `./scripts/build-core.ps1 -Tests -OutputDirectory build/simulation
 
 `node tests/simulation.direction.test.js` kiểm tra hướng sáu kho/hai trạm, lùi giữ hướng đầu và snapshot hướng. `node tests/simulation.direction.browser.js` kiểm tra hai mũi tên, giao đơn K1→K2 với Bốc hàng/Dỡ hàng, lùi ra kho, đầu hướng cửa khi về trạm và mobile; dùng Playwright/Edge và Core/broker/DB riêng. [ADR-038](../docs/decisions/ADR-038-simulation-direction-arrows.md).
 ## Sonar xe 01 — 15/10/2026
+
+REQ-ROBOT01-SONAR-05: mở rộng no_echo_gate với xung thực tế47487/47494us và update lúc HIGH46ms, fail bản hạn45ms/PASS bản hạn60ms. Giữ regression vật10cm dừng/nhả cùng route và HIGH quá hạn vẫn lỗi; test HAL/directional dùng Config timeout thay vì mốc45ms cũ. Ba host probe PASS; bản xe01 `20261015-robot01-sonar-47ms-fix`, chưa nạp/thử lại phần cứng.
+
+Build bản `20261015-robot01-sonar-diagnostic` profile01 PASS, RAM17,5%, flash73,1%; chưa upload hoặc xác minh log mới trên phần cứng.
+
+REQ-ROBOT01-SONAR-04: HAL `test_main.cpp` kiểm tra snapshot diagnostic đọc hai lần vẫn giữ ISR ready, không phát thêm TRIG, đếm cạnh/trigger, pulse_us, lý do RANGE/NO_ECHO_LOW/TIMEOUT_INVALID, result_age_ms tăng và sentinel UINT32_MAX sau clearReading. HAL, directional_test và no_echo_gate PASS. Bản Serial `20261015-robot01-sonar-diagnostic` chưa nạp/thử trên bo.
+
+Xác minh cuối bản `20261015-robot01-sonar-no-echo-fix`: 3 host probe PASS; native01 27/27, native02 26/26 PASS; build PlatformIO 01/02 PASS. Đầu ra trong `.qa/directional-sonar-build`, ảnh xe01 ở `.pio/build/esp32dev_two_robot_bench_01/firmware.bin` trong project NCKHAGV. Chưa upload hoặc thử lại xe thật.
+
+REQ-ROBOT01-SONAR-03: thêm `tests/sonar-host/no_echo_gate.cpp`, cùng flags/include/link như directional_test. Tái hiện S1 tiến GS1, dwell/grant rồi pivot gặp xung no-target 38 ms; fail bản cũ tại `front.valid()`, PASS sau sửa. Vật 10 cm vẫn STOP/nhả cùng route; HIGH quá45ms vẫn SensorInvalid. Binary `.qa/directional-sonar-build/no_echo_gate.exe`. HAL/directional host cũng PASS sau sửa hạn chờ (profile01 45 ms, cutoff khoảng cách vẫn30ms). Chưa nạp/thử xe thật.
+
+REQ-ROBOT01-SONAR-02: `tests/sonar-host/directional_test.cpp` PASS khi link `SensorModule.cpp`, `ControlLogic.cpp`, `CoreNavigator.cpp` với adapter `tests/sonar-host`, include `firmware/NCKHAGV/NCKHAGV/src`, C++17 và cờ `-DAGV_TWO_ROBOT_BENCH_TRIAL=1 -DAGV_ROBOT_PROFILE_01=1`. Kiểm tra chỉ kích một kênh theo hướng tuyến, yên 50 ms, không tái dùng echo/mẫu cũ, dừng/nhả vật cản lúc lùi cùng route ID, STOP, kẹt HIGH hết 200 ms và mẫu cũ không được gia hạn thu mẫu. Binary tại `.qa/directional-sonar-build/directional_test.exe`; HAL cũ `sonar_hal.exe` PASS. Native 01 27/27, 02 26/26 và build ESP32 01/02 PASS. FirmwareBuild xe01 `20261015-robot01-directional-sonar`; chưa nạp/thử xe thật. [ADR-055](../docs/decisions/ADR-055-robot01-dual-sonar-edge-warning.md). Với PowerShell, bọc dấu nháy các đối số `-I.../.pio/...` khi biên dịch native thủ công.
 
 Bản cuối đã đóng gói ở `build/robot01-dual-sonar/`. Sonar HAL host PASS; native xe01 27/27, xe02 26/26; fixture trước/sau và chấm không bị RFID che PASS ở `.qa/encoder-test-vemfv5`. [Kết quả và cách chạy thử](../docs/testing-sonar-robot01-2026-10-15.md).
 

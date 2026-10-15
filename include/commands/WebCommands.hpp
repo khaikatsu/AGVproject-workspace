@@ -37,6 +37,14 @@ public:
                     if (!error.empty()) return failure(result, 409, error);
                 }
                 data["task_id"] = taskId;
+            } else if (cmd == "warehouse_lift") {
+                if(!fleet_.acceptingTasks()) return failure(result,409,"Ca chua RUNNING");
+                const auto operation=j.at("action").get<std::string>();
+                if(operation!="pickup" && operation!="dropoff") return failure(result,400,"action sai");
+                long commandId=0;
+                const auto error=fleet_.startLift(id(j,"agv_id"),id(j,"node"),operation=="pickup",commandId);
+                if(!error.empty()) return failure(result,409,error);
+                data["command_id"]=commandId;
             } else if (cmd == "confirm_zone_clear") {
                 if (!j.value("physically_clear",false)) return failure(result,400,"Can xac nhan da dung xe va vung trong");
                 const auto zone = id(j,"zone"), owner = id(j,"owner");

@@ -10,6 +10,7 @@ async function until(check,timeout=8000){const end=Date.now()+timeout;while(Date
 async function freePort(){const s=net.createServer();s.listen(0,'127.0.0.1');await once(s,'listening');const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 async function available(port){return new Promise(r=>{const s=net.connect(port,'127.0.0.1');s.once('connect',()=>{s.destroy();r(true);});s.once('error',()=>r(false));});}
 async function main(){
+  const reverseHome=process.env.AGV_TEST_REVERSE_HOME!=='0';
   const root=path.resolve(__dirname,'..');fs.mkdirSync(path.join(root,'.qa'),{recursive:true});
   const dir=fs.mkdtempSync(path.join(root,'.qa/node-order-test-')),mqttPort=await freePort(),corePort=await freePort();
   const bin=process.env.AGV_MOSQUITTO_BIN||'C:/msys64/ucrt64/bin';
@@ -45,7 +46,7 @@ async function main(){
     });
     mqtt.subscribe('agv/#');await until(()=>mqtt.subscribed);
     const publish=()=>{mqtt.publish('agv/01/telemetry',`${r.node}|?|0`);mqtt.publish('agv/01/diagnostic',JSON.stringify({version:1,agvId:'01',session:1,uptimeMs:Date.now()%1000000,
-      ...r,headingSupported:true,headingNode:r.node,nodeOrdersSupported:true,stationDockingSupported:true,wifi:true,mqtt:true,batteryPercentage:r.batteryPercentage ?? 60,batteryCalibrated:true}));};
+      ...r,headingSupported:true,headingNode:r.node,nodeOrdersSupported:true,stationDockingSupported:true,reverseHomeSupported:reverseHome,wifi:true,mqtt:true,batteryPercentage:r.batteryPercentage ?? 60,batteryCalibrated:true}));};
     const set=values=>{Object.assign(r,values);publish();};
     const orders=()=>commands.filter(c=>c.cmd==='NODE_ORDER'&&c.route_cmd_id===r.routeCommandId);
     const orderAt=step=>orders().find(c=>c.path_index===step&&c.maneuver!=='STATION_TURN_RIGHT');
@@ -110,14 +111,30 @@ async function main(){
     await until(async()=>(await state()).fleet.tasks.find(t=>t.task_id===rightTrip.data.task_id).status==='completed');
     set({node:'GS1',heading:'E',headingSource:'route'});await until(async()=>(await robot()).node==='GS1');
     const home=await post('/api/agvs/01/goto',{target:'S1'});assert.equal(home.status,200);
-    await until(()=>orderAt(0));assert.equal(orderAt(0).maneuver,'LEFT');
-    set({node:'S1',heading:'N',pathIndex:1,nextNode:'',stationTurnRequired:true,awaitingNodeOrder:true,state:'AGV_WAITING'});
-    await until(()=>orders().find(c=>c.maneuver==='STATION_TURN_RIGHT'));
+    await until(()=>orderAt(0));assert.equal(orderAt(0).maneuver,reverseHome?'RIGHT':'LEFT');
+    assert.equal(orderAt(0).reverse_after_turn,reverseHome?true:undefined);
+    if(reverseHome){
+      set({awaitingNodeOrder:false,state:'AGV_MOVING',motor:'PIVOT_RIGHT',heading:'UNKNOWN',leftDuty:210,rightDuty:210});
+      await pause(250);
+      set({heading:'S',motor:'BACKWARD',leftDuty:150,rightDuty:190});await pause(250);
+      assert.equal((await state()).fleet.tasks.find(t=>t.task_id===home.data.task_id).status,'dispatched');
+      assert.equal((await post('/api/shift/end')).status,200);
+      set({node:'S1',pathIndex:1,nextNode:'',motor:'STOP',leftDuty:0,rightDuty:0});await pause(250);
+    }else{
+      set({node:'S1',heading:'N',pathIndex:1,nextNode:'',stationTurnRequired:true,awaitingNodeOrder:true,state:'AGV_WAITING'});
+      await until(()=>orders().find(c=>c.maneuver==='STATION_TURN_RIGHT'));
+    }
     assert.equal((await state()).fleet.tasks.find(t=>t.task_id===home.data.task_id).status,'dispatched');
     assert.equal((await post('/api/agvs/01/goto',{target:'GS1'})).status,409);
     set({stationTurnRequired:false,awaitingNodeOrder:false,state:'AGV_IDLE',motor:'STOP',taskActive:false,heading:'S',headingSource:'bay_default',stationReady:true});
     await until(async()=>(await state()).fleet.tasks.find(t=>t.task_id===home.data.task_id).status==='completed');
     assert.equal((await robot()).heading,'S');
+    if(reverseHome){
+      assert.equal(orders().some(c=>c.maneuver==='STATION_TURN_RIGHT'),false);
+      await until(async()=>(await state()).shift.phase==='CLOSED');
+      await pause(500);
+      assert.equal((await state()).fleet.tasks.filter(t=>t.task_id===home.data.task_id&&t.status==='completed').length,1);
+    }
     fs.writeFileSync(path.join(dir,'verification.json'),JSON.stringify({pass:true,commands,grants},null,2));
     console.log(`PASS node orders: RFID -> STOP -> server LEFT/RIGHT -> pivot -> following; stale route/tag rejected, same-ID retry, mutex and station readiness; ${dir}`);
   }catch(e){console.error(output.slice(-5000));throw e;}

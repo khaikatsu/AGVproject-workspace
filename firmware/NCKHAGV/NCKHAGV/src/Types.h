@@ -17,7 +17,7 @@ enum class MotorAction { Stop, Forward, Backward, ReverseCorrectLeft, ReverseCor
                          GentleCorrectLeft, GentleCorrectRight };
 enum class ServoAction { None, LiftUp, LiftDown };
 enum class CommandType { Task, Start, Stop, EmergencyStop, Restart, CancelTask, LiftUp, LiftDown, NodeOrder };
-enum class CoreCommandType { Goto, Wait, Stop, ChargeStart, ResetFault, NodeOrder };
+enum class CoreCommandType { Goto, Wait, Stop, ChargeStart, ResetFault, NodeOrder, LiftUp, LiftDown };
 enum class RobotHeading { Unknown, North, East, South, West };
 enum class ErrorCode { None, Configuration, WifiTimeout, MqttTimeout, EmergencyStop,
     Obstacle, SensorInvalid, LineLost, AmbiguousLine, UnknownTag, UnexpectedNode,
@@ -39,6 +39,7 @@ struct CoreCommand {
     int32_t routeCmdId = 0;
     char node[NODE_TEXT_SIZE]{}, nextNode[NODE_TEXT_SIZE]{}, maneuver[24]{};
     uint8_t pathIndex = 0, turnCrossings = 0;
+    bool reverseAfterTurn = false;
 };
 struct CoreGrant {
     char zone[NODE_TEXT_SIZE]{};
@@ -116,6 +117,10 @@ struct TelemetrySnapshot {
     bool stationReady = false;
     bool awaitingNodeOrder = false, stationTurnRequired = false;
     int32_t routeCmdId = 0;
+    bool liftSupported = false, liftBusy = false, virtualCargoKnown = false, virtualCargo = false;
+    int32_t liftCmdId = 0;
+    uint32_t liftElapsedMs = 0;
+    const char* liftState = "IDLE";
 };
 
 // Dữ liệu hiển thị; không cấp quyền chuyển động hoặc hoàn thành nhiệm vụ.

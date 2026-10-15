@@ -1,0 +1,18 @@
+{
+  "description": "Xe01 có line nối dài đối diện S1 tại GS1. Các mảnh diagnostic minh họa, không phải toàn bộ packet.",
+  "capability": {"reverseHomeSupported": true},
+  "departure_command": {
+    "cmd": "NODE_ORDER", "cmd_id": 210, "route_cmd_id": 200,
+    "node": "GS1", "next_node": "S1", "path_index": 0,
+    "maneuver": "RIGHT", "turn_crossings": 1, "reverse_after_turn": true
+  },
+  "departure_front_heading": "E",
+  "translation": "BACKWARD after reacquiring South line and fresh rear sonar",
+  "arrival_diagnostic": {
+    "node": "S1", "headingNode": "S1", "heading": "S", "headingSource": "bay_default",
+    "headingSupported": true, "stationDockingSupported": true, "reverseHomeSupported": true,
+    "state": "AGV_IDLE", "error": "NONE", "stationReady": true,
+    "taskActive": false, "motor": "STOP", "leftDuty": 0, "rightDuty": 0,
+    "stationTurnRequired": false, "rfidAgeMs": 0, "wifi": true, "mqtt": true
+  }
+}

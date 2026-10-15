@@ -1,5 +1,7 @@
 # ADR-045 — Thử lấy/hạ tại kho, chưa quản lý đơn hàng
 
+15/10/2026: [ADR-057](ADR-057-robot01-servo-lift-test.md) bổ sung một servo GPIO17 và kiện ảo cho test01 có capability mới: chờ nhúng hoàn tất chu kỳ5s thay vì timer gateway, sau đó mới lùi gate. Không tạo đơn hay xác nhận hàng vật lý. Firmware cũ vẫn giữ luồng mô phỏng dưới đây với nhãn rõ.
+
 Ngày10/10/2026. Source và kiểm thử hoàn tất; chờ gateway nạp lại.
 
 `SOURCE`: người dùng đính chính xe luôn không có đơn hàng thực, chưa làm chức năng đơn; yêu cầu chỉ tới kho lấy/hạ, đứng chờ5s, lùi gate rồi xoay theo hướng của chặng tiếp. Yêu cầu mới thay riêng cách dùng đơn hàng/giữ xe trong chế độ test01 của ADR-043/044. Không cần đóng/đối soát bản ghi đơn cũ để thử.

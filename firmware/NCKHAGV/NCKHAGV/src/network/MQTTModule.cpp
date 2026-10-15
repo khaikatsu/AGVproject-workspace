@@ -399,7 +399,7 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     }
     // RFID telemetry proves location; station diagnostics additionally gate
     // completion until the physical exit-facing pivot is finished.
-    StaticJsonDocument<1536> doc;
+    StaticJsonDocument<2048> doc;
     auto object = doc.to<JsonObject>();
     base(object, session(), s.uptimeMs);
     object["state"] = stateName(s.state);
@@ -415,6 +415,14 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     object["motionEnabled"] = Config::ENABLE_CORE_MOTION;
     object["headingSupported"] = true;
     object["stationDockingSupported"] = true;
+    object["reverseHomeSupported"] = Config::REVERSE_HOME_SUPPORTED;
+    if(Config::SERVO_SINGLE_TEST) {
+        object["liftSupported"]=s.liftSupported;object["liftBusy"]=s.liftBusy;
+        object["liftCommandId"]=s.liftCmdId;object["liftState"]=s.liftState;
+        object["liftElapsedMs"]=s.liftElapsedMs;
+        if(s.virtualCargoKnown) object["virtualCargo"]=s.virtualCargo;
+        else object["virtualCargo"]=nullptr;
+    }
     object["stationReady"] = s.stationReady;
     object["nodeOrdersSupported"] = true;
     object["straightThroughSupported"] = true;

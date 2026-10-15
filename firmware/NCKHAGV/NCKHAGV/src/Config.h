@@ -95,6 +95,11 @@ constexpr uint32_t CARGO_IR_STABLE_MS = 150;
 constexpr uint32_t REVERSE_STOP_MS = 150;
 // Front-mounted line sensors have not been validated for backward steering.
 constexpr bool REVERSE_STEERING_CONFIRMED = false;
+#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+constexpr bool REVERSE_HOME_SUPPORTED = true;
+#else
+constexpr bool REVERSE_HOME_SUPPORTED = false;
+#endif
 // Explicit, supervised one-robot route trial. The ordinary esp32dev environment
 // stays locked. The second robot must be physically absent from the route.
 #if defined(AGV_ONE_ROBOT_TRIAL) && AGV_ONE_ROBOT_TRIAL == 1
@@ -222,7 +227,10 @@ constexpr uint32_t RFID_STOP_DWELL_MS = ENABLE_CORE_MOTION ? 1000 : 200;
 #endif
 constexpr uint32_t STRAIGHT_DEPARTURE_MS = 0;
 constexpr uint32_t ULTRASONIC_INTERVAL_MS = 60;
-constexpr uint32_t ULTRASONIC_ECHO_TIMEOUT_US = 30000;
+constexpr uint32_t ULTRASONIC_MAX_RANGE_ECHO_US = 30000;
+// Robot 01 logs show completed no-range pulses of 47487..47494 us.
+// Allow these to finish; retain a bounded deadline for stuck HIGH.
+constexpr uint32_t ULTRASONIC_ECHO_TIMEOUT_US = REAR_ULTRASONIC_ECHO_PIN >= 0 ? 60000 : 30000;
 constexpr uint32_t ULTRASONIC_STALE_MS = 300;
 constexpr uint32_t ULTRASONIC_TRIGGER_US = 10;
 constexpr float ULTRASONIC_SOUND_CM_PER_US = 0.0343f;
@@ -283,18 +291,24 @@ constexpr std::array<int, 3> SERVO_PINS = {SERVO_1_PIN, SERVO_2_PIN, SERVO_3_PIN
 constexpr std::array<int, 3> SERVO_PWM_CHANNELS = {4, 5, 6};
 constexpr uint32_t SERVO_PWM_HZ = 50;
 constexpr int SERVO_PWM_BITS = 16;
-// TODO: USER CONFIGURATION: enable only verified servos and assign roles (0..2).
-constexpr std::array<bool, 3> SERVO_ENABLED = {false, false, false};
+// Profile01 opts into a single-servo connection test, not calibrated lifting.
+#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+constexpr bool SERVO_SINGLE_TEST = true;
+#else
+constexpr bool SERVO_SINGLE_TEST = false;
+#endif
+constexpr std::array<bool, 3> SERVO_ENABLED = {false, SERVO_SINGLE_TEST, false};
 constexpr int SERVO_SCAN = 0;
 constexpr int SERVO_LIFT = 1;
 constexpr int SERVO_OTHER = 2;
-// SERVO_LIFT and SERVO_OTHER are the independently calibrated lift pair.
-constexpr std::array<int, 2> SERVO_LIFT_UP_ANGLES = {-1, -1};
-constexpr std::array<int, 2> SERVO_LIFT_DOWN_ANGLES = {-1, -1};
-// TODO: USER CONFIGURATION: verified pulse limits, mechanical angles and settling.
-constexpr int SERVO_MIN_PULSE_US = 0;
-constexpr int SERVO_MAX_PULSE_US = 0;
-constexpr uint32_t SERVO_MOVE_TIME_MS = 0;
+// Other profiles retain the independently calibrated SERVO_LIFT/OTHER pair.
+// Test convention, not calibrated mechanical endpoints: down0/up45.
+constexpr std::array<int, 2> SERVO_LIFT_UP_ANGLES = {SERVO_SINGLE_TEST ? 45 : -1, -1};
+constexpr std::array<int, 2> SERVO_LIFT_DOWN_ANGLES = {SERVO_SINGLE_TEST ? 0 : -1, -1};
+// Narrow nominal test mapping; verify actual angles/mechanical limits before load.
+constexpr int SERVO_MIN_PULSE_US = SERVO_SINGLE_TEST ? 1000 : 0;
+constexpr int SERVO_MAX_PULSE_US = SERVO_SINGLE_TEST ? 2000 : 0;
+constexpr uint32_t SERVO_MOVE_TIME_MS = SERVO_SINGLE_TEST ? 5000 : 0;
 
 // Initial 2S 18650 estimate from main (1).cpp: 30k/7.5k divider, 6.4-8.4V.
 // Confirm the divider output and calibrate against a multimeter on the robot.
@@ -350,15 +364,15 @@ constexpr uint32_t TELEMETRY_INTERVAL_MS = 1000;
 constexpr uint32_t NETWORK_TASK_STACK_BYTES = 12288;
 constexpr size_t MAX_PATH_NODES = 32;
 constexpr size_t MAX_COMMAND_BYTES = 1024;
-constexpr size_t MAX_PUBLISH_BYTES = 1536;
+constexpr size_t MAX_PUBLISH_BYTES = SERVO_SINGLE_TEST ? 2048 : 1536;
 constexpr size_t COMMAND_QUEUE_LENGTH = 8;
 constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261015-robot01-dual-sonar";
+constexpr const char* FIRMWARE_BUILD = "20261015-robot01-servo45-test";
 #else
-constexpr const char* FIRMWARE_BUILD = "20261013-straight-through";
+constexpr const char* FIRMWARE_BUILD = "20261015-battery-smoothing";
 #endif
 constexpr uint32_t SERIAL_BAUD = 115200;
 

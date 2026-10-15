@@ -692,7 +692,7 @@
           <button id="nodeModeBtn" type="button" aria-pressed="false" onclick="setTaskMode('node')">Đi tới node</button>
         </div>
         <div id="warehouseTaskForm" hidden>
-          <p>Test xe 01: tới kho, dừng 5 giây rồi lùi ra gate.</p>
+          <p>Test xe 01: tới kho, servo GPIO17 nâng/hạ trong chu kỳ 5 giây rồi lùi ra gate. Kiện ảo biểu diễn kết quả nhúng, không xác nhận tải thật. Firmware cũ chỉ mô phỏng chờ.</p>
           <label for="warehouseTarget">Kho thực hiện</label>
           <select id="warehouseTarget" class="form-group" onchange="updateWarehouseControls()"></select>
           <div class="row-btn">

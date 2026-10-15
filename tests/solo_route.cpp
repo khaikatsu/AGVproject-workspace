@@ -65,15 +65,17 @@ int main() {
                     const auto actualFront = docking != RobotHeading::Unknown ? docking : incoming;
                     const char* heading = actualFront == RobotHeading::North ? "N" : actualFront == RobotHeading::East ? "E" :
                         actualFront == RobotHeading::South ? "S" : actualFront == RobotHeading::West ? "W" : "UNKNOWN";
-                    const auto order = NodeManeuver::plan(map.toJson(),from,command.path[i],heading);
+                    const auto order = NodeManeuver::plan(map.toJson(),from,command.path[i],heading,false,Config::REVERSE_HOME_SUPPORTED);
                     const unsigned crossings = route.departure[i] == RouteTurn::TurnAround ? route.turnCrossings[i] :
                         route.departure[i] == RouteTurn::Left || route.departure[i] == RouteTurn::Right ? 1 : 0;
                     if (order.is_null() || order["maneuver"] != RoutePlanner::turnName(route.departure[i]) || order["turn_crossings"] != crossings)
                         throw std::runtime_error("Server/MCU node maneuver disagreement " + start + " -> " + target + " at " + from);
-                    const bool reverse=route.departure[i] == RouteTurn::Reverse;
+                    if (order.value("reverse_after_turn",false) != route.reverseAfterTurn[i])
+                        throw std::runtime_error("Server/MCU reverse-home disagreement");
+                    const bool reverse=route.departure[i] == RouteTurn::Reverse || route.reverseAfterTurn[i];
                     if (RoutePlanner::bayExit(from,command.path[i]) && reverse == RoutePlanner::station(from))
                         throw std::runtime_error("Warehouse must reverse out; station must depart forward");
-                    if (RoutePlanner::bayGate(command.path[i]) && reverse)
+                    if (RoutePlanner::bayGate(command.path[i]) && reverse && !RoutePlanner::reverseHome(from,command.path[i]))
                         throw std::runtime_error("Warehouse and station must enter forward");
                 }
                 ++checked;

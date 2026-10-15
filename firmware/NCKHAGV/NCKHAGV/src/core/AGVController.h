@@ -2,11 +2,13 @@
 #include "sensors/BatteryModule.h"
 #include "sensors/RFIDModule.h"
 #include "sensors/SensorModule.h"
+#include "sensors/DirectionalSonar.h"
 #include "actuators/ServoModule.h"
 #include "motion/MovementModule.h"
 #include "network/MQTTModule.h"
 #include "ControlLogic.h"
 #include "CoreNavigator.h"
+#include "LiftCycle.h"
 #include "MutexClearance.h"
 #include "sensors/CargoModule.h"
 #include "actuators/BuzzerModule.h"
@@ -25,9 +27,11 @@ private:
     void publishTelemetry();
     void observeState();
     void updateSonars();
+    void logSonars();
     MotorModule motor_;
     SensorModule sensor_;
     SensorModule rearSensor_{Config::REAR_ULTRASONIC_TRIG_PIN, Config::REAR_ULTRASONIC_ECHO_PIN};
+    DirectionalSonar sonars_{sensor_, rearSensor_};
     RFIDModule rfid_;
     ServoModule servo_;
     LineFollowModule line_;
@@ -40,13 +44,13 @@ private:
     MQTTModule mqtt_;
     ControlLogic control_;
     CoreNavigator navigator_;
+    LiftCycle lift_;
     MutexClearance clearance_;
     uint32_t lastTelemetryMs_ = 0;
-    uint32_t lastSonarTriggerMs_ = 0;
-    bool triggerRearNext_ = false;
     uint32_t lastOdometryMs_ = 0;
     uint32_t lastZoneRequestMs_ = 0;
     uint32_t lastBenchPrintMs_ = 0;
+    uint32_t lastSonarLogMs_ = 0;
     MotorAction lastMotorAction_ = MotorAction::Stop;
     AGVState lastState_ = AGV_IDLE;
     ErrorCode lastError_ = ErrorCode::None;

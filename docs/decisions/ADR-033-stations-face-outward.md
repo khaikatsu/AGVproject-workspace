@@ -1,5 +1,7 @@
 # ADR-033 — Trạm quay đầu ra cửa, tiến xuất phát
 
+15/10/2026: [ADR-056](ADR-056-robot01-reverse-home-request.md) thay riêng cách vào S1 cho xe01 có capability mới: xoay tại GS1 theo line nối dài đã được người dùng xác nhận rồi lùi vào S1, không xoay tại S1. Các mô tả không có line đối diện GS1 bên dưới là khảo sát cũ; xe02/S2 và tương thích firmware cũ giữ thiết kế hiện tại.
+
 14/10/2026: [ADR-053](ADR-053-station-completion-rfid-anchor.md) thay điều kiện rfidAgeMs≤250 khi hoàn thành đỗ bằng RFID đã đọc trong phiên cùng diagnostic đỗ còn mới. Ngưỡng250ms vẫn giữ riêng cho phục hồi lỗi/mutex. Các ghi nhận cũ bên dưới là lịch sử trước sửa.
 
 Ngày 10/10/2026. Trạng thái: IMPLEMENTED; thay riêng quy tắc S1/S2 của ADR-032. Chưa nạp/kiểm chứng chuyển động trên xe thật.

@@ -12,10 +12,12 @@ int main() {
     MovementModule movement(motor, line, buzzer);
 #if defined(AGV_ROBOT_PROFILE_01)
     constexpr int forwardLeft = 180, forwardRight = 220;
-    constexpr int reverseLeft = 150, reverseRight = 190, turn = 200;
+    constexpr int reverseLeft = 150, reverseRight = 190, turn = 210;
+    static_assert(Config::TURN_TIMEOUT_MS == 2500, "Robot01 turn timeout changed");
 #elif defined(AGV_ROBOT_PROFILE_02)
     constexpr int forwardLeft = 190, forwardRight = 230;
     constexpr int reverseLeft = 190, reverseRight = 230, turn = 230;
+    static_assert(Config::TURN_TIMEOUT_MS == 2500, "Robot02 turn timeout changed");
 #else
 #error "Run the motor adapter with robot profile 01 or 02"
 #endif

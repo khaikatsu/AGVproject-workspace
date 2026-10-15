@@ -598,6 +598,22 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                 motion.rightDuty = diagnostic["rightDuty"].get<int>();
                 motion.headingSupported = diagnostic.value("headingSupported",false);
                 motion.stationDockingSupported = diagnostic.value("stationDockingSupported",false);
+                motion.reverseHomeSupported = diagnostic.value("reverseHomeSupported",false);
+                if(encoderBound && diagnostic.contains("liftSupported") && diagnostic["liftSupported"].is_boolean() &&
+                    diagnostic.contains("liftBusy") && diagnostic["liftBusy"].is_boolean() &&
+                    diagnostic.contains("liftCommandId") && diagnostic["liftCommandId"].is_number_integer() &&
+                    diagnostic.contains("liftState") && diagnostic["liftState"].is_string() &&
+                    diagnostic.contains("liftElapsedMs") && diagnostic["liftElapsedMs"].is_number_integer() &&
+                    diagnostic.contains("virtualCargo") && (diagnostic["virtualCargo"].is_boolean() || diagnostic["virtualCargo"].is_null())) {
+                    const auto command=diagnostic["liftCommandId"].get<int64_t>(),elapsed=diagnostic["liftElapsedMs"].get<int64_t>();
+                    if(command>=0 && command<=INT_MAX && elapsed>=0 && elapsed<=UINT32_MAX) {
+                        motion.liftPresent=true;motion.liftSupported=diagnostic["liftSupported"].get<bool>();
+                        motion.liftBusy=diagnostic["liftBusy"].get<bool>();motion.liftCommandId=static_cast<long>(command);
+                        motion.liftElapsedMs=static_cast<uint32_t>(elapsed);motion.liftState=diagnostic["liftState"].get<string>();
+                        motion.cargoKnown=diagnostic["virtualCargo"].is_boolean();
+                        motion.virtualCargo=motion.cargoKnown && diagnostic["virtualCargo"].get<bool>();
+                    }
+                }
                 motion.stationReady = diagnostic.value("stationReady",false);
                 motion.nodeOrdersSupported = diagnostic.value("nodeOrdersSupported",false);
                 motion.straightThroughSupported = diagnostic.value("straightThroughSupported",false);

@@ -107,11 +107,11 @@ function scheduleMapDocking() {
   });
 }
 const finite = (value,fallback = 0) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-const labels = {IDLE:'Sẵn sàng',WORKING:'Đang chạy',CHARGING_EN_ROUTE:'Đi tới trạm sạc',CHARGING:'Ở trạm sạc',
+const labels = {IDLE:'Sẵn sàng',WORKING:'Đang chạy',LIFTING:'Đang nâng hàng',LOWERING:'Đang hạ hàng',CHARGING_EN_ROUTE:'Đi tới trạm sạc',CHARGING:'Ở trạm sạc',
   BLOCKED:'Chờ đường',ERROR:'Lỗi / cần xác minh',OFFLINE:'Mất telemetry',UNKNOWN:'Chưa xác định',UNLOCALIZED:'Chờ quét RFID',
   submitting:'Chờ core xác nhận',unknown:'Chưa xác định kết quả',pending:'Chờ phân công',dispatched:'Đã giao xe',
   completed:'Hoàn thành',cancelled:'Đã hủy',interrupted:'Gián đoạn',rejected:'Bị từ chối'};
-const colors = {WORKING:'#3B82F6',IDLE:'#10B981',CHARGING:'#F59E0B',CHARGING_EN_ROUTE:'#F59E0B',
+const colors = {WORKING:'#3B82F6',LIFTING:'#F59E0B',LOWERING:'#F59E0B',IDLE:'#10B981',CHARGING:'#F59E0B',CHARGING_EN_ROUTE:'#F59E0B',
   ERROR:'#EF4444',BLOCKED:'#F97316',OFFLINE:'#64748B',UNKNOWN:'#64748B',UNLOCALIZED:'#F59E0B'};
 function fmtDate(value) {
   if (!value) return '—';
@@ -321,6 +321,8 @@ function renderFleet(agvs) {
     battery.style.color = a.battery_display_available !== true && batteryKnown && Number(batteryValue) <= 20 ? colors.ERROR : colors.IDLE;
     if (a.battery_display_available === true) battery.title = 'Ước tính từ điện áp; chưa dùng cho ngưỡng điều phối';
     const state = document.createElement('div');state.textContent = labels[a.state] || a.state || 'Chưa xác định';state.style.color = colors[a.state] || colors.UNKNOWN;
+    if(a.lift?.active&&a.lift.state==='PENDING')state.textContent='Đang gửi lệnh servo';
+    if(a.virtual_cargo===true){const cargo=document.createElement('small');cargo.textContent=a.virtual_cargo_known?'1 kiện ảo':'1 kiện ảo (chưa xác minh lại)';state.append(document.createElement('br'),cargo);}
     const age = document.createElement('small');age.dataset.robotAge = a.id;state.append(document.createElement('br'),age);
     if (a.id === '01') {
       const speed = document.createElement('small');speed.dataset.robotSpeed = a.id;
@@ -414,7 +416,7 @@ function updateWarehouseControls() {
 }
 async function warehouseAction(action,button) {
   const result=await control('POST','/api/agvs/01/warehouse-action',{action,warehouse:$('warehouseTarget').value},button);
-  if(result)toast(`Xe 01: ${action==='pickup'?'lấy':'hạ'} tại ${result.action.warehouse}, chờ5s rồi lùi ra ${result.action.gate}`);
+  if(result)toast(`Xe 01: ${action==='pickup'?'lấy':'hạ'} tại ${result.action.warehouse}, ${result.action.servo?'servo 5s':'chờ mô phỏng 5s (chưa có servo)'} rồi lùi ra ${result.action.gate}`);
 }
 function renderWarehouseActionStatus() {
   const test=lastState?.shift?.test_mode==='robot01';$('warehouseModeBtn').hidden=!test;$('orderModeBtn').hidden=test;
@@ -424,9 +426,9 @@ function renderWarehouseActionStatus() {
   const select=$('warehouseTarget'),key=JSON.stringify(warehouses);
   if(select.dataset.nodes!==key){const prior=select.value;select.replaceChildren();for(const node of warehouses)select.add(new Option(node,node));if(warehouses.includes(prior))select.value=prior;select.dataset.nodes=key;}
   const action=lastState?.warehouse_actions?.[0],robot=lastState?.fleet.agvs.find(robot=>robot.id==='01');
-  const names={dispatching:'Đang cấp tuyến tới kho',to_warehouse:'Đang đi tới kho',dispatching_exit:'Đang cấp lệnh lùi',to_gate:'Đang lùi ra gate',completed:'Đã ra gate; chờ lệnh tiếp theo',interrupted:'Thao tác gián đoạn'};
+  const names={dispatching:'Đang cấp tuyến tới kho',to_warehouse:'Đang đi tới kho',waiting_servo:'Chờ nhúng xác nhận dừng tại kho',dispatching_lift:'Đang gửi lệnh servo',handling:robot?.lift?.state==='PENDING'?'Chờ nhúng nhận lệnh':action?.action==='pickup'?'Đang nâng hàng (servo 5s)':'Đang hạ hàng (servo 5s)',dispatching_exit:'Đang cấp lệnh lùi',to_gate:'Đang lùi ra gate',completed:'Đã ra gate; chờ lệnh tiếp theo',interrupted:'Thao tác gián đoạn'};
   $('warehouseActionStatus').textContent=test&&!Array.isArray(lastState?.warehouse_actions)?'Cần khởi động lại gateway để nạp chức năng Lấy / hạ hàng.':action ? action.status==='waiting' ?
-    `Dừng tại ${action.warehouse}: còn ${Math.max(0,Math.ceil((Date.parse(action.service_until)-Date.now())/1000))}s` :
+    `Dừng tại ${action.warehouse}: còn ${Math.max(0,Math.ceil((Date.parse(action.service_until)-Date.now())/1000))}s (mô phỏng, chưa điều khiển servo)` :
     `${names[action.status]||action.status} · ${action.warehouse} → ${action.gate}${action.reason?' · '+action.reason:''}` :
     robot?.state==='IDLE'?'Xe 01 sẵn sàng. Chọn kho rồi bấm Lấy hàng hoặc Hạ hàng.':`Xe 01: ${robot?.error||robot?.state||'chưa có dữ liệu'}`;
   updateWarehouseControls();
@@ -828,6 +830,13 @@ function drawMap(map,agvs,prefix = '') {
       'stroke-width':selectedAgvId === robot.id ? 4 : 2,'stroke-dasharray':display.source.startsWith('encoder') ? '4 2' : 'none'}),
       svgElement('text',{x:-14,y:-43,class:'agv-label'},robot.id),svgElement('title',{},
         `${robot.id}: ${labels[robot.state] || robot.state}; ${display.source.startsWith('encoder') ? 'vị trí ước tính encoder; ' : ''}RFID gần nhất ${robot.node}; ${robotSpeedText(robot)}; đầu xe ${robot.heading_supported && headingLabels[robot.heading] || 'chưa biết'}`));
+    if(robot.virtual_cargo===true){
+      const cargo=svgElement('g',{'data-virtual-cargo':robot.id,opacity:robot.virtual_cargo_known&&robot.online!==false?1:0.45,'pointer-events':'none'});
+      cargo.append(svgElement('rect',{x:-7,y:-8,width:14,height:14,rx:1,fill:'#D99A46',stroke:'#5B3715','stroke-width':1.5}),
+        svgElement('path',{d:'M-7,-4 L7,-4 M0,-8 L0,-4',stroke:'#FFE0A3','stroke-width':2,fill:'none'}),
+        svgElement('title',{},'Kiện ảo theo chu kỳ servo; không phải cảm biến xác nhận hàng thật'));
+      group.append(cargo);
+    }
     if (robot.online && robot.heading_supported && headingLabels[robot.heading])
       group.append(svgElement('path',{d:'M18,-6 L29,-6 L29,-10 L40,0 L29,10 L29,6 L18,6 Z',
         transform:`rotate(${headingAngles[robot.heading]})`,fill:color,stroke:'#0B1220','stroke-width':1.5,

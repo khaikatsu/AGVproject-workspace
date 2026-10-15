@@ -51,7 +51,7 @@ inline bool straightThrough(const json& map, const std::string& from,
            connected(from,node) && connected(node,next);
 }
 inline json plan(const json& map, const std::string& node, const std::string& next,
-                 const std::string& front, bool stationTurn = false) {
+                 const std::string& front, bool stationTurn = false, bool reverseHomeSupported = false) {
     const int incoming = heading(front);
     if (incoming < 0) return nullptr;
     if (stationTurn) {
@@ -66,6 +66,13 @@ inline json plan(const json& map, const std::string& node, const std::string& ne
         if ((edge.at("from") == node && edge.at("to") == next) ||
             (edge.value("two_way",false) && edge.at("to") == node && edge.at("from") == next)) connected = true;
     if (outgoing < 0 || !connected) return nullptr;
+    if (reverseHomeSupported && node == "GS1" && next == "S1") {
+        const int targetFront = (outgoing+2)%4;
+        const int turn = (targetFront-incoming+4)%4;
+        return {{"maneuver",turn == 0 ? "STRAIGHT" : turn == 1 ? "RIGHT" : turn == 3 ? "LEFT" : "TURN_AROUND_RIGHT"},
+                {"turn_crossings",turn == 0 ? 0 : turn == 2 ? 1+(branch(map,node,(incoming+1)%4) ? 1 : 0) : 1},
+                {"reverse_after_turn",true}};
+    }
     const int delta = (outgoing-incoming+4)%4;
     if (delta == 0) return {{"maneuver","STRAIGHT"},{"turn_crossings",0}};
     if (delta == 1) return {{"maneuver","RIGHT"},{"turn_crossings",1}};

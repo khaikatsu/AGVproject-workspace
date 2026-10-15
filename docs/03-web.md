@@ -1,5 +1,7 @@
 # Phát triển web giám sát AGV
 
+15/10/2026, test servo xe01: trạng thái LIFTING/LOWERING hiện Đang nâng hàng/Đang hạ hàng, lift.state=PENDING hiện Đang gửi lệnh servo. Sau nhúng hoàn tất chu kỳ5s, virtual_cargo=true vẽ đúng một kiện trên marker và nhãn1kiệnảo; DONE_DOWN bỏ kiện. Khi mất độ tin cậy, dấu kiện cũ mờ/chưa xác minh, không giả là hàng thật. Nút lấy/hạ kho giữ tuyến tới kho và lùi gate; có capability mới chờ kết quả servo đúng lệnh, firmware cũ ghi rõ mô phỏng5s/chưa điều khiển servo. [ADR-057](decisions/ADR-057-robot01-servo-lift-test.md).
+
 14/10/2026, test 01: marker nét đứt là vị trí ước tính encoder giữa hai RFID, vòng nhỏ là RFID gần nhất. Tốc độ cm/s hiện ở đầu/bên dưới bản đồ và dòng xe 01; chưa đo/cũ là `—`. Web nối hai mẫu đã nhận bằng animation 180 ms, dừng/giữ marker và ghi dữ liệu cũ sau 1000 ms hoặc mất liên kết/lỗi. Chỉ RFID xác nhận node/hoàn thành. [ADR-050](decisions/ADR-050-robot01-encoder-position-speed.md) thay quy ước chấm chỉ ở node của xe 01 trong đoạn lịch sử bên dưới; mode khác giữ RFID.
 
 Yêu cầu mới test01 ngày10/10/2026: hai nút Lấy/Hạ riêng, chọn kho, tới kho/chờ5s/lùi gate; ẩn form/lịch sử đơn và không giữ xe bởi bản ghi cũ. Gate đứng chờ rồi xoay khi có tuyến tiếp. [ADR-045](decisions/ADR-045-standalone-warehouse-tests-without-orders.md) thay luồng đơn hàng test01 bên dưới.

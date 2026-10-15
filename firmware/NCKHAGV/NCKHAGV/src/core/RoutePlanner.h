@@ -10,6 +10,7 @@ enum class RouteTurn { Unknown, Straight, Left, Right, Reverse, TurnAround };
 struct RoutePlan {
     RouteTurn departure[Config::MAX_PATH_NODES]{};
     uint8_t turnCrossings[Config::MAX_PATH_NODES]{};
+    bool reverseAfterTurn[Config::MAX_PATH_NODES]{};
     uint8_t count = 0;
 };
 
@@ -91,6 +92,10 @@ inline bool bayExit(const char* from, const char* to) {
 inline bool dockingReverse(const char* from, const char* to) {
     return !station(from) && bayExit(from,to);
 }
+inline bool reverseHome(const char* from, const char* to) {
+    return Config::REVERSE_HOME_SUPPORTED && from && to &&
+        std::strcmp(from,"GS1") == 0 && std::strcmp(to,"S1") == 0;
+}
 inline bool straightThrough(const char* from, const char* current, const char* next) {
     if (!current || station(current) || bayGate(current) || dockingReverse(from,current)) return false;
     const auto incoming = edgeHeading(from,current), outgoing = edgeHeading(current,next);
@@ -108,8 +113,9 @@ inline bool reverseAllowed(const char* current, const CoreCommand& command, cons
                            bool bayTrial = Config::ENABLE_CORE_MOTION) {
     if (command.pathLength != route.count) return false;
     for (uint8_t i=0;i<route.count;++i)
-        if (route.departure[i] == RouteTurn::Reverse && !calibrated &&
-            !(bayTrial && dockingReverse(i ? command.path[i-1] : current,command.path[i]))) return false;
+        if ((route.departure[i] == RouteTurn::Reverse || route.reverseAfterTurn[i]) && !calibrated &&
+            !(bayTrial && (dockingReverse(i ? command.path[i-1] : current,command.path[i]) ||
+                          reverseHome(i ? command.path[i-1] : current,command.path[i])))) return false;
     return true;
 }
 
@@ -175,16 +181,24 @@ inline bool plan(const char* previous, const char* current, const CoreCommand& c
             else if (decision == RouteTurn::Reverse) decision = RouteTurn::Straight;
             else if (decision == RouteTurn::Straight) decision = RouteTurn::Reverse; // continue backing on the same line
         }
+        output.reverseAfterTurn[i] = reverseHome(from,to);
+        if (output.reverseAfterTurn[i]) {
+            // Face away from S1 on the user-confirmed GS1 line extension.
+            // Turn is physical rotation; translation is independently backward.
+            const auto front = explicitHeading ? (docking != RobotHeading::Unknown ? docking : confirmedHeading) :
+                edgeHeading(incoming,from,previousWasReverse);
+            decision = turnFromHeading(front,edgeHeading(from,to,true));
+        }
         if (decision == RouteTurn::Reverse && !dockingReverse(from,to)) {
             decision = RouteTurn::TurnAround;
         }
         if (decision == RouteTurn::TurnAround) {
-            const auto outgoing = edgeHeading(from,to);
+            const auto outgoing = edgeHeading(from,to,output.reverseAfterTurn[i]);
             const auto halfway = static_cast<RobotHeading>((static_cast<int>(outgoing)+2)%4+1);
             output.turnCrossings[i] = 1 + (physicalBranch(from,halfway) ? 1 : 0);
         }
         output.departure[i] = decision;
-        previousWasReverse = decision == RouteTurn::Reverse;
+        previousWasReverse = decision == RouteTurn::Reverse || output.reverseAfterTurn[i];
         // A claimed previous RFID that is inconsistent with the one-way graph is unsafe.
         if (incoming && incoming[0] && output.departure[i] == RouteTurn::Unknown) return false;
         from = to;

@@ -761,6 +761,12 @@ int main() {
             CHECK(record(fleet,"node-orders")["status"]=="dispatched"); // Receipt does not prove the turn or arrival.
             fleet.updateTelemetry("01","M2",-1,false);CHECK(record(fleet,"node-orders")["status"]=="completed");
             CHECK(NodeManeuver::plan(map.toJson(),"GS1","S1","W")["maneuver"]=="RIGHT");
+            CHECK(NodeManeuver::plan(map.toJson(),"GS1","S1","E",false,true)["maneuver"]=="RIGHT");
+            CHECK(NodeManeuver::plan(map.toJson(),"GS1","S1","W",false,true)["maneuver"]=="LEFT");
+            CHECK(NodeManeuver::plan(map.toJson(),"GS1","S1","N",false,true)["turn_crossings"]==2);
+            CHECK(NodeManeuver::plan(map.toJson(),"GS1","S1","S",false,true)["maneuver"]=="STRAIGHT");
+            CHECK(NodeManeuver::plan(map.toJson(),"GS1","S1","S",false,true)["reverse_after_turn"]==true);
+            CHECK(!NodeManeuver::plan(map.toJson(),"GS2","S2","E",false,true).contains("reverse_after_turn"));
             CHECK(NodeManeuver::plan(map.toJson(),"S1","S1","N",true)["maneuver"]=="STATION_TURN_RIGHT");
             CHECK(NodeManeuver::plan(map.toJson(),"GS1","M4","S").is_null()); // No axis-only shortcut to an unconnected node.
         }

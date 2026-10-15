@@ -25,6 +25,32 @@
       }
     }
   },
+  "reverse": {
+    "topic": "agv/01/diagnostic",
+    "payload_fragment": {
+      "version": 1,
+      "agvId": "01",
+      "node": "K5",
+      "nextNode": "G5",
+      "obstacle": true,
+      "obstacleDirection": "rear",
+      "ultrasonicCm": 12.0,
+      "frontUltrasonicCm": null,
+      "rearUltrasonicCm": 12.0
+    }
+  },
+  "switching_to_reverse": {
+    "topic": "agv/01/diagnostic",
+    "payload_fragment": {
+      "obstacle": false,
+      "obstacleDirection": "rear",
+      "ultrasonicCm": null,
+      "frontUltrasonicCm": null,
+      "rearUltrasonicCm": null,
+      "leftDuty": 0,
+      "rightDuty": 0
+    }
+  },
   "clear": {
     "topic": "agv/01/diagnostic",
     "payload_fragment": {

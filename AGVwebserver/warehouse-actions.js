@@ -3,7 +3,7 @@ const {shortestRoute}=require('./order-planner');
 const SERVICE_MS=5000;
 const finished=action=>['completed','interrupted'].includes(action.status);
 
-// Temporary warehouse tests. These actions do not create, carry or reserve orders.
+// Temporary warehouse tests; the servo cargo marker is not an order or a load sensor.
 function createWarehouseActions({getState,getSession,send,publish}) {
   const actions=[];let running=null,closed=false;
   const changed=()=>publish();
@@ -11,6 +11,23 @@ function createWarehouseActions({getState,getSession,send,publish}) {
   function at(state,action,node){const robot=state.fleet.agvs.find(robot=>robot.id===action.robot);
     return robot&&robot.online!==false&&robot.position_valid!==false&&!robot.error&&robot.state==='IDLE'&&!robot.task_id&&robot.node===node;}
   function complete(action){action.status='completed';action.task_id=null;action.completed_at=new Date().toISOString();changed();}
+  function servoReady(action){const robot=getState()?.fleet.agvs.find(robot=>robot.id===action.robot);
+    return robot?.node===action.warehouse&&robot.lift?.ready===true&&robot.lift.fresh===true&&robot.lift.observed_node===action.warehouse;}
+  async function startServo(action){
+    action.service_until=new Date(Date.now()+SERVICE_MS).toISOString();
+    action.status='dispatching_lift';changed();
+    try{
+      const result=await send({cmd:'warehouse_lift',agv_id:action.robot,node:action.warehouse,action:action.action});
+      if(!Number.isSafeInteger(result.command_id)||result.command_id<=0)throw Error('Core không trả command_id servo');
+      action.lift_command_id=result.command_id;action.lift_sent_at=Date.now();action.status='handling';changed();
+    }catch(error){interrupt(action,`Chưa xác định kết quả servo: ${error.message}`);throw error;}
+  }
+  async function beginService(action){
+    action.task_id=null;action.service_until=new Date(Date.now()+SERVICE_MS).toISOString();
+    if(!action.servo){action.status='waiting';changed();return;}
+    action.status='waiting_servo';action.lift_wait_started_at=Date.now();changed();
+    if(servoReady(action))await startServo(action);
+  }
   async function dispatch(action,target,exit){
     action.status=exit?'dispatching_exit':'dispatching';action.task_id=null;changed();
     try {
@@ -38,9 +55,9 @@ function createWarehouseActions({getState,getSession,send,publish}) {
     const route=shortestRoute(state.map,robot.node,warehouse),exit=shortestRoute(state.map,warehouse,gate);
     if(!Number.isFinite(route.cost)||!Number.isFinite(exit.cost))throw Object.assign(Error('Không có đường tới kho hoặc ra gate'),{status:409});
     const action={id:randomUUID(),robot:robotId,action:body.action,warehouse,gate,status:'dispatching',task_id:null,
-      core_session_id:getSession(),route:route.path,exit_route:exit.path,reason:'',created:new Date().toISOString()};
+      core_session_id:getSession(),servo:robot.lift?.supported===true,route:route.path,exit_route:exit.path,reason:'',created:new Date().toISOString()};
     actions.push(action);if(actions.length>20)actions.shift();
-    if(robot.node===warehouse){action.status='waiting';action.service_until=new Date(Date.now()+SERVICE_MS).toISOString();changed();}
+    if(robot.node===warehouse)await beginService(action);
     else await dispatch(action,warehouse,false);
     return action;
   }
@@ -50,6 +67,23 @@ function createWarehouseActions({getState,getSession,send,publish}) {
     if(!state||getSession()!==action.core_session_id||state.shift?.phase!=='RUNNING'){interrupt(action,'Mất dữ liệu Core hoặc ca đã thay đổi; không phát lại thao tác');return;}
     const robot=state.fleet.agvs.find(robot=>robot.id===action.robot);
     if(!robot||robot.online===false||robot.position_valid===false||robot.state==='ERROR'||robot.error){interrupt(action,'Xe mất vị trí tin cậy hoặc đang lỗi');return;}
+    if(action.status==='waiting_servo'){
+      if(!at(state,action,action.warehouse)){interrupt(action,'Xe không còn đứng chờ tại kho');return;}
+      if(servoReady(action))await startServo(action);
+      else if(Date.now()-action.lift_wait_started_at>5000)interrupt(action,'Chưa có diagnostic servo sẵn sàng tại kho');
+      return;
+    }
+    if(action.status==='handling'){
+      if(robot.node!==action.warehouse){interrupt(action,'Xe rời kho khi đang nâng/hạ');return;}
+      const lift=robot.lift,up=action.action==='pickup';
+      if(lift?.command_id===action.lift_command_id&&lift.state==='INTERRUPTED'){interrupt(action,'Servo bị gián đoạn');return;}
+      if(lift?.fresh===true&&lift.command_id===action.lift_command_id&&lift.state===(up?'DONE_UP':'DONE_DOWN')&&
+        lift.active===false&&robot.virtual_cargo_known===true&&robot.virtual_cargo===up&&at(state,action,action.warehouse)){
+        await dispatch(action,action.gate,true);return;
+      }
+      if(Date.now()-action.lift_sent_at>15000)interrupt(action,'Không nhận hoàn tất servo đúng lệnh; không tự lùi');
+      return;
+    }
     if(action.status==='waiting'){
       if(!at(state,action,action.warehouse)){interrupt(action,'Xe rời kho trong lúc chờ5s');return;}
       if(Date.now()>=Date.parse(action.service_until))await dispatch(action,action.gate,true);
@@ -62,7 +96,7 @@ function createWarehouseActions({getState,getSession,send,publish}) {
     const node=action.status==='to_gate'?action.gate:action.warehouse;
     if(!at(state,action,node)){interrupt(action,`Task hoàn thành nhưng chưa xác nhận RFID tại ${node}`);return;}
     if(action.status==='to_gate')complete(action);
-    else{action.status='waiting';action.service_until=new Date(Date.now()+SERVICE_MS).toISOString();changed();}
+    else await beginService(action);
   }
   function tick(){if(closed)return Promise.resolve();if(running)return running;
     running=advance().catch(error=>{const action=actions.find(action=>!finished(action));if(action)interrupt(action,`Không thể tiếp tục thao tác kho: ${error.message}`);}).finally(()=>running=null);return running;}

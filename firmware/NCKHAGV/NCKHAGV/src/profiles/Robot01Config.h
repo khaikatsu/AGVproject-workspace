@@ -1,7 +1,7 @@
 #pragma once
 
 // Xe 01, môi trường esp32dev_two_robot_bench_01.
-// Tuning xe 01: tiến 220, lùi 190; xoay giảm nhẹ theo yêu cầu 14/10/2026.
+// Tuning xe 01: tiến 220, lùi 190; xoay 210 theo yêu cầu 15/10/2026.
 // Chân GPIO và chốt an toàn ở Config.h.
 #define AGV_PROFILE_ID "01"
 // Encoder OUT: trái GPIO16, phải GPIO4 theo sketch thử xe 01 ngày 14/10.
@@ -12,8 +12,8 @@
 #define AGV_BENCH_MOTOR_SPEED 220
 #define AGV_BENCH_LEFT_SPEED_TRIM -40
 #define AGV_BENCH_RIGHT_SPEED_TRIM 0
-// Giảm 220 -> 200 để có thêm thời gian lấy mẫu line khi pivot; cần thử trên sàn.
-#define AGV_BENCH_TURN_SPEED 200
+// Tăng 200 -> 210 theo yêu cầu mới nhất; thời hạn xoay vẫn 2500 ms.
+#define AGV_BENCH_TURN_SPEED 210
 #define AGV_BENCH_TURN_LEFT_SPEED_TRIM 0
 #define AGV_BENCH_TURN_RIGHT_SPEED_TRIM 0
 #define AGV_BENCH_CORRECTION_SPEED 220

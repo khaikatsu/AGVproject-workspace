@@ -47,7 +47,8 @@ bool CoreNavigator::start(const char* current, const CoreCommand& command, const
             route.departure[i] == RouteTurn::Unknown ||
             (route.departure[i] == RouteTurn::TurnAround &&
              (route.turnCrossings[i] < 1 || route.turnCrossings[i] > 2))) return false;
-        if (command.passThrough[i] && (i+1 >= route.count || route.departure[i] == RouteTurn::Reverse ||
+        if (route.reverseAfterTurn[i] && !RoutePlanner::reverseHome(i ? command.path[i-1] : current,command.path[i])) return false;
+        if (command.passThrough[i] && (i+1 >= route.count || route.reverseAfterTurn[i] || route.departure[i] == RouteTurn::Reverse ||
             route.departure[i+1] != RouteTurn::Straight ||
             !RoutePlanner::straightThrough(i ? command.path[i-1] : current,command.path[i],command.path[i+1]))) return false;
     }
@@ -57,6 +58,7 @@ bool CoreNavigator::start(const char* current, const CoreCommand& command, const
         turns_[i] = route.departure[i];
         turnCrossings_[i] = route.turnCrossings[i];
         passThrough_[i] = command.passThrough[i];
+        reverseAfterTurn_[i] = route.reverseAfterTurn[i];
     }
     index_ = 0;
     requireNodeOrders_ = requireNodeOrders;
@@ -113,10 +115,23 @@ void CoreNavigator::reachedNode(const char* node, uint32_t now, const ControlInp
         return;
     }
     const bool through = input && canPassThrough(node,*input);
+    const bool parkedReverse = reverseAfterTurn_[index_];
+    // A tag seen while rotating/waiting cannot prove the reverse leg happened.
+    if (parkedReverse && phase_ != Phase::Following) { fault(ErrorCode::UnexpectedNode); return; }
     AGVMath::copyText(current_, sizeof(current_), node);
     ++index_;
     nodeOrderReceived_ = false;
     if (RoutePlanner::station(node)) {
+        if (parkedReverse) {
+            if (index_ == length_) stop();
+            else {
+                phase_ = Phase::WaitingGrant;
+                stoppedAtMs_ = segmentStartedMs_ = now;
+                oldLineDeparted_ = lineLossPending_ = false;
+            }
+            stationOriented_ = true;
+            return;
+        }
         // The front enters S toward the tag. Turn physically at the station
         // before declaring readiness; the next route then departs forward.
         stoppedAtMs_ = now;
@@ -246,6 +261,9 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
             if (crossedLines_ >= required) {
                 phase_ = Phase::Following;
                 segmentStartedMs_ = in.now;
+                // Give the controller one STOP cycle to switch to the rear
+                // sonar and acquire a fresh sample before any reverse PWM.
+                if (reverseAfterTurn_[index_]) return MotorAction::Stop;
             } else return MotorAction::PivotRight;
         } else return turns_[index_] == RouteTurn::Left ? MotorAction::PivotLeft : MotorAction::PivotRight;
     }
@@ -306,7 +324,7 @@ bool CoreNavigator::authorizeNodeOrder(const CoreCommand& order) {
     const uint8_t crossings = parking ? 1 : turns_[index_] == RouteTurn::TurnAround ? turnCrossings_[index_] :
         (turns_[index_] == RouteTurn::Left || turns_[index_] == RouteTurn::Right ? 1 : 0);
     if (std::strcmp(order.nextNode,next) != 0 || std::strcmp(order.maneuver,maneuver) != 0 ||
-        order.turnCrossings != crossings) return false;
+        order.turnCrossings != crossings || order.reverseAfterTurn != (!parking && reverseAfterTurn_[index_])) return false;
     nodeOrderReceived_ = true;
     return true;
 }

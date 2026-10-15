@@ -23,7 +23,7 @@
 using json = nlohmann::json;
 using Clock = std::chrono::steady_clock;
 
-enum class AGVState { IDLE, WORKING, CHARGING_EN_ROUTE, CHARGING, BLOCKED, AGV_ERROR, OFFLINE, UNLOCALIZED };
+enum class AGVState { IDLE, WORKING, CHARGING_EN_ROUTE, CHARGING, BLOCKED, AGV_ERROR, OFFLINE, UNLOCALIZED, LIFTING, LOWERING };
 
 inline std::string toString(AGVState s) {
     switch (s) {
@@ -34,6 +34,8 @@ inline std::string toString(AGVState s) {
         case AGVState::BLOCKED: return "BLOCKED";
         case AGVState::AGV_ERROR: return "ERROR";
         case AGVState::UNLOCALIZED: return "UNLOCALIZED";
+        case AGVState::LIFTING: return "LIFTING";
+        case AGVState::LOWERING: return "LOWERING";
         default: return "OFFLINE";
     }
 }
@@ -79,6 +81,11 @@ struct AGV {
     std::string sonarNextNode;
     long sonarRouteCommandId = 0;
     Clock::time_point sonarSeen{};
+    bool liftSupported=false,liftReady=false,liftActive=false,virtualCargoKnown=false,virtualCargo=false;
+    long liftCommandId=0;
+    std::string liftState="IDLE",liftNode,liftAction,liftObservedNode;
+    Clock::time_point liftSeen{},liftStarted{};
+    uint32_t liftBoot=0,liftConnection=0;
 };
 
 struct MotionDiagnostic {
@@ -89,6 +96,11 @@ struct MotionDiagnostic {
     int leftDuty = INT_MAX, rightDuty = INT_MAX;
     bool headingSupported = false;
     bool stationDockingSupported = false, stationReady = false;
+    bool reverseHomeSupported = false;
+    bool liftSupported=false,liftBusy=false,liftPresent=false,cargoKnown=false,virtualCargo=false;
+    long liftCommandId=0;
+    uint32_t liftElapsedMs=0;
+    std::string liftState;
     std::string heading, headingNode, headingSource;
     bool nodeOrdersSupported = false, awaitingNodeOrder = false, stationTurnRequired = false;
     long routeCommandId = 0;
@@ -462,8 +474,14 @@ public:
     bool bindEncoderSession(const std::string& id, uint32_t boot, uint32_t connection, uint32_t uptime) {
         std::lock_guard<std::mutex> lk(mtx_);
         const auto it = fleet_.find(id);
-        if (id == "01" && trialRobotId_ == "01" && it != fleet_.end())
-            return it->second.encoder.bind(boot, connection, uptime);
+        if (id == "01" && trialRobotId_ == "01" && it != fleet_.end()) {
+            const bool changed=it->second.encoder.boot && (it->second.encoder.boot!=boot || it->second.encoder.connection!=connection);
+            const bool bound=it->second.encoder.bind(boot,connection,uptime);
+            if(bound && changed) {
+                it->second.virtualCargoKnown=false;it->second.liftSupported=false;
+            }
+            return bound;
+        }
         return false;
     }
     // QoS0 error events may be lost. A current, bound diagnostic must not leave
@@ -513,6 +531,7 @@ public:
     // Diagnostic khong retained duoc gui ngay sau telemetry. Chi phuc hoi ca
     // thu hai xe tai tram rieng; telemetry pipe mot minh khong noi len loi MCU.
     void observeMotionDiagnostic(const std::string& id, const MotionDiagnostic& diagnostic) {
+        observeLift(id,diagnostic);
         std::string sonarEvent;
         {
             std::lock_guard<std::mutex> lk(mtx_);
@@ -723,7 +742,9 @@ public:
             }
             return;
         }
-        auto order = NodeManeuver::plan(map_.toJson(),node,next,a.heading,d.stationTurnRequired);
+        if (id == "01" && d.reverseHomeSupported && d.stationTurnRequired && node == "S1") return;
+        auto order = NodeManeuver::plan(map_.toJson(),node,next,a.heading,d.stationTurnRequired,
+                                      id == "01" && d.reverseHomeSupported);
         if (order.is_null()) return;
         order["node"] = node; order["next_node"] = next;
         order["route_cmd_id"] = a.routeCommandId; order["path_index"] = step;
@@ -859,6 +880,70 @@ public:
     // Khác addTask(): KHÔNG tự tìm "xe gần nhất", mà điều khiển ĐÚNG agvId do
     // người dùng chỉ định. Nếu xe đang làm task khác, task cũ được TRẢ VỀ hàng đợi.
     // Trả về "" nếu thành công, hoặc chuỗi mô tả lỗi nếu thất bại.
+    // A physical servo operation has its own cmd_id; receipt ACK never completes it.
+    std::string startLift(const std::string& id,const std::string& node,bool up,long& commandId) {
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            auto it=fleet_.find(id);
+            if(id!="01" || trialRobotId_!="01" || it==fleet_.end()) return "Chi test servo xe01";
+            auto& a=it->second;
+            if(!acceptingTasks_ || !networkAvailable_ || !tasks_.empty() || !a.hasTelemetry || !a.positionValid ||
+                Clock::now()-a.lastSeen>offlineTimeout_ || a.currentNode!=node || node.size()!=2 || node[0]!='K' ||
+                node[1]<'1' || node[1]>'6' || a.state!=AGVState::IDLE || a.liftActive || !a.lastError.empty() ||
+                !a.taskId.empty() || !a.finalTarget.empty() || !a.activePath.empty() || !a.uncertainPath.empty())
+                return "Servo can xe dung yen dung kho, khong task hoac loi";
+            if(!a.liftSupported || !a.liftReady || a.liftObservedNode!=node || Clock::now()-a.liftSeen>std::chrono::seconds(3)) return "Firmware servo chua san sang";
+            a.liftActive=true;a.liftState="PENDING";a.liftNode=node;a.liftAction=up?"pickup":"dropoff";
+            a.liftStarted=Clock::now();a.liftBoot=a.encoder.boot;a.liftConnection=a.encoder.connection;
+            a.state=up?AGVState::LIFTING:AGVState::LOWERING;
+            commandId=sendCommand(a,up?"LIFT_UP":"LIFT_DOWN",{{"node",node}});
+            a.liftCommandId=commandId;
+            if(commandId<=0) {a.liftActive=false;a.liftState="INTERRUPTED";return "Khong phat duoc lenh servo";}
+        }
+        notify();return "";
+    }
+
+    void observeLift(const std::string& id,const MotionDiagnostic& d) {
+        bool changed=false;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            auto it=fleet_.find(id);
+            if(id!="01" || trialRobotId_!="01" || it==fleet_.end() || !d.liftPresent || !networkAvailable_) return;
+            auto& a=it->second;
+            const bool healthy=d.wifi && d.mqtt && d.error=="NONE" && d.node==a.currentNode && a.positionValid &&
+                d.rfidAgeMs!=UINT32_MAX && d.motor=="STOP" && d.leftDuty==0 && d.rightDuty==0;
+            const bool supported=d.liftSupported && healthy;
+            changed=a.liftSupported!=supported;a.liftSupported=supported;a.liftSeen=Clock::now();
+            changed=changed || a.liftObservedNode!=d.node || a.liftReady!=(supported && !d.liftBusy && !d.taskActive && d.state=="AGV_IDLE");
+            a.liftObservedNode=d.node;
+            a.liftReady=supported && !d.liftBusy && !d.taskActive && d.state=="AGV_IDLE";
+            if(!a.liftActive && d.liftBusy && healthy) {
+                a.state=AGVState::AGV_ERROR;a.lastError="Servo dang chay ngoai lenh hien tai; can xac minh";
+                a.virtualCargoKnown=false;sendCommand(a,"WAIT");changed=true;
+            }
+            if(a.liftActive) {
+                const bool sameBoot=a.liftBoot==a.encoder.boot && a.liftConnection==a.encoder.connection;
+                const bool matching=d.liftCommandId==a.liftCommandId;
+                if(!healthy || !sameBoot || !d.liftSupported || (matching && d.liftState=="INTERRUPTED")) {
+                    interruptWorkNoLock(a,"Servo interrupted");a.state=AGVState::AGV_ERROR;
+                    a.lastError="Servo gian doan; can xac minh co cau";sendCommand(a,"WAIT");changed=true;
+                } else if(matching) {
+                    const bool up=a.liftAction=="pickup";
+                    const auto busyState=up?"LIFTING":"LOWERING",doneState=up?"DONE_UP":"DONE_DOWN";
+                    if(d.liftBusy && d.taskActive && d.liftState==busyState && d.state==(up?"AGV_LOADING":"AGV_UNLOADING")) {
+                        changed=changed||a.liftState!=busyState;a.liftState=busyState;
+                    } else if(!d.liftBusy && !d.taskActive && d.state=="AGV_IDLE" && d.liftState==doneState &&
+                        d.liftElapsedMs>=5000 && d.cargoKnown && d.virtualCargo==up &&
+                        Clock::now()-a.liftStarted>=std::chrono::milliseconds(5000)) {
+                        a.liftActive=false;a.liftState=doneState;a.virtualCargoKnown=true;a.virtualCargo=up;
+                        a.state=AGVState::IDLE;changed=true;
+                    }
+                }
+            }
+        }
+        if(changed) notify();
+    }
+
     std::string directGoto(const std::string& agvId, const std::string& targetNode, const std::string& taskId = "", int priority = 0) {
         if (!map_.nodeExists(targetNode)) return "Node dich khong ton tai: " + targetNode;
         bool requeued = false;
@@ -870,6 +955,7 @@ public:
                 return "Khong tim thay AGV: " + agvId;
             AGV& agv = it->second;
             if (monitorOnlyRobots_.count(agvId)) return "Xe chi giam sat; khong nhan lenh di chuyen";
+            if(agv.liftActive) return "Xe dang nang/ha hang; cho servo hoan tat";
             if (!trialRobotId_.empty() && agvId != trialRobotId_) return "Che do thu chi cho phep xe " + trialRobotId_;
             if (twoRobotTrial_ && agvId != "01" && agvId != "02") return "Thu hai xe chi cho phep 01 va 02";
             if (!taskId.empty() && taskRecords_.count(taskId)) return "task_id da ton tai";
@@ -974,6 +1060,7 @@ public:
     //  - giao task đang chờ cho xe rảnh gần nhất
     //  - kiểm tra pin toàn đội xe
     void tick() {
+        checkLiftTimeouts();
         pruneTaskRecords();
         if (map_.expireObstacles()) notify();
         checkTimeouts();
@@ -1032,6 +1119,12 @@ public:
                 {"battery_display_available", a.batteryDisplayAvailable},
                 {"state", toString(a.state)}, {"path", a.activePath},
                 {"target", a.finalTarget}, {"priority", a.isPriorityVehicle},
+                {"lift",{{"supported",a.liftSupported && networkAvailable_ && now-a.liftSeen<=std::chrono::seconds(3)},
+                    {"ready",a.liftReady && networkAvailable_ && a.liftObservedNode==a.currentNode && now-a.liftSeen<=std::chrono::seconds(3)},
+                    {"observed_node",a.liftObservedNode},
+                    {"active",a.liftActive},{"state",a.liftState},{"command_id",a.liftCommandId},{"node",a.liftNode},
+                    {"action",a.liftAction},{"fresh",networkAvailable_ && now-a.liftSeen<=std::chrono::seconds(3)}}},
+                {"virtual_cargo",a.virtualCargo}, {"virtual_cargo_known",a.virtualCargoKnown},
                 {"last_seen_s", a.hasTelemetry ? json(silentSec) : json(nullptr)},
                 {"task_id", a.taskId}, {"position_valid", a.positionValid},
                 {"battery_measured", a.batteryMeasured}, {"error", a.lastError},
@@ -1141,11 +1234,27 @@ private:
 
     // An uncertain robot can still be moving. Do not automatically dispatch its task elsewhere.
     bool interruptWorkNoLock(AGV& a, const std::string& reason) {
+        if(a.liftActive) {a.liftActive=false;a.liftState="INTERRUPTED";a.virtualCargoKnown=false;}
         bool interrupted = !a.taskId.empty();
         if (interrupted) setTaskStatusNoLock(a.taskId, "interrupted", a.id, reason);
         if (a.uncertainPath.empty()) a.uncertainPath = a.activePath;
         a.taskId.clear(); a.activePath.clear(); a.finalTarget.clear(); a.blockedResume = AGVState::IDLE;
         return interrupted;
+    }
+
+    void checkLiftTimeouts() {
+        bool changed=false;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            for(auto& kv:fleet_) {
+                auto& a=kv.second;
+                if(a.liftActive && Clock::now()-a.liftStarted>std::chrono::seconds(12)) {
+                    interruptWorkNoLock(a,"Servo completion timeout");a.state=AGVState::AGV_ERROR;
+                    a.lastError="Khong nhan hoan tat servo; can xac minh";sendCommand(a,"WAIT");changed=true;
+                }
+            }
+        }
+        if(changed) notify();
     }
 
     // PHẢI gọi khi đã giữ mtx_
@@ -1285,7 +1394,7 @@ private:
     bool dispatchableNoLock(const AGV& a) const {
         return !monitorOnlyRobots_.count(a.id) && (trialRobotId_.empty() || a.id == trialRobotId_) &&
                (!twoRobotTrial_ || a.id == "01" || a.id == "02") &&
-               acceptingTasks_ && networkAvailable_ && a.state == AGVState::IDLE &&
+               acceptingTasks_ && networkAvailable_ && !a.liftActive && a.state == AGVState::IDLE &&
                (supervisedTrialNoLock() || (a.batteryMeasured && a.battery >= resumeBattery_)) && a.hasTelemetry && a.positionValid &&
                Clock::now() - a.lastSeen <= offlineTimeout_ && !a.currentNode.empty();
     }

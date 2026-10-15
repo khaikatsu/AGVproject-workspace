@@ -34,7 +34,9 @@ public:
     uint8_t pathIndex() const { return index_; }
     uint8_t pathLength() const { return length_; }
     bool segmentReverse() const {
-        return active() && index_ < length_ && turns_[index_] == RouteTurn::Reverse;
+        return active() && index_ < length_ && (turns_[index_] == RouteTurn::Reverse ||
+            (reverseAfterTurn_[index_] && (phase_ == Phase::Following ||
+             (phase_ == Phase::WaitingGrant && turns_[index_] == RouteTurn::Straight))));
     }
 private:
     enum class Phase { Idle, WaitingGrant, Turning, Following, StationDwell, StationTurning, Fault };
@@ -47,6 +49,7 @@ private:
     RouteTurn turns_[Config::MAX_PATH_NODES]{};
     uint8_t turnCrossings_[Config::MAX_PATH_NODES]{};
     bool passThrough_[Config::MAX_PATH_NODES]{};
+    bool reverseAfterTurn_[Config::MAX_PATH_NODES]{};
     bool stationOriented_ = false;
     uint8_t crossedLines_ = 0;
     uint32_t lastCrossingMs_ = 0;

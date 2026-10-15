@@ -1,5 +1,13 @@
 # Tích hợp HC-SR04 xe 01 — 15/10/2026
 
+REQ-ROBOT01-SONAR-05, ảnh người dùng từ bản diagnostic: front active1, triggers225/242/258, edges451/484/517, pulse_us47487/47494/47489, tuổi0/0/31ms, result INVALID_PULSE. Rear inactive/triggers0 là đúng hướng. Có tín hiệu ECHO tới bộ đọc, nhưng xung47,5ms vượt hạn45ms của bản trước; không phải mẫu stale trong ảnh. Hạn mới60ms, cutoff tính khoảng cách vẫn30ms; không biến xung dài thành số cm, HIGH quá hạn vẫn lỗi. Regression đúng độ rộng log fail trước/PASS sau; 3 host probe PASS. Bản mới `20261015-robot01-sonar-47ms-fix`; chưa nạp/đo lại với vật ở30cm. Cần xác nhận log RANGE khi có vật và NO_TARGET_PULSE khi ngoài tầm trước chạy tuyến.
+
+Xác minh cuối bản `20261015-robot01-sonar-no-echo-fix`: regression S1→GS1, HAL, directional host PASS; native01 27/27, native02 26/26 và build ESP32 01/02 PASS. RAM xe01 57300 byte, flash 956949 byte. Chưa nạp/thử lại xe thật.
+
+REQ-ROBOT01-SONAR-03: người dùng báo xe tiến từ S1 tới GS1 dừng chuẩn bị xoay rồi ULTRASONIC_INVALID dù không có vật. Log mới nhất của lần lỗi là direct_goto 12:46:21 → ULTRASONIC_INVALID 12:46:24; diagnostic sau reboot có build directional-sonar và IDLE/NONE/UNKNOWN, không là trace lỗi cũ. Regression `tests/sonar-host/no_echo_gate.cpp` tái hiện xung no-target 38 ms bị chốt invalid ở 30 ms, fail trước sửa/PASS sau sửa; kiểm tra cùng tuyến/cùng ID tiếp tục pivot và vật thật 10 cm vẫn dừng, HIGH quá 45 ms vẫn lỗi. Bản mới `20261015-robot01-sonar-no-echo-fix` ở thư mục `.pio/build/esp32dev_two_robot_bench_01`; chưa nạp/đo trên xe, chưa khẳng định nguyên nhân vật lý duy nhất. Bộ đóng gói cũ bên dưới không tự cập nhật.
+
+Cập nhật REQ-ROBOT01-SONAR-02: bản mới `20261015-robot01-directional-sonar` chỉ kích sau khi chuẩn bị/đang lùi hoặc dừng chờ cản sau, các trường hợp khác kích trước. Đổi hướng dừng motor, xóa echo/mẫu cũ, chờ yên 50 ms và chờ mẫu mới tối đa 200 ms. Chưa nạp/thử xe thật. Host scheduler/HAL, native 01 27/27 và 02 26/26, build ESP32 01/02 PASS. Ảnh mới tại `firmware/NCKHAGV/NCKHAGV/.pio/build/esp32dev_two_robot_bench_01/firmware.bin`; thư mục đóng gói/manifest của bản dual-sonar cũ bên dưới chưa cập nhật và không đại diện cho bản mới. [Chi tiết](decisions/ADR-055-robot01-dual-sonar-edge-warning.md).
+
 ## Bản đã chuẩn bị
 
 FirmwareBuild `20261015-robot01-dual-sonar`, env `esp32dev_two_robot_bench_01`; bộ ảnh và Core đã kiểm thử ở `build/robot01-dual-sonar/`. `manifest.json` ghi hash SHA-256, chân, ngưỡng và kết quả kiểm thử; `uploaded=false`, `physical_test_verified=false`.

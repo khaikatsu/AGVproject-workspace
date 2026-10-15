@@ -143,6 +143,8 @@ public:
                 else if (state == "ERROR") reason = "Can xac minh xe / xoa loi";
                 else if (!a->value("task_id","").empty()) reason = "Cho hoan thanh task hien tai";
                 else if (state == "BLOCKED") reason = "Cho duong ve tram sac";
+                else if (state == "LIFTING" || state == "LOWERING") reason = a->contains("lift") && (*a)["lift"].value("state","")=="PENDING"
+                    ? "Cho nhung nhan lenh servo" : state=="LIFTING" ? "Dang nang hang" : "Dang ha hang";
                 else if (!verified) reason = "Dang ve tram " + home.second;
                 else if (ownsZone) reason = "Cho xac nhan roi mutex zone";
                 else if (ready) reason = "Da xac minh tai tram";

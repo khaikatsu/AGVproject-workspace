@@ -15,7 +15,9 @@
         "WAIT",
         "CHARGE_START",
         "RESET_FAULT",
-        "NODE_ORDER"
+        "NODE_ORDER",
+        "LIFT_UP",
+        "LIFT_DOWN"
       ]
     },
     "cmd_id": {
@@ -43,9 +45,11 @@
     "node": {"type":"string","minLength":1,"maxLength":7},
     "next_node": {"type":"string","minLength":1,"maxLength":7},
     "maneuver": {"enum":["STRAIGHT","LEFT","RIGHT","REVERSE","TURN_AROUND_RIGHT","STATION_TURN_RIGHT"]},
-    "turn_crossings": {"type":"integer","minimum":0,"maximum":2}
+    "turn_crossings": {"type":"integer","minimum":0,"maximum":2},
+    "reverse_after_turn": {"type":"boolean","default":false}
   },
   "allOf": [
+    {"if":{"properties":{"cmd":{"enum":["LIFT_UP","LIFT_DOWN"]}}},"then":{"required":["node"],"properties":{"node":{"pattern":"^K[1-6]$"}}}},
     {
       "if": {
         "properties": {
@@ -66,6 +70,7 @@
       "then": {
         "required":["route_cmd_id","path_index","node","next_node","maneuver","turn_crossings"],
         "allOf":[
+          {"if":{"required":["reverse_after_turn"],"properties":{"reverse_after_turn":{"const":true}}},"then":{"properties":{"node":{"const":"GS1"},"next_node":{"const":"S1"},"maneuver":{"enum":["STRAIGHT","LEFT","RIGHT","TURN_AROUND_RIGHT"]}}}},
           {"if":{"properties":{"maneuver":{"enum":["LEFT","RIGHT","STATION_TURN_RIGHT"]}}},"then":{"properties":{"turn_crossings":{"const":1}}}},
           {"if":{"properties":{"maneuver":{"enum":["STRAIGHT","REVERSE"]}}},"then":{"properties":{"turn_crossings":{"const":0}}}},
           {"if":{"properties":{"maneuver":{"const":"TURN_AROUND_RIGHT"}}},"then":{"properties":{"turn_crossings":{"minimum":1}}}}
