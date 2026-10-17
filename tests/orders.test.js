@@ -80,6 +80,19 @@ test('startup solo selection excludes the closer inactive robot from warehouse o
   }
 });
 
+test('unified scoped operation never selects a non-participating robot',async()=>{
+  const commands=[],state={map:selectionMap,fleet:{agvs:[
+    {id:'01',node:'S1',state:'IDLE',online:true,position_valid:true,participating:true},
+    {id:'02',node:'S2',state:'IDLE',online:true,position_valid:true,participating:false}
+  ],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING',test_mode:'normal',operation_profile:'scoped',active_robot_ids:['01','02']},mqtt_connected:true};
+  const service=createOrderService({db:{getOrders:()=>[],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'scoped',
+    send:async payload=>{commands.push(payload);return {task_id:'scoped-task'};},publish:()=>{}});
+  try{
+    const order=service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]});await service.tick();
+    assert.equal(order.items[0].robot,'01');assert.equal(commands[0].agv_id,'01');
+  }finally{await service.close();}
+});
+
 test('multi-warehouse matching respects quantities, directed costs and validation',()=>{
   const plan = planOrder(map,{pickups:[{pickup:'K1',quantity:2},{pickup:'K2',quantity:1}],
     deliveries:[{dropoff:'K3',quantity:1},{dropoff:'K4',quantity:2}]});

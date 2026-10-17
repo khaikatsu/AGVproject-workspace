@@ -53,6 +53,8 @@ struct AGV {
     bool batteryMeasured = false;
     int batteryDisplayPercent = -1;
     bool batteryDisplayAvailable = false;
+    bool batteryFromDiagnostic = false;
+    Clock::time_point batteryDiagnosticSeen{};
     bool needsRecharge = false;
     std::string lastError;
     std::vector<std::string> uncertainPath;
@@ -208,12 +210,25 @@ public:
         if (!id.empty() && id != "01" && id != "02") throw std::invalid_argument("Xe thu phai la 01 hoac 02");
         std::lock_guard<std::mutex> lk(mtx_); trialRobotId_ = id;
     }
+    // Pham vi van hanh thong nhat: cung mot Core/luat an toan, chi khac danh sach
+    // robot duoc phep nhan lenh. Tap rong giu nghia tuong thich "tat ca robot".
+    void setActiveRobots(const std::unordered_set<std::string>& ids) {
+        for (const auto& id : ids)
+            if (id != "01" && id != "02") throw std::invalid_argument("AGV active phai la 01 hoac 02");
+        std::lock_guard<std::mutex> lk(mtx_); activeRobotIds_ = ids;
+    }
+    bool isActiveRobot(const std::string& id) {
+        std::lock_guard<std::mutex> lk(mtx_); return activeRobotNoLock(id);
+    }
     void setMonitorOnlyRobot(const std::string& id) {
         std::lock_guard<std::mutex> lk(mtx_);
         monitorOnlyRobots_.insert(id);
     }
     bool acceptingTasks() { std::lock_guard<std::mutex> lk(mtx_); return acceptingTasks_; }
     bool networkAvailable() { std::lock_guard<std::mutex> lk(mtx_); return networkAvailable_; }
+    void setBatteryTestBypass(bool value) { std::lock_guard<std::mutex> lk(mtx_); batteryTestBypass_ = value; }
+    bool batteryGateEnabled() { std::lock_guard<std::mutex> lk(mtx_); return !batteryTestBypass_; }
+    void setAutomaticChargingEnabled(bool value) { std::lock_guard<std::mutex> lk(mtx_); automaticChargingEnabled_ = value; }
     void setHomeStations(const std::unordered_map<std::string,std::string>& homes) {
         std::lock_guard<std::mutex> lk(mtx_); homeStations_ = homes;
     }
@@ -241,8 +256,10 @@ public:
             if (a.currentNode == station) {
                 if (a.state == AGVState::CHARGING) return "";
                 chargeReservation_[station] = id;
-                a.activePath.clear(); a.finalTarget.clear(); a.state = AGVState::CHARGING;
-                sendCommand(a,"CHARGE_START");
+                a.activePath.clear(); a.finalTarget.clear();
+                a.state = automaticChargingEnabled_ ? AGVState::CHARGING : AGVState::IDLE;
+                // sendCommand(a,"CHARGE_START"); // Luong sac tu dong goc, giu de bat lai.
+                if (automaticChargingEnabled_) sendCommand(a,"CHARGE_START");
             } else {
                 if (a.state == AGVState::CHARGING_EN_ROUTE && a.finalTarget == station) return "";
                 if (a.state == AGVState::CHARGING) return "Xe dang sac o tram khac";
@@ -382,13 +399,28 @@ public:
             positionChanged = !seenBefore || agv.positionValid != nodeValid || (nodeValid && rfid != prevNode);
             agv.hasTelemetry = true;
             agv.positionValid = nodeValid;
-            agv.batteryMeasured = battery >= 0;
-            if (agv.batteryMeasured) {
+            const auto now = Clock::now();
+            const bool diagnosticBatteryFresh = agv.batteryFromDiagnostic &&
+                now - agv.batteryDiagnosticSeen <= diagnosticBatteryTimeout_;
+            if (battery >= 0) {
+                agv.batteryMeasured = true;
+                agv.batteryFromDiagnostic = false;
+                agv.batteryDiagnosticSeen = {};
+                agv.batteryDisplayAvailable = false;
+                agv.batteryDisplayPercent = -1;
                 agv.battery = std::clamp(battery, 0, 100);
                 if (agv.battery <= lowBattery_) agv.needsRecharge = true;
                 else if (agv.battery >= resumeBattery_) agv.needsRecharge = false;
-            } else agv.battery = -1;
-            agv.lastSeen = Clock::now();
+            } else if (!diagnosticBatteryFresh) {
+                agv.batteryFromDiagnostic = false;
+                agv.batteryDiagnosticSeen = {};
+                agv.batteryDisplayAvailable = false;
+                agv.batteryDisplayPercent = -1;
+                agv.batteryMeasured = false;
+                agv.battery = -1;
+                agv.needsRecharge = true;
+            }
+            agv.lastSeen = now;
             if (nodeValid) agv.currentNode = rfid; else unknownNode = rfid != "UNKNOWN";
 
             // UNKNOWN: có heartbeat nhưng chưa xác nhận vị trí. Không gán trạm/node giả.
@@ -448,8 +480,9 @@ public:
         return positionChanged;
     }
 
-    // Display-only percentage from firmware diagnostics; it never changes task or charge decisions.
-    void updateBatteryDisplay(const std::string& id, int percent) {
+    // Người vận hành đã chấp nhận phần trăm diagnostic đã lọc làm nguồn pin điều phối.
+    // Chỉ dữ liệu batteryCalibrated hợp lệ từ message diagnostic sống mới gọi hàm này.
+    void updateBatteryDiagnostic(const std::string& id, int percent) {
         if (percent < -1 || percent > 100) throw std::invalid_argument("Phan tram pin hien thi sai");
         bool changed = false;
         {
@@ -458,23 +491,40 @@ public:
             if (it == fleet_.end() || !it->second.hasTelemetry) return;
             AGV& agv = it->second;
             const bool available = percent >= 0;
+            const bool clearingDiagnosticControl = !available && agv.batteryFromDiagnostic;
             changed = agv.batteryDisplayAvailable != available ||
-                (available && agv.batteryDisplayPercent != percent);
+                (available && agv.batteryDisplayPercent != percent) ||
+                (available && (!agv.batteryMeasured || agv.battery != percent || !agv.batteryFromDiagnostic)) ||
+                clearingDiagnosticControl;
             agv.batteryDisplayAvailable = available;
             agv.batteryDisplayPercent = available ? percent : -1;
+            if (available) {
+                agv.batteryFromDiagnostic = true;
+                agv.batteryDiagnosticSeen = Clock::now();
+                agv.batteryMeasured = true;
+                agv.battery = percent;
+                if (agv.battery <= lowBattery_) agv.needsRecharge = true;
+                else if (agv.battery >= resumeBattery_) agv.needsRecharge = false;
+            } else if (clearingDiagnosticControl) {
+                agv.batteryFromDiagnostic = false;
+                agv.batteryDiagnosticSeen = {};
+                agv.batteryMeasured = false;
+                agv.battery = -1;
+                agv.needsRecharge = true;
+            }
         }
         if (changed) notify();
     }
 
-    // Quan sát hiển thị chỉ ở Core test 01. Không notify/checkpoint, không cập nhật node/task/mutex.
+    // Quan sát riêng từng xe. Encoder không xác nhận node/task/mutex.
     bool encoderEnabled(const std::string& id) {
         std::lock_guard<std::mutex> lk(mtx_);
-        return id == "01" && trialRobotId_ == "01";
+        return (id == "01" || id == "02") && activeRobotNoLock(id);
     }
     bool bindEncoderSession(const std::string& id, uint32_t boot, uint32_t connection, uint32_t uptime) {
         std::lock_guard<std::mutex> lk(mtx_);
         const auto it = fleet_.find(id);
-        if (id == "01" && trialRobotId_ == "01" && it != fleet_.end()) {
+        if ((id == "01" || id == "02") && activeRobotNoLock(id) && it != fleet_.end()) {
             const bool changed=it->second.encoder.boot && (it->second.encoder.boot!=boot || it->second.encoder.connection!=connection);
             const bool bound=it->second.encoder.bind(boot,connection,uptime);
             if(bound && changed) {
@@ -491,7 +541,8 @@ public:
         {
             std::lock_guard<std::mutex> lk(mtx_);
             const auto it = fleet_.find(id);
-            if (id != "01" || trialRobotId_ != "01" || it == fleet_.end() || !encoderReadyNoLock(it->second) ||
+            if ((id != "01" && id != "02") || !activeRobotNoLock(id) ||
+                it == fleet_.end() || !encoderReadyNoLock(it->second) ||
                 !it->second.encoder.boot || d.node != it->second.currentNode || !d.wifi || !d.mqtt) return;
         }
         reportError(id,d.error);
@@ -499,7 +550,8 @@ public:
     bool observeOdometry(const std::string& id, const EncoderSample& s) {
         std::lock_guard<std::mutex> lk(mtx_);
         const auto it = fleet_.find(id);
-        if (id != "01" || trialRobotId_ != "01" || it == fleet_.end()) return false;
+        if ((id != "01" && id != "02") || s.robotId != id || !activeRobotNoLock(id) ||
+            it == fleet_.end()) return false;
         auto& a = it->second;
         if (!encoderReadyNoLock(a) || a.currentNode != s.from) return false;
         if (s.tracking && (a.routeCommandId != s.route || a.activePath.empty() || a.activePath.front() != s.to ||
@@ -536,16 +588,16 @@ public:
         {
             std::lock_guard<std::mutex> lk(mtx_);
             auto it = fleet_.find(id);
-            if (id == "01" && trialRobotId_ == "01" && it != fleet_.end() &&
+            if ((id == "01" || id == "02") && activeRobotNoLock(id) && it != fleet_.end() &&
                 diagnostic.sonarPresent && diagnostic.wifi && diagnostic.mqtt &&
                 diagnostic.node == it->second.currentNode && networkAvailable_) {
                 auto& a = it->second;
                 if (a.sonarObstacle != diagnostic.sonarObstacle ||
                     (diagnostic.sonarObstacle && a.sonarDirection != diagnostic.sonarDirection))
                     sonarEvent = diagnostic.sonarObstacle
-                        ? "AGV_01 VAT CAN PHIA " + std::string(diagnostic.sonarDirection == "rear" ? "SAU" : "TRUOC") +
+                        ? "AGV_" + id + " VAT CAN PHIA " + std::string(diagnostic.sonarDirection == "rear" ? "SAU" : "TRUOC") +
                           " (" + std::to_string(static_cast<int>(std::lround(diagnostic.sonarDistanceCm))) + " cm); dang dung cho"
-                        : "AGV_01 DA HET VAT CAN; tiep tuc tuyen neu cac chot an toan hop le";
+                        : "AGV_" + id + " DA HET VAT CAN; tiep tuc tuyen neu cac chot an toan hop le";
                 a.sonarObstacle = diagnostic.sonarObstacle;
                 a.sonarDistanceCm = diagnostic.sonarDistanceCm;
                 a.sonarDirection = diagnostic.sonarDirection;
@@ -564,7 +616,7 @@ public:
         {
             std::lock_guard<std::mutex> lk(mtx_);
             auto it = fleet_.find(id);
-            if (it == fleet_.end() || !supervisedTrialNoLock() || !networkAvailable_) return;
+            if (it == fleet_.end() || !diagnosticRecoveryNoLock() || !networkAvailable_) return;
             AGV& agv = it->second;
             const auto home = homeStations_.find(id);
             const bool expectedHome = (id == "01" && home != homeStations_.end() && home->second == "S1") ||
@@ -742,9 +794,9 @@ public:
             }
             return;
         }
-        if (id == "01" && d.reverseHomeSupported && d.stationTurnRequired && node == "S1") return;
+        if (d.reverseHomeSupported && d.stationTurnRequired && (node == "S1" || node == "S2")) return;
         auto order = NodeManeuver::plan(map_.toJson(),node,next,a.heading,d.stationTurnRequired,
-                                      id == "01" && d.reverseHomeSupported);
+                                      d.reverseHomeSupported);
         if (order.is_null()) return;
         order["node"] = node; order["next_node"] = next;
         order["route_cmd_id"] = a.routeCommandId; order["path_index"] = step;
@@ -792,13 +844,13 @@ public:
             // An earlier Core could clear its own ERROR while the ESP32 kept
             // a latched fault. Permit an explicit repeat while safely IDLE.
             const bool latched = it->second.state == AGVState::AGV_ERROR;
-            const bool idleRepair = supervisedTrialNoLock() && it->second.state == AGVState::IDLE &&
+            const bool idleRepair = diagnosticRecoveryNoLock() && it->second.state == AGVState::IDLE &&
                 it->second.taskId.empty() && it->second.activePath.empty() &&
                 it->second.uncertainPath.empty();
             if (!latched && !idleRepair) return false;
             if (!it->second.positionValid || Clock::now() - it->second.lastSeen > offlineTimeout_) return false;
             if (!networkAvailable_) return false;
-            awaitingDiagnostic = supervisedTrialNoLock();
+            awaitingDiagnostic = diagnosticRecoveryNoLock();
             if (awaitingDiagnostic) {
                 const auto home = homeStations_.find(id);
                 const bool robot01Reset = trialRobotId_ == "01" && id == "01";
@@ -885,7 +937,8 @@ public:
         {
             std::lock_guard<std::mutex> lk(mtx_);
             auto it=fleet_.find(id);
-            if(id!="01" || trialRobotId_!="01" || it==fleet_.end()) return "Chi test servo xe01";
+            if((id!="01" && id!="02") || !activeRobotNoLock(id) ||
+                it==fleet_.end()) return "Firmware/cau hinh xe chua cho phep servo";
             auto& a=it->second;
             if(!acceptingTasks_ || !networkAvailable_ || !tasks_.empty() || !a.hasTelemetry || !a.positionValid ||
                 Clock::now()-a.lastSeen>offlineTimeout_ || a.currentNode!=node || node.size()!=2 || node[0]!='K' ||
@@ -908,7 +961,8 @@ public:
         {
             std::lock_guard<std::mutex> lk(mtx_);
             auto it=fleet_.find(id);
-            if(id!="01" || trialRobotId_!="01" || it==fleet_.end() || !d.liftPresent || !networkAvailable_) return;
+            if((id!="01" && id!="02") || !activeRobotNoLock(id) ||
+                it==fleet_.end() || !d.liftPresent || !networkAvailable_) return;
             auto& a=it->second;
             const bool healthy=d.wifi && d.mqtt && d.error=="NONE" && d.node==a.currentNode && a.positionValid &&
                 d.rfidAgeMs!=UINT32_MAX && d.motor=="STOP" && d.leftDuty==0 && d.rightDuty==0;
@@ -955,6 +1009,7 @@ public:
                 return "Khong tim thay AGV: " + agvId;
             AGV& agv = it->second;
             if (monitorOnlyRobots_.count(agvId)) return "Xe chi giam sat; khong nhan lenh di chuyen";
+            if (!activeRobotNoLock(agvId)) return "Xe khong nam trong pham vi van hanh hien tai";
             if(agv.liftActive) return "Xe dang nang/ha hang; cho servo hoan tat";
             if (!trialRobotId_.empty() && agvId != trialRobotId_) return "Che do thu chi cho phep xe " + trialRobotId_;
             if (twoRobotTrial_ && agvId != "01" && agvId != "02") return "Thu hai xe chi cho phep 01 va 02";
@@ -981,7 +1036,9 @@ public:
                     if (!zone.value().value("owner", std::string{}).empty())
                         return "Thu mot xe can xac minh va giai phong mutex cu";
             }
-            if ((!agv.batteryMeasured || agv.battery < resumeBattery_) && !singleRobotTrial_ && !supervisedTrialNoLock())
+            // if ((!agv.batteryMeasured || agv.battery < resumeBattery_) && !singleRobotTrial_ && !supervisedTrialNoLock())
+            //     return "Pin chua do hoac khong du de nhan task";
+            if (!batteryTestBypass_ && (!agv.batteryMeasured || agv.battery < resumeBattery_) && !singleRobotTrial_ && !supervisedTrialNoLock())
                 return "Pin chua do hoac khong du de nhan task";
             if (agv.state == AGVState::CHARGING || agv.state == AGVState::CHARGING_EN_ROUTE)
                 return "AGV dang sac, khong the ra lenh thu cong luc nay";
@@ -1085,7 +1142,7 @@ public:
             const bool encoderFresh = encoder.received && encoderReadyNoLock(a) && encoderAge <= EncoderObservation::staleMs &&
                 sample.from == a.currentNode && context;
             json detected = nullptr;
-            if (a.id == "01" && a.sonarObstacle && now-a.sonarSeen <= std::chrono::seconds(3) &&
+            if (a.sonarObstacle && now-a.sonarSeen <= std::chrono::seconds(3) &&
                 encoderFresh && a.estimatedPosition.is_object() && sample.tracking &&
                 a.sonarRouteCommandId == sample.route && a.sonarNextNode == sample.to &&
                 a.sonarDirection == (sample.reverse ? "rear" : "front") &&
@@ -1117,6 +1174,7 @@ public:
                 {"id", a.id}, {"node", a.currentNode}, {"battery", a.battery},
                 {"battery_display_percent", a.batteryDisplayAvailable ? json(a.batteryDisplayPercent) : json(nullptr)},
                 {"battery_display_available", a.batteryDisplayAvailable},
+                {"battery_control_source", a.batteryFromDiagnostic ? "diagnostic" : a.batteryMeasured ? "telemetry" : "unavailable"},
                 {"state", toString(a.state)}, {"path", a.activePath},
                 {"target", a.finalTarget}, {"priority", a.isPriorityVehicle},
                 {"lift",{{"supported",a.liftSupported && networkAvailable_ && now-a.liftSeen<=std::chrono::seconds(3)},
@@ -1129,7 +1187,8 @@ public:
                 {"task_id", a.taskId}, {"position_valid", a.positionValid},
                 {"battery_measured", a.batteryMeasured}, {"error", a.lastError},
                 {"needs_recharge", a.needsRecharge},
-                {"encoder_supported", a.id == "01" && trialRobotId_ == "01" && encoder.boot != 0},
+                {"participating", activeRobotNoLock(a.id)},
+                {"encoder_supported", (a.id == "01" || a.id == "02") && activeRobotNoLock(a.id) && encoder.boot != 0},
                 {"speed_cm_s", encoderFresh ? json(sample.speed) : json(nullptr)},
                 {"odometry", encoder.received ? json{{"valid",encoderFresh},{"age_ms",encoderAge},
                     {"stale_after_ms",EncoderObservation::staleMs},{"seq",sample.seq},{"boot_id",sample.boot},
@@ -1137,7 +1196,7 @@ public:
                     {"distance_cm",sample.distance},{"left_ticks",sample.leftTicks},{"right_ticks",sample.rightTicks},
                     {"pulses_per_100cm",sample.pulsesPer100Cm}} : json(nullptr)},
                 {"estimated_position", encoderFresh ? a.estimatedPosition : json(nullptr)},
-                {"obstacle_alert", a.id == "01" && a.sonarObstacle && networkAvailable_ &&
+                {"obstacle_alert", a.sonarObstacle && networkAvailable_ &&
                     now-a.sonarSeen <= std::chrono::seconds(3) && a.hasTelemetry && now-a.lastSeen <= offlineTimeout_
                     ? json{{"direction",a.sonarDirection},{"range_cm",a.sonarDistanceCm}} : json(nullptr)},
                 {"obstacle_detection", detected},
@@ -1160,13 +1219,26 @@ public:
         j["offline_timeout_s"] = offlineTimeout_.count();
         j["charge_reservations"] = chargeReservation_; // station -> agvId đang giữ/đặt chỗ
         j["accepting_tasks"] = acceptingTasks_;
+        j["battery_gate_enabled"] = !batteryTestBypass_;
+        j["automatic_charging_enabled"] = automaticChargingEnabled_;
         j["home_stations"] = homeStations_;
         j["trial_robot_id"] = trialRobotId_;
+        j["active_robot_ids"] = json::array();
+        if (activeRobotIds_.empty()) {
+            j["active_robot_ids"].push_back("01");j["active_robot_ids"].push_back("02");
+        } else {
+            std::vector<std::string> active(activeRobotIds_.begin(),activeRobotIds_.end());
+            std::sort(active.begin(),active.end());
+            for (const auto& id : active) j["active_robot_ids"].push_back(id);
+        }
         j["queue_sequence"] = seqCounter_;
         return j;
     }
 
 private:
+    bool activeRobotNoLock(const std::string& id) const {
+        return activeRobotIds_.empty() || activeRobotIds_.count(id) != 0;
+    }
     bool encoderReadyNoLock(const AGV& a) const {
         return networkAvailable_ && a.hasTelemetry && a.positionValid && Clock::now()-a.lastSeen <= offlineTimeout_ &&
             a.state != AGVState::OFFLINE && a.state != AGVState::AGV_ERROR && a.state != AGVState::UNLOCALIZED;
@@ -1182,8 +1254,9 @@ private:
         if (!charging && !agv.taskId.empty()) setTaskStatusNoLock(agv.taskId, "completed", agv.id);
         agv.taskId.clear(); agv.finalTarget.clear();
         agv.stationArrivalRequired = false;
-        agv.state = charging ? AGVState::CHARGING : AGVState::IDLE;
-        if (charging) sendCommand(agv, "CHARGE_START");
+        agv.state = charging && automaticChargingEnabled_ ? AGVState::CHARGING : AGVState::IDLE;
+        // if (charging) sendCommand(agv, "CHARGE_START"); // Luong goc.
+        if (charging && automaticChargingEnabled_) sendCommand(agv, "CHARGE_START");
         return true;
     }
     void pruneTaskRecords() {
@@ -1392,10 +1465,11 @@ private:
     // Dùng resumeBattery_ (không phải lowBattery_) để tránh xe pin 21% nhận task rồi
     // vài phút sau bị huỷ để đi sạc — xem hysteresis ở [6] trong ghi chú đầu file.
     bool dispatchableNoLock(const AGV& a) const {
-        return !monitorOnlyRobots_.count(a.id) && (trialRobotId_.empty() || a.id == trialRobotId_) &&
+        return activeRobotNoLock(a.id) && !monitorOnlyRobots_.count(a.id) && (trialRobotId_.empty() || a.id == trialRobotId_) &&
                (!twoRobotTrial_ || a.id == "01" || a.id == "02") &&
                acceptingTasks_ && networkAvailable_ && !a.liftActive && a.state == AGVState::IDLE &&
-               (supervisedTrialNoLock() || (a.batteryMeasured && a.battery >= resumeBattery_)) && a.hasTelemetry && a.positionValid &&
+               // (supervisedTrialNoLock() || (a.batteryMeasured && a.battery >= resumeBattery_)) && a.hasTelemetry && a.positionValid &&
+               (batteryTestBypass_ || supervisedTrialNoLock() || (a.batteryMeasured && a.battery >= resumeBattery_)) && a.hasTelemetry && a.positionValid &&
                Clock::now() - a.lastSeen <= offlineTimeout_ && !a.currentNode.empty();
     }
 
@@ -1473,8 +1547,9 @@ private:
     // Gửi 1 lệnh JSON có cmd_id xuống xe, theo dõi để gửi lại nếu không có ACK (xem [5]).
     // PHẢI gọi khi đang giữ mtx_. Lệnh mới cho cùng 1 xe thay thế hẳn lệnh cũ đang chờ ACK.
     long sendCommand(AGV& agv, const std::string& cmdName, json extra = json::object()) {
+        if (!automaticChargingEnabled_ && cmdName == "CHARGE_START") return 0;
         // Chot cuoi cung: khong phat chuyen dong/sac cho xe khong duoc chon.
-        if (!trialRobotId_.empty() && agv.id != trialRobotId_ &&
+        if ((!activeRobotNoLock(agv.id) || (!trialRobotId_.empty() && agv.id != trialRobotId_)) &&
             (cmdName == "GOTO" || cmdName == "CHARGE_START" || cmdName == "NODE_ORDER")) return 0;
         long cmdId;
         try {cmdId = commandIdAllocator_ ? commandIdAllocator_() : ++cmdSeq_;}
@@ -1602,12 +1677,14 @@ private:
             if (!networkAvailable_) return;
             for (auto& kv : fleet_) {
                 AGV& agv = kv.second;
+                if (!activeRobotNoLock(agv.id)) continue;
                 if (!trialRobotId_.empty() && agv.id != trialRobotId_) continue;
                 if (agv.state != AGVState::BLOCKED) continue;
                 if (!agv.positionValid || Clock::now()-agv.lastSeen > offlineTimeout_) continue;
                 if (agv.finalTarget.empty()) {
                     // Không còn việc dở. Nếu pin thấp thì để checkBatteryOne tìm đường tới trạm sạc.
-                    if (singleRobotTrial_ || supervisedTrialNoLock() || (!agv.needsRecharge && agv.battery >= resumeBattery_)) {
+                    // if (singleRobotTrial_ || supervisedTrialNoLock() || (!agv.needsRecharge && agv.battery >= resumeBattery_)) {
+                    if (batteryTestBypass_ || singleRobotTrial_ || supervisedTrialNoLock() || (!agv.needsRecharge && agv.battery >= resumeBattery_)) {
                         agv.state = AGVState::IDLE;
                         agv.blockedResume = AGVState::IDLE;
                         changed = true;
@@ -1630,7 +1707,8 @@ private:
         bool changed = false;
         {
             std::lock_guard<std::mutex> lk(mtx_);
-            if (singleRobotTrial_ || supervisedTrialNoLock() || monitorOnlyRobots_.count(id)) return false; // che do thu khong tu ve sac
+            if (!automaticChargingEnabled_) return false; // Sac thu cong: khong doi tuyen/task theo pin.
+            if (!activeRobotNoLock(id) || singleRobotTrial_ || supervisedTrialNoLock() || monitorOnlyRobots_.count(id)) return false; // che do thu khong tu ve sac
             auto it = fleet_.find(id);
             if (it == fleet_.end()) return false;
             AGV& agv = it->second;
@@ -1709,12 +1787,17 @@ private:
     int lowBattery_ = 20;    // % pin coi là "thấp" -> tự động về sạc
     int resumeBattery_ = 40; // % pin tối thiểu để được nhận task mới (hysteresis, phải > lowBattery_)
     int chargeTargetPercent_ = 90; // % pin coi là "sạc xong" nếu ESP32 không báo kèm số liệu thật
+    bool batteryTestBypass_ = false;
+    bool automaticChargingEnabled_ = true;
+    std::chrono::seconds diagnosticBatteryTimeout_{3};
     std::chrono::seconds offlineTimeout_{10};
     bool autoRegister_ = true;
     bool singleRobotTrial_ = false;
     bool twoRobotTrial_ = false;
     std::string trialRobotId_;
     bool supervisedTrialNoLock() const { return twoRobotTrial_ || !trialRobotId_.empty(); }
+    std::unordered_set<std::string> activeRobotIds_;
+    bool diagnosticRecoveryNoLock() const { return supervisedTrialNoLock() || !activeRobotIds_.empty(); }
     std::unordered_set<std::string> monitorOnlyRobots_;
     bool networkAvailable_ = true;
     bool acceptingTasks_ = true;

@@ -28,6 +28,49 @@ json comparableMap(MapGraph& map) {
 int main() {
     try {
         {
+            // Same temporary policy as Core main; original default policy remains tested below.
+            const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+            for (const std::string id : {"01", "02"}) {
+                auto dir = root/".qa"/("battery-bypass-" + id + "-" + std::to_string(Clock::now().time_since_epoch().count()));
+                MapGraph map;map.loadDefaultDemoMap();MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+                fleet.setBatteryTestBypass(true);fleet.setAutomaticChargingEnabled(false);
+                fleet.setActiveRobots({id});fleet.setNetworkAvailable(true);
+                std::vector<json> sent;
+                fleet.setPublishCallback([&](const std::string&,const std::string& p){sent.push_back(json::parse(p));});
+                const std::string home=id=="01"?"S1":"S2",gate=id=="01"?"GS1":"GS2";
+                ShiftController shift(map,fleet,arbiter,dir/"shift.json",{{id,home}},false,false,"",{id});
+                fleet.updateTelemetry(id,home,-1,false);shift.tick();
+                CHECK(shift.snapshot()["can_start"]==true);CHECK(shift.start().empty());
+                CHECK(!fleet.batteryGateEnabled());CHECK(fleet.toJson()["automatic_charging_enabled"]==false);
+                CHECK(fleet.directGoto(id,gate,"unknown-pin").empty());
+                fleet.updateTelemetry(id,gate,0,false);CHECK(record(fleet,"unknown-pin")["status"]=="completed");
+                for (int percent : {0, 29, 30, 39}) {
+                    fleet.updateTelemetry(id,gate,percent,false);
+                    CHECK(fleet.directGoto(id,home,"low-pin-"+std::to_string(percent)).empty());
+                    fleet.updateTelemetry(id,home,percent,false);fleet.tick();
+                    CHECK(record(fleet,"low-pin-"+std::to_string(percent))["status"]=="completed");
+                    CHECK(fleet.toJson()["agvs"][0]["state"]=="IDLE");
+                }
+                // Queued assignment also bypasses pin; a later drop must not steal the route.
+                fleet.addTask(gate,1,"low-pin-auto");
+                CHECK(record(fleet,"low-pin-auto")["status"]=="dispatched");
+                fleet.updateTelemetry(id,home,0,false);fleet.tick();
+                CHECK(record(fleet,"low-pin-auto")["status"]=="dispatched");
+                CHECK(fleet.toJson()["agvs"][0]["target"]==gate);
+                fleet.updateTelemetry(id,gate,0,false);
+                CHECK(record(fleet,"low-pin-auto")["status"]=="completed");
+                CHECK(shift.end().empty());CHECK(fleet.toJson()["agvs"][0]["target"]==home);
+                fleet.updateTelemetry(id,home,0,false);shift.tick();
+                CHECK(shift.snapshot()["phase"]=="CLOSED");CHECK(shift.snapshot()["can_start"]==true);
+                CHECK(fleet.toJson()["agvs"][0]["state"]=="IDLE");
+                CHECK(std::none_of(sent.begin(),sent.end(),[](const json& c){return c.value("cmd","")=="CHARGE_START";}));
+                CHECK(shift.start().empty());fleet.setNetworkAvailable(false);
+                CHECK(!fleet.directGoto(id,gate,"no-network").empty());fleet.setNetworkAvailable(true);
+                fleet.setBatteryTestBypass(false);CHECK(fleet.batteryGateEnabled());
+                CHECK(!fleet.directGoto(id,gate,"restored-pin-gate").empty());
+            }
+        }
+        {
             MapGraph map;map.loadDefaultDemoMap();const auto layout=map.toJson();
             CHECK(NodeManeuver::straightThrough(layout,"C4","M4","GS2"));
             CHECK(NodeManeuver::straightThrough(layout,"M4","GS2","M3"));
@@ -200,15 +243,69 @@ int main() {
             fleet.updateTelemetry("01","M2",-1,false);
             CHECK(record(fleet,"trial-s1-m2")["status"] == "completed");
             CHECK(fleet.toJson()["agvs"][0]["battery_measured"] == false);
-            fleet.updateBatteryDisplay("01",67);
+            fleet.updateBatteryDiagnostic("01",67);
             CHECK(fleet.toJson()["agvs"][0]["battery_display_percent"] == 67);
+            CHECK(fleet.toJson()["agvs"][0]["battery"] == 67);
+            CHECK(fleet.toJson()["agvs"][0]["battery_measured"] == true);
+            CHECK(fleet.toJson()["agvs"][0]["battery_control_source"] == "diagnostic");
+            fleet.updateTelemetry("01","M2",-1,false);
+            CHECK(fleet.toJson()["agvs"][0]["battery"] == 67);
+            CHECK(fleet.toJson()["agvs"][0]["battery_measured"] == true);
             fleet.updateTelemetry("01","M2",10,false);
             CHECK(fleet.toJson()["agvs"][0]["battery"] == 10);
+            CHECK(fleet.toJson()["agvs"][0]["battery_control_source"] == "telemetry");
             CHECK(fleet.directGoto("01","C3","trial-m2-c3").empty());
             fleet.updateTelemetry("02","S2",80,false);
             CHECK(record(fleet,"trial-m2-c3")["status"] == "interrupted");
             CHECK(fleet.toJson()["agvs"].size() == 2);
             CHECK(!fleet.directGoto("01","C3","trial-other-present").empty());
+        }
+        {
+            MapGraph map;map.loadFromJson(graph());MutexArbiter arbiter;FleetManager fleet(map,arbiter);
+            fleet.setNetworkAvailable(true);fleet.setAcceptingTasks(true);
+            fleet.updateTelemetry("01","A",-1,false);
+            fleet.updateBatteryDiagnostic("01",67);
+            fleet.updateBatteryDiagnostic("01",-1);
+            CHECK(fleet.toJson()["agvs"][0]["battery_measured"] == false);
+            CHECK(fleet.toJson()["agvs"][0]["battery_control_source"] == "unavailable");
+            CHECK(!fleet.directGoto("01","T","normal-invalid-diagnostic-battery").empty());
+            fleet.updateBatteryDiagnostic("01",67);
+            CHECK(fleet.directGoto("01","T","normal-diagnostic-battery").empty());
+        }
+        {
+            MapGraph map;map.loadFromJson(graph());MutexArbiter arbiter;FleetManager fleet(map,arbiter);
+            fleet.updateTelemetry("01","A",55,false);
+            fleet.updateBatteryDiagnostic("01",-1);
+            CHECK(fleet.toJson()["agvs"][0]["battery"] == 55);
+            CHECK(fleet.toJson()["agvs"][0]["battery_measured"] == true);
+            CHECK(fleet.toJson()["agvs"][0]["battery_control_source"] == "telemetry");
+        }
+        {
+            MapGraph map;map.loadFromJson(graph());MutexArbiter arbiter;FleetManager fleet(map,arbiter);
+            CHECK(fleet.encoderEnabled("01")); // capability theo firmware/ID, khong theo ten mode test
+            fleet.setActiveRobots({"01"});fleet.setAcceptingTasks(true);
+            fleet.updateTelemetry("01","A",67,false);fleet.updateTelemetry("02","B",80,false);
+            CHECK(fleet.encoderEnabled("01"));CHECK(!fleet.encoderEnabled("02"));
+            CHECK(fleet.directGoto("02","T","inactive-robot") == "Xe khong nam trong pham vi van hanh hien tai");
+            fleet.addTask("T",1,"scoped-auto");
+            CHECK(record(fleet,"scoped-auto")["assigned_agv"] == "01");
+            const auto scoped=fleet.toJson();
+            CHECK(scoped["active_robot_ids"]==json::array({"01"}));
+            for(const auto& robot:scoped["agvs"])
+                CHECK(robot["participating"].get<bool>()==(robot["id"]=="01"));
+        }
+        {
+            MapGraph map;map.loadDefaultDemoMap();MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.setActiveRobots({"01"});
+            fleet.updateTelemetry("01","S1",67,false);fleet.updateTelemetry("02","S2",80,false);
+            const auto dir=std::filesystem::path(".qa")/("scoped-shift-"+std::to_string(Clock::now().time_since_epoch().count()));
+            ShiftController shift(map,fleet,arbiter,dir/"shift.json",{{"01","S1"}},false,false,"",{"01"});
+            CHECK(shift.snapshot()["operation_profile"]=="scoped");
+            CHECK(shift.snapshot()["active_robot_ids"]==json::array({"01"}));
+            shift.tick();
+            CHECK(shift.snapshot()["can_start"].get<bool>());
+            fleet.updateTelemetry("02","UNKNOWN",80,false);
+            CHECK(!shift.snapshot()["can_start"].get<bool>());
         }
         {
             MapGraph map;map.loadDefaultDemoMap();
@@ -766,7 +863,9 @@ int main() {
             CHECK(NodeManeuver::plan(map.toJson(),"GS1","S1","N",false,true)["turn_crossings"]==2);
             CHECK(NodeManeuver::plan(map.toJson(),"GS1","S1","S",false,true)["maneuver"]=="STRAIGHT");
             CHECK(NodeManeuver::plan(map.toJson(),"GS1","S1","S",false,true)["reverse_after_turn"]==true);
-            CHECK(!NodeManeuver::plan(map.toJson(),"GS2","S2","E",false,true).contains("reverse_after_turn"));
+            CHECK(NodeManeuver::plan(map.toJson(),"GS2","S2","E",false,true)["reverse_after_turn"]==true);
+            CHECK(NodeManeuver::plan(map.toJson(),"GS2","S2","E",false,true)["maneuver"]=="LEFT");
+            CHECK(NodeManeuver::plan(map.toJson(),"GS2","S2","W",false,true)["maneuver"]=="RIGHT");
             CHECK(NodeManeuver::plan(map.toJson(),"S1","S1","N",true)["maneuver"]=="STATION_TURN_RIGHT");
             CHECK(NodeManeuver::plan(map.toJson(),"GS1","M4","S").is_null()); // No axis-only shortcut to an unconnected node.
         }

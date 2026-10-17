@@ -15,7 +15,8 @@ public:
     void turnRight();
     void stop();
     void followLine();
-    void apply(MotorAction action);
+    void apply(MotorAction action, bool lineRecovery = false,
+               int precisionPwm = Config::LINE_RECOVERY_PWM, bool settling = false);
     MotorAction action() const { return action_; }
 private:
     MotorModule& motor_;

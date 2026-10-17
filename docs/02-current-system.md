@@ -1,5 +1,7 @@
 # Hiện trạng mã và khoảng trống tích hợp
 
+CURRENT 16/10/2026: entrypoint hiện tại là `src/core/AGVserver.cpp`, header ở `include/`. Menu F5 dùng một Core thống nhất và chọn `active01`, `active02` hoặc `active-both`; scope lọc xe tham gia nhưng không đổi luật pin/RFID/MQTT/mutex. Các đường dẫn `src/AGVserver.cpp`/`src/FLeetmanager.hpp` trong khảo sát 28/09 bên dưới là lịch sử trước khi tổ chức lại source. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).
+
 Khảo sát tĩnh ngày 28/09/2026. Không chạy server, binary, migration hoặc thao tác với robot. Trong lúc khảo sát, các tệp C++ được chuyển từ gốc vào `src/`; tài liệu dùng vị trí cuối cùng đã quan sát.
 
 ## Các thành phần

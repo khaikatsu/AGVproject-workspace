@@ -1,5 +1,7 @@
 # ADR-028 — Chọn chế độ thử Core tại terminal
 
+> SUPERSEDED cho menu F5 từ 16/10/2026: [ADR-058](ADR-058-unified-core-active-robot-scope.md) đổi lựa chọn 1/2/3 thành scope của cùng Core với luật vận hành thật. Các mode trial tại đây chỉ còn tương thích hồi quy.
+
 Ngày: 09/10/2026
 Trạng thái: đã chốt theo REQ-CORE-MENU-01
 

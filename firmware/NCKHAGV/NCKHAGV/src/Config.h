@@ -70,7 +70,7 @@ constexpr int LINE_CENTER_PIN = 34;
 constexpr int LINE_RIGHT_PIN = 35;
 constexpr int ULTRASONIC_TRIG_PIN = 12;
 constexpr int ULTRASONIC_ECHO_PIN = 13;
-#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+#if defined(AGV_REAR_SONAR_ENABLED) && AGV_REAR_SONAR_ENABLED == 1
 constexpr int REAR_ULTRASONIC_TRIG_PIN = 0;
 constexpr int REAR_ULTRASONIC_ECHO_PIN = 15;
 #else
@@ -95,7 +95,7 @@ constexpr uint32_t CARGO_IR_STABLE_MS = 150;
 constexpr uint32_t REVERSE_STOP_MS = 150;
 // Front-mounted line sensors have not been validated for backward steering.
 constexpr bool REVERSE_STEERING_CONFIRMED = false;
-#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+#if defined(AGV_REVERSE_HOME_ENABLED) && AGV_REVERSE_HOME_ENABLED == 1
 constexpr bool REVERSE_HOME_SUPPORTED = true;
 #else
 constexpr bool REVERSE_HOME_SUPPORTED = false;
@@ -193,6 +193,21 @@ constexpr int REVERSE_CORRECTION_SPEED = CORRECTION_SPEED;
 #endif
 static_assert(REVERSE_SPEED > 0 && REVERSE_SPEED <= 255, "Invalid reverse PWM");
 static_assert(REVERSE_CORRECTION_SPEED > 0 && REVERSE_CORRECTION_SPEED <= 255, "Invalid reverse correction PWM");
+#if defined(AGV_REVERSE_LEFT_SPEED_TRIM)
+constexpr int REVERSE_LEFT_SPEED_TRIM = AGV_REVERSE_LEFT_SPEED_TRIM;
+#else
+constexpr int REVERSE_LEFT_SPEED_TRIM = LEFT_SPEED_TRIM;
+#endif
+#if defined(AGV_REVERSE_RIGHT_SPEED_TRIM)
+constexpr int REVERSE_RIGHT_SPEED_TRIM = AGV_REVERSE_RIGHT_SPEED_TRIM;
+#else
+constexpr int REVERSE_RIGHT_SPEED_TRIM = RIGHT_SPEED_TRIM;
+#endif
+static_assert(REVERSE_SPEED + REVERSE_LEFT_SPEED_TRIM > 0 && REVERSE_SPEED + REVERSE_LEFT_SPEED_TRIM <= 255 &&
+              REVERSE_SPEED + REVERSE_RIGHT_SPEED_TRIM > 0 && REVERSE_SPEED + REVERSE_RIGHT_SPEED_TRIM <= 255 &&
+              REVERSE_CORRECTION_SPEED + REVERSE_LEFT_SPEED_TRIM > 0 && REVERSE_CORRECTION_SPEED + REVERSE_LEFT_SPEED_TRIM <= 255 &&
+              REVERSE_CORRECTION_SPEED + REVERSE_RIGHT_SPEED_TRIM > 0 && REVERSE_CORRECTION_SPEED + REVERSE_RIGHT_SPEED_TRIM <= 255,
+              "Invalid reverse wheel PWM");
 constexpr uint32_t MOTOR_PWM_HZ = 5000;
 constexpr int MOTOR_PWM_BITS = 8;
 constexpr std::array<int, 4> MOTOR_PWM_CHANNELS = {0, 1, 2, 3};
@@ -205,6 +220,25 @@ constexpr uint32_t LINE_LOSS_CONFIRM_MS = AGV_BENCH_LINE_LOSS_CONFIRM_MS;
 #else
 constexpr uint32_t LINE_LOSS_CONFIRM_MS = ONE_ROBOT_TRIAL ? 120 : 0;
 #endif
+#if defined(AGV_LINE_RECOVERY_ENABLED) && AGV_LINE_RECOVERY_ENABLED == 1
+constexpr bool LINE_RECOVERY_ENABLED = true;
+#else
+constexpr bool LINE_RECOVERY_ENABLED = false;
+#endif
+// Provisional bench limits: pulse a pivot, never translate with a blank line.
+// Time limits are not calibrated angular limits.
+constexpr int LINE_RECOVERY_PWM = 180;
+constexpr uint32_t LINE_RECOVERY_STOP_MS = 100;
+constexpr uint32_t LINE_RECOVERY_TIMEOUT_MS = 600;
+constexpr uint32_t LINE_RECOVERY_PULSE_MS = 40;
+constexpr uint32_t LINE_RECOVERY_REST_MS = 60;
+constexpr uint32_t LINE_RECOVERY_CENTER_MS = 100;
+constexpr uint32_t LINE_RECOVERY_MEMORY_MS = 750;
+static_assert(LINE_RECOVERY_PWM > 0 && LINE_RECOVERY_PWM <= 255 &&
+              (!LINE_RECOVERY_ENABLED || LINE_RECOVERY_PWM <= TURN_SPEED) &&
+              LINE_RECOVERY_TIMEOUT_MS > LINE_RECOVERY_STOP_MS + LINE_RECOVERY_CENTER_MS &&
+              LINE_RECOVERY_PULSE_MS > 0 && LINE_RECOVERY_REST_MS > 0,
+              "Invalid line recovery limits");
 // Operator requests stop at or below 15 cm; verify on the physical sensor.
 constexpr float OBSTACLE_DISTANCE_CM = 15.0f;
 constexpr float OBSTACLE_CLEAR_CM = 20.0f;
@@ -212,6 +246,28 @@ constexpr float OBSTACLE_CLEAR_CM = 20.0f;
 // is reacquired after leaving the original line; bench calibration is pending.
 constexpr uint32_t TURN_MIN_MS = 100;
 constexpr uint32_t TURN_TIMEOUT_MS = 2500;
+#if defined(AGV_LEFT_TURN_CAPTURE_ENABLED) && AGV_LEFT_TURN_CAPTURE_ENABLED == 1
+constexpr bool LEFT_TURN_CAPTURE_ENABLED = true;
+#else
+constexpr bool LEFT_TURN_CAPTURE_ENABLED = false;
+#endif
+#if defined(AGV_LEFT_TURN_CAPTURE_PWM)
+constexpr int LEFT_TURN_CAPTURE_PWM = AGV_LEFT_TURN_CAPTURE_PWM;
+#else
+constexpr int LEFT_TURN_CAPTURE_PWM = LINE_RECOVERY_PWM;
+#endif
+static_assert(LEFT_TURN_CAPTURE_PWM > 0 && LEFT_TURN_CAPTURE_PWM <= 255 &&
+              (!LEFT_TURN_CAPTURE_ENABLED || LEFT_TURN_CAPTURE_PWM <= TURN_SPEED),
+              "Invalid left turn capture PWM");
+// Bench values: sampled evidence, then a short capped-speed departure.
+constexpr uint32_t LEFT_CAPTURE_SAMPLE_MS = 10;
+constexpr uint32_t LEFT_CAPTURE_MAX_GAP_MS = 40;
+constexpr uint32_t LEFT_CAPTURE_SETTLE_MS = 200;
+#if defined(AGV_TURN_RETRY_ENABLED) && AGV_TURN_RETRY_ENABLED == 1
+constexpr bool TURN_RETRY_ENABLED = true;
+#else
+constexpr bool TURN_RETRY_ENABLED = false;
+#endif
 // Software fail-safe only; measure actual route time before enabling PWM.
 #if defined(AGV_PROFILE_ID)
 constexpr uint32_t SEGMENT_TIMEOUT_MS = AGV_BENCH_SEGMENT_TIMEOUT_MS;
@@ -292,7 +348,7 @@ constexpr std::array<int, 3> SERVO_PWM_CHANNELS = {4, 5, 6};
 constexpr uint32_t SERVO_PWM_HZ = 50;
 constexpr int SERVO_PWM_BITS = 16;
 // Profile01 opts into a single-servo connection test, not calibrated lifting.
-#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+#if defined(AGV_SINGLE_SERVO_ENABLED) && AGV_SINGLE_SERVO_ENABLED == 1
 constexpr bool SERVO_SINGLE_TEST = true;
 #else
 constexpr bool SERVO_SINGLE_TEST = false;
@@ -370,7 +426,9 @@ constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261015-robot01-servo45-test";
+constexpr const char* FIRMWARE_BUILD = "20261016-robot01-line-search";
+#elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
+constexpr const char* FIRMWARE_BUILD = "20261016-robot02-reverse-left215";
 #else
 constexpr const char* FIRMWARE_BUILD = "20261015-battery-smoothing";
 #endif

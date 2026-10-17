@@ -4,6 +4,163 @@
 #endif
 #include <cstring>
 
+void CoreNavigator::resetLineTracking() {
+    lineLossPending_ = lineRecoveryUsed_ = false;
+    searchPulse_ = false;
+    captureHistory_ = captureCount_ = 0;
+    turnSettling_ = false;
+    lastLinePattern_ = centerSamples_ = 0;
+    lastLineMotor_ = lastCorrection_ = searchDirection_ = MotorAction::Stop;
+}
+void CoreNavigator::rememberLine(const ControlInput& in, MotorAction action) {
+    lastLinePattern_ = in.linePattern;
+    lastLineMotor_ = action;
+    if (action == MotorAction::CorrectLeft || action == MotorAction::GentleCorrectLeft ||
+        action == MotorAction::ReverseCorrectLeft) {
+        lastCorrection_ = MotorAction::PivotLeft;
+        lastCorrectionMs_ = in.now;
+    } else if (action == MotorAction::CorrectRight || action == MotorAction::GentleCorrectRight ||
+               action == MotorAction::ReverseCorrectRight) {
+        lastCorrection_ = MotorAction::PivotRight;
+        lastCorrectionMs_ = in.now;
+    }
+}
+MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
+    if (!lineLossPending_) {
+        lineLossPending_ = true;
+        lineLossStartedMs_ = in.now;
+        searchMotorChangedMs_ = in.now;
+        searchPulse_ = false;
+        centerSamples_ = 0;
+        searchDirection_ = MotorAction::Stop;
+        if (!lineRecoveryUsed_ && lastCorrection_ != MotorAction::Stop &&
+            static_cast<uint32_t>(in.now-lastCorrectionMs_) <= Config::LINE_RECOVERY_MEMORY_MS) {
+            searchDirection_ = lastCorrection_;
+            lineRecoveryUsed_ = true;
+        }
+#if defined(ARDUINO)
+        if (Config::DEBUG_ENABLED) Serial.printf(
+            "[LINE] search=%s lastPattern=%u lastMotor=%s node=%s next=%s\n",
+            motorActionName(searchDirection_), lastLinePattern_, motorActionName(lastLineMotor_), current_, nextNode());
+#endif
+        return MotorAction::Stop;
+    }
+    const uint32_t elapsed = in.now-lineLossStartedMs_;
+    const uint32_t limit = searchDirection_ != MotorAction::Stop ?
+        Config::LINE_RECOVERY_TIMEOUT_MS : Config::LINE_LOSS_CONFIRM_MS;
+    if (elapsed >= limit) {
+        fault(ErrorCode::LineLost);
+        return MotorAction::Stop;
+    }
+    if (missingZone()) {
+        centerSamples_ = 0;
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
+        return MotorAction::Stop;
+    }
+    // Accept only a narrow centered line, not a side eye or a wide junction.
+    // Stop throughout validation; require elapsed time AND distinct samples.
+    if (in.linePattern == 2) {
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
+        if (!centerSamples_) {
+            centerSamples_ = 1;
+            centerSinceMs_ = centerSampleMs_ = in.now;
+        } else if (in.now != centerSampleMs_) {
+            if (centerSamples_ < 3) ++centerSamples_;
+            centerSampleMs_ = in.now;
+        }
+        if (centerSamples_ >= 3 && static_cast<uint32_t>(in.now-centerSinceMs_) >= Config::LINE_RECOVERY_CENTER_MS) {
+            lineLossPending_ = false;
+            centerSamples_ = 0;
+            const auto action = segmentReverse() ? MotorAction::Backward : MotorAction::Forward;
+            rememberLine(in, action);
+#if defined(ARDUINO)
+            if (Config::DEBUG_ENABLED) Serial.printf("[LINE] search_recovered node=%s next=%s\n", current_, nextNode());
+#endif
+            return action;
+        }
+        return MotorAction::Stop;
+    }
+    centerSamples_ = 0;
+    if (searchDirection_ == MotorAction::Stop || elapsed < Config::LINE_RECOVERY_STOP_MS)
+        return MotorAction::Stop;
+    // Advance from actual output transitions, not a modulo clock. A delayed
+    // control iteration must emit STOP before another pulse, never skip rest.
+    const uint32_t sinceChange = in.now-searchMotorChangedMs_;
+    if (searchPulse_) {
+        if (sinceChange < Config::LINE_RECOVERY_PULSE_MS) return searchDirection_;
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
+        return MotorAction::Stop;
+    }
+    if (sinceChange < Config::LINE_RECOVERY_REST_MS) return MotorAction::Stop;
+    searchPulse_ = true;
+    searchMotorChangedMs_ = in.now;
+    return searchDirection_;
+}
+
+MotorAction CoreNavigator::alignTurnLine(const ControlInput& in) {
+    if (static_cast<uint32_t>(in.now-lineLossStartedMs_) >= Config::LINE_RECOVERY_TIMEOUT_MS) {
+        fault(ErrorCode::LineLost);
+        return MotorAction::Stop;
+    }
+    if (missingZone()) {
+        captureHistory_ = captureCount_ = 0;
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
+        return MotorAction::Stop;
+    }
+    const bool narrow = in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6;
+    // Samples must be spaced and fresh. Side+center counts as line evidence,
+    // not failed centering. A wide junction never authorizes translation.
+    if (captureCount_ && static_cast<uint32_t>(in.now-captureSampleMs_) > Config::LEFT_CAPTURE_MAX_GAP_MS)
+        captureHistory_ = captureCount_ = 0;
+    const bool sampled = !captureCount_ || static_cast<uint32_t>(in.now-captureSampleMs_) >= Config::LEFT_CAPTURE_SAMPLE_MS;
+    if (sampled) {
+        captureHistory_ = static_cast<uint8_t>(((captureHistory_ << 1) | (narrow ? 1 : 0)) & 7u);
+        if (captureCount_ < 3) ++captureCount_;
+        captureSampleMs_ = in.now;
+    }
+    const unsigned votes = (captureHistory_ & 1u) + ((captureHistory_ >> 1) & 1u) + ((captureHistory_ >> 2) & 1u);
+    if (sampled && in.linePattern == 2 && captureCount_ >= 2 && votes >= 2) {
+        phase_ = Phase::Following;
+        segmentStartedMs_ = in.now;
+        resetLineTracking();
+        turnSettling_ = true;
+        return MotorAction::Stop; // Rear-sonar handoff still precedes translation.
+    }
+    MotorAction direction = MotorAction::Stop;
+    if (in.linePattern == 3 || in.linePattern == 1) direction = MotorAction::PivotRight;
+    if (in.linePattern == 6 || in.linePattern == 4) direction = MotorAction::PivotLeft;
+    // Blank after capture may be overshoot: only a bounded countersteer,
+    // never blind translation. Wide 111/101 remain stopped.
+    if (in.linePattern == 0 && static_cast<uint32_t>(in.now-lineLossStartedMs_) >= Config::LINE_RECOVERY_STOP_MS)
+        direction = searchDirection_;
+    if (direction == MotorAction::Stop) {
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
+        return MotorAction::Stop;
+    }
+    if (direction != searchDirection_) {
+        searchDirection_ = direction;
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
+        return MotorAction::Stop;
+    }
+    const uint32_t sinceChange = in.now-searchMotorChangedMs_;
+    if (searchPulse_) {
+        if (sinceChange < Config::LINE_RECOVERY_PULSE_MS) return direction;
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
+        return MotorAction::Stop;
+    }
+    if (sinceChange < Config::LINE_RECOVERY_REST_MS) return MotorAction::Stop;
+    searchPulse_ = true;
+    searchMotorChangedMs_ = in.now;
+    return direction;
+}
+
 int CoreNavigator::zoneIndex(const char* node) {
     return node && node[0] == 'M' && node[1] >= '1' && node[1] <= '6' && !node[2]
         ? node[1] - '1' : -1;
@@ -23,7 +180,7 @@ const char* CoreNavigator::requestedZone() const {
     if (const auto* zone = missingZone()) return zone;
     // Ask at most one segment ahead, only while approaching an authorized
     // straight-through RFID. Missing lookahead never inhibits this segment.
-    if (!soloTrial_ && phase_ == Phase::Following && index_+1 < length_ &&
+    if (!soloTrial_ && following() && index_+1 < length_ &&
         passThrough_[index_] && !hasGrant(path_[index_+1])) return path_[index_+1];
     return nullptr;
 }
@@ -70,7 +227,8 @@ bool CoreNavigator::start(const char* current, const CoreCommand& command, const
     segmentStartedMs_ = turnStartedMs_ = now;
     stoppedAtMs_ = now;
     oldLineDeparted_ = false;
-    lineLossPending_ = false;
+    turnRetryUsed_ = false;
+    resetLineTracking();
     soloTrial_ = soloTrial;
     error_ = ErrorCode::None;
     phase_ = Phase::WaitingGrant;
@@ -84,7 +242,8 @@ void CoreNavigator::stop() {
     length_ = index_ = 0;
     for (auto& id : grantIds_) id = 0;
     soloTrial_ = false;
-    lineLossPending_ = false;
+    turnRetryUsed_ = false;
+    resetLineTracking();
 }
 bool CoreNavigator::clearFault() {
     obstaclePaused_ = false;
@@ -95,7 +254,8 @@ bool CoreNavigator::clearFault() {
     length_ = index_ = 0;
     for (auto& id : grantIds_) id = 0;
     soloTrial_ = false;
-    lineLossPending_ = false;
+    turnRetryUsed_ = false;
+    resetLineTracking();
     return true;
 }
 void CoreNavigator::fault(ErrorCode reason) {
@@ -106,7 +266,8 @@ void CoreNavigator::fault(ErrorCode reason) {
     length_ = index_ = 0;
     for (auto& id : grantIds_) id = 0;
     soloTrial_ = false;
-    lineLossPending_ = false;
+    turnRetryUsed_ = false;
+    resetLineTracking();
 }
 void CoreNavigator::reachedNode(const char* node, uint32_t now, const ControlInput* input) {
     if (!active()) return;
@@ -118,6 +279,7 @@ void CoreNavigator::reachedNode(const char* node, uint32_t now, const ControlInp
     const bool parkedReverse = reverseAfterTurn_[index_];
     // A tag seen while rotating/waiting cannot prove the reverse leg happened.
     if (parkedReverse && phase_ != Phase::Following) { fault(ErrorCode::UnexpectedNode); return; }
+    resetLineTracking();
     AGVMath::copyText(current_, sizeof(current_), node);
     ++index_;
     nodeOrderReceived_ = false;
@@ -128,6 +290,7 @@ void CoreNavigator::reachedNode(const char* node, uint32_t now, const ControlInp
                 phase_ = Phase::WaitingGrant;
                 stoppedAtMs_ = segmentStartedMs_ = now;
                 oldLineDeparted_ = lineLossPending_ = false;
+                turnRetryUsed_ = false;
             }
             stationOriented_ = true;
             return;
@@ -145,6 +308,7 @@ void CoreNavigator::reachedNode(const char* node, uint32_t now, const ControlInp
     segmentStartedMs_ = turnStartedMs_ = now;
     stoppedAtMs_ = now;
     oldLineDeparted_ = false;
+    turnRetryUsed_ = false;
     lineLossPending_ = false;
     if (through) { phase_ = Phase::Following; nodeOrderReceived_ = true; }
     else phase_ = Phase::WaitingGrant;
@@ -169,6 +333,25 @@ void CoreNavigator::resetGrants() {
     for (auto& id : grantIds_) id = 0;
     if (active()) fault(ErrorCode::NotConnected);
 }
+bool CoreNavigator::observeTurnLine(const ControlInput& in) {
+    if (!Config::LEFT_TURN_CAPTURE_ENABLED || phase_ != Phase::Turning ||
+        turns_[index_] != RouteTurn::Left) return false;
+    // The center leaving its old stripe is sufficient: the side eyes may
+    // overlap the junction throughout, so a fully blank 000 may never occur.
+    // 101 still straddles a wide stripe/junction; do not use it as departure.
+    if (in.linePattern == 0 || in.linePattern == 1 || in.linePattern == 4) oldLineDeparted_ = true;
+    if (!oldLineDeparted_ || !(in.linePattern & 2u)) return false;
+    phase_ = Phase::TurnCapture;
+    captureHistory_ = captureCount_ = 0;
+    lineLossPending_ = true;
+    lineLossStartedMs_ = searchMotorChangedMs_ = in.now;
+    centerSamples_ = 0;
+    searchPulse_ = false;
+    // If inertia carries the sensors past the captured stripe, search BACK
+    // briefly, never continue a long left rotation to another branch.
+    searchDirection_ = MotorAction::PivotRight;
+    return true;
+}
 MotorAction CoreNavigator::update(const ControlInput& in) {
     if (!active()) return MotorAction::Stop;
     if (!in.wifi || !in.mqtt) { fault(ErrorCode::NotConnected); return MotorAction::Stop; }
@@ -177,6 +360,10 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
     if (in.obstacle) {
         if (Config::REAR_ULTRASONIC_ECHO_PIN < 0) { fault(ErrorCode::Obstacle); return MotorAction::Stop; }
         if (!obstaclePaused_) { obstaclePaused_ = true; obstaclePausedAtMs_ = in.now; }
+        centerSamples_ = 0;
+        captureHistory_ = captureCount_ = 0;
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
         return MotorAction::Stop;
     }
     if (obstaclePaused_) {
@@ -185,6 +372,8 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
         turnStartedMs_ += held;
         stoppedAtMs_ += held;
         lineLossStartedMs_ += held;
+        lastCorrectionMs_ += held;
+        if (recoveringLine()) searchMotorChangedMs_ = in.now;
         obstaclePaused_ = false;
     }
     if (needsNodeOrder()) {
@@ -243,9 +432,36 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
         }
     }
     if (phase_ == Phase::Turning) {
+        if (observeTurnLine(in)) return MotorAction::Stop;
         if (static_cast<uint32_t>(in.now - turnStartedMs_) >= Config::TURN_TIMEOUT_MS) {
-            fault(ErrorCode::TurnTimeout); return MotorAction::Stop;
+            const bool retryable = Config::TURN_RETRY_ENABLED && !turnRetryUsed_ &&
+                !(Config::LEFT_TURN_CAPTURE_ENABLED && turns_[index_] == RouteTurn::Left) &&
+                (turns_[index_] == RouteTurn::Left || turns_[index_] == RouteTurn::Right);
+            if (retryable) {
+                // One local retry keeps the route and mutex intact. Stop for this
+                // control cycle, then repeat the same pivot direction from a clean
+                // line-crossing detector. Safety/network checks still run first.
+                turnRetryUsed_ = true;
+                turnStartedMs_ = lastCrossingMs_ = in.now;
+                crossedLines_ = 0;
+                oldLineDeparted_ = false;
+#if defined(ARDUINO)
+                if (Config::DEBUG_ENABLED) Serial.printf("[LINE] turn_retry=1 maneuver=%s node=%s next=%s\n",
+                    RoutePlanner::turnName(turns_[index_]), current_, nextNode());
+#endif
+                return MotorAction::Stop;
+            }
+#if defined(ARDUINO)
+            if (Config::DEBUG_ENABLED && turnRetryUsed_) Serial.printf(
+                "[LINE] turn_retry_failed maneuver=%s node=%s next=%s\n",
+                RoutePlanner::turnName(turns_[index_]), current_, nextNode());
+#endif
+            fault(turnRetryUsed_ || (Config::LEFT_TURN_CAPTURE_ENABLED && turns_[index_] == RouteTurn::Left) ?
+                ErrorCode::LineLost : ErrorCode::TurnTimeout);
+            return MotorAction::Stop;
         }
+        if (Config::LEFT_TURN_CAPTURE_ENABLED && turns_[index_] == RouteTurn::Left)
+            return MotorAction::PivotLeft;
         const bool centered = in.linePattern == 2 || in.linePattern == 5 || in.linePattern == 7;
         // Side-only patterns can occur while the sensors are still over the
         // RFID junction. Require a fully blank sample before accepting a
@@ -267,11 +483,18 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
             } else return MotorAction::PivotRight;
         } else return turns_[index_] == RouteTurn::Left ? MotorAction::PivotLeft : MotorAction::PivotRight;
     }
+    if (phase_ == Phase::TurnCapture) {
+        return alignTurnLine(in);
+    }
+    if (turnSettling_ && static_cast<uint32_t>(in.now-segmentStartedMs_) >= Config::LEFT_CAPTURE_SETTLE_MS)
+        turnSettling_ = false;
     if (static_cast<uint32_t>(in.now - segmentStartedMs_) >= Config::SEGMENT_TIMEOUT_MS) {
         fault(ErrorCode::MotionTimeout); return MotorAction::Stop;
     }
     const MotorAction action = segmentReverse()
         ? AGVMath::reverseLineAction(in.linePattern) : AGVMath::lineAction(in.linePattern);
+    if (Config::LINE_RECOVERY_ENABLED && (lineLossPending_ || in.linePattern == 0))
+        return recoverLine(in);
     if (in.linePattern == 0 && Config::LINE_LOSS_CONFIRM_MS > 0) {
         if (!lineLossPending_) {
             lineLossPending_ = true;
@@ -298,14 +521,14 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
             static_cast<unsigned int>(in.linePattern), current_, nextNode());
 #endif
         fault(in.linePattern == 0 ? ErrorCode::LineLost : ErrorCode::AmbiguousLine);
-    }
+    } else rememberLine(in, action);
     return action;
 }
 AGVState CoreNavigator::state() const {
     if (obstaclePaused_) return AGV_WAITING;
     if (phase_ == Phase::Fault) return AGV_SAFE_STOP;
     if (phase_ == Phase::WaitingGrant || phase_ == Phase::StationDwell) return AGV_WAITING;
-    if (phase_ == Phase::Turning || phase_ == Phase::Following || phase_ == Phase::StationTurning) return AGV_MOVING;
+    if (phase_ == Phase::Turning || phase_ == Phase::TurnCapture || phase_ == Phase::Following || phase_ == Phase::StationTurning) return AGV_MOVING;
     return AGV_IDLE;
 }
 const char* CoreNavigator::nextNode() const { return active() && index_ < length_ ? path_[index_] : ""; }

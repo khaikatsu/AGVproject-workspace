@@ -10,6 +10,12 @@
 static bool decode(const char* wire,CoreCommand& c){return CoreProtocol::decodeCommand(reinterpret_cast<const uint8_t*>(wire),std::strlen(wire),c);}
 
 static int selfTest(){
+#if defined(AGV_PROFILE_ID)
+    static_assert(Config::SERVO_SINGLE_TEST, "Both robot profiles must enable the single servo");
+    static_assert(Config::REAR_ULTRASONIC_TRIG_PIN==0 && Config::REAR_ULTRASONIC_ECHO_PIN==15 && Config::BUZZER_PIN==21,
+        "Shared sonar/buzzer wiring changed");
+    static_assert(Config::LINE_LOSS_CONFIRM_MS==5000 && Config::ENCODER_ENABLED, "Shared capabilities missing");
+#endif
     ServoModule servo;servo.begin();CHECK(servo.liftConfigured()==Config::SERVO_SINGLE_TEST);
     CoreCommand up,down,bad;
     const char* upWire=R"({"cmd":"LIFT_UP","cmd_id":100,"node":"K5"})";

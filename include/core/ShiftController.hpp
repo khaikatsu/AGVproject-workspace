@@ -10,10 +10,11 @@ public:
                     std::filesystem::path file,
                     std::unordered_map<std::string,std::string> homes = {{"01","S1"},{"02","S2"}},
                     bool singleRobotTrial = false, bool twoRobotTrial = false,
-                    std::string trialRobotId = "")
+                    std::string trialRobotId = "",
+                    std::unordered_set<std::string> activeRobotIds = {})
         : map_(map), fleet_(fleet), arbiter_(arbiter), file_(std::move(file)),
           homes_(std::move(homes)), singleRobotTrial_(singleRobotTrial), twoRobotTrial_(twoRobotTrial),
-          trialRobotId_(std::move(trialRobotId)) {
+          trialRobotId_(std::move(trialRobotId)), activeRobotIds_(std::move(activeRobotIds)) {
         const auto stations = map_.chargingStations();
         supported_ = !homes_.empty();
         std::unordered_set<std::string> assigned;
@@ -31,6 +32,12 @@ public:
             ((trialRobotId_ != "01" && trialRobotId_ != "02") || singleRobotTrial_ || twoRobotTrial_ ||
              homes_.size() != 1 || !homes_.count(trialRobotId_) ||
              homes_.at(trialRobotId_) != (trialRobotId_ == "01" ? "S1" : "S2"))) supported_ = false;
+        if (!activeRobotIds_.empty()) {
+            if (singleRobotTrial_ || twoRobotTrial_ || !trialRobotId_.empty() || homes_.size() != activeRobotIds_.size())
+                supported_ = false;
+            for (const auto& id : activeRobotIds_)
+                if ((id != "01" && id != "02") || homes_.count(id) != 1) supported_ = false;
+        }
         if (!supported_) return; // đồ thị fixture/legacy không có cặp trạm: giữ chức năng cũ
         if (std::filesystem::exists(file_)) {
             std::ifstream input(file_); json data; input >> data;
@@ -62,9 +69,11 @@ public:
             ? "Cho xe 01 online o S1, RFID moi, khong loi/hanh trinh/vung chiem va khong co xe khac"
             : twoRobotTrial_
             ? "Cho ca hai xe 01/02 online o S1/S2, RFID moi, khong loi/hanh trinh/vung chiem"
-            : "Cho it nhat mot xe online o tram rieng, RFID moi, khong loi/vung chiem va pin da do >=40%";
+            : fleet_.batteryGateEnabled() ? "Cho it nhat mot xe online o tram rieng, RFID moi, khong loi/vung chiem va pin da do >=40%"
+            : "Cho xe online o tram rieng, RFID moi, khong loi/task/vung chiem; dang tam bo chot pin";
         const auto homesInShift = knownHomes(fleet_.toJson());
         transition("RUNNING");
+        hasRunThisSession_ = true;
         fleet_.beginWorkFromHome(homesInShift);
         return "";
     }
@@ -77,6 +86,10 @@ public:
                 ready = ready && robot.value("ready",false);
             if (phase_ == "CLOSING" && ready) transition("CLOSED");
             return; // A test stop does not force a trip back to S1.
+        }
+        if (!activeRobotIds_.empty() && !hasRunThisSession_) {
+            if (status["all_home"].get<bool>() && phase_ == "CLOSING") transition("CLOSED");
+            return; // Chon pham vi luc khoi dong khong duoc tu phat GOTO/CHARGE_START.
         }
         if (phase_ == "CLOSED" && !status["all_home"].get<bool>()) transition("CLOSING");
         const auto fleet = fleet_.toJson();
@@ -110,12 +123,23 @@ public:
         json result = {{"supported",supported_},{"single_robot_trial",singleRobotTrial_},{"two_robot_trial",twoRobotTrial_},
             {"trial_robot_id",trialRobotId_},{"supervised_trial",twoRobotTrial_ || !trialRobotId_.empty()},
             {"test_mode",!trialRobotId_.empty() ? "robot" + trialRobotId_ : twoRobotTrial_ ? "both" : singleRobotTrial_ ? "legacy01" : "normal"},
+            {"operation_profile",activeRobotIds_.empty() ? "all" : "scoped"},{"active_robot_ids",json::array()},
             {"phase",supported_ ? phase_ : "UNAVAILABLE"},
             {"home_stations",homes_},{"robots",json::array()},{"all_home",false},{"can_start",false}};
+        if (activeRobotIds_.empty()) {
+            result["active_robot_ids"].push_back("01");result["active_robot_ids"].push_back("02");
+        } else {
+            std::vector<std::string> active(activeRobotIds_.begin(),activeRobotIds_.end());
+            std::sort(active.begin(),active.end());
+            for (const auto& id : active) result["active_robot_ids"].push_back(id);
+        }
         if (!supported_) return result;
         const auto fleet = fleet_.toJson(), zones = arbiter_.toJson();
         const auto homesInShift = knownHomes(fleet);
-        bool allHome = !homesInShift.empty() && homesInShift.size() == fleet["agvs"].size();
+        const auto participatingCount = std::count_if(fleet["agvs"].begin(),fleet["agvs"].end(),[&](const json& robot) {
+            return activeRobotIds_.empty() || activeRobotIds_.count(robot.value("id",std::string{}));
+        });
+        bool allHome = !homesInShift.empty() && homesInShift.size() == participatingCount;
         if (!trialRobotId_.empty()) allHome = homesInShift.size() == 1;
         if (twoRobotTrial_) allHome = allHome && homesInShift.size() == 2;
         bool batteriesReady = true, robot01Ready = false;
@@ -149,7 +173,7 @@ public:
                 else if (ownsZone) reason = "Cho xac nhan roi mutex zone";
                 else if (ready) reason = "Da xac minh tai tram";
                 if (trialRobotId_ == "01" && ready) reason = "San sang thu tai RFID hien tai";
-                const bool unknownSingleBattery = homesInShift.size() == 1 &&
+                const bool unknownSingleBattery = activeRobotIds_.empty() && homesInShift.size() == 1 &&
                     !a->value("battery_measured",false) && a->value("battery",0) == -1;
                 batteriesReady = batteriesReady && (singleRobotTrial_ || twoRobotTrial_ || !trialRobotId_.empty() || unknownSingleBattery ||
                     (a->value("battery_measured",false) && a->value("battery",0) >= 40));
@@ -179,8 +203,29 @@ public:
             result["inactive_robots_ready"] = inactiveReady;
             allHome = allHome && inactiveReady;
         }
+        if (!activeRobotIds_.empty()) {
+            bool inactiveReady = true;
+            for (const auto& robot : fleet["agvs"]) {
+                const auto id = robot.value("id",std::string{});
+                if (activeRobotIds_.count(id)) continue;
+                const std::string home = id == "01" ? "S1" : id == "02" ? "S2" : "";
+                bool ownsZone = false;
+                for (const auto& zone : zones.items()) if (zone.value().value("owner",std::string{}) == id) ownsZone = true;
+                const bool safe = !home.empty() && robot.value("online",false) && robot.value("position_valid",false) &&
+                    robot.value("node",std::string{}) == home && robot.value("state",std::string{}) == "IDLE" &&
+                    robot.value("task_id",std::string{}).empty() && robot.value("target",std::string{}).empty() &&
+                    robot["path"].empty() && robot["uncertain_path"].empty() && !ownsZone;
+                inactiveReady = inactiveReady && safe;
+                result["robots"].push_back({{"id",id},{"home_station",home},{"actual_node",robot.value("node",std::string{})},
+                    {"participating",false},{"at_home",safe},{"ready",safe},
+                    {"reason",safe ? "Xe ngoai pham vi: dung an toan tai tram" : "Xe ngoai pham vi: can xac minh tai tram"}});
+            }
+            result["inactive_robots_ready"] = inactiveReady;
+            allHome = allHome && inactiveReady;
+        }
         result["all_home"] = allHome;
-        result["can_start"] = phase_ == "CLOSED" && allHome && batteriesReady && fleet_.networkAvailable();
+        // result["can_start"] = phase_ == "CLOSED" && allHome && batteriesReady && fleet_.networkAvailable();
+        result["can_start"] = phase_ == "CLOSED" && allHome && (!fleet_.batteryGateEnabled() || batteriesReady) && fleet_.networkAvailable();
         if (trialRobotId_ == "01") result["can_start"] = phase_ == "CLOSED" && robot01Ready &&
             result.value("inactive_robots_ready",true) && fleet_.networkAvailable();
         return result;
@@ -189,6 +234,7 @@ private:
     std::unordered_map<std::string,std::string> knownHomes(const json& fleet) const {
         std::unordered_map<std::string,std::string> result;
         for (const auto& robot : fleet["agvs"]) {
+            if (!activeRobotIds_.empty() && !activeRobotIds_.count(robot.value("id",std::string{}))) continue;
             const auto home = homes_.find(robot.value("id",std::string{}));
             if (home == homes_.end()) { if (!trialRobotId_.empty()) continue; return {}; }
             result.insert(*home);
@@ -213,5 +259,7 @@ private:
     bool singleRobotTrial_ = false;
     bool twoRobotTrial_ = false;
     std::string trialRobotId_;
+    std::unordered_set<std::string> activeRobotIds_;
+    bool hasRunThisSession_ = false;
     std::string phase_ = "CLOSING";
 };

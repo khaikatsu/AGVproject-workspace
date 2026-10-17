@@ -82,13 +82,17 @@ function createOrderService({db,getState,getSession,send,publish}) {
   }
   function eligible(state,used) {
     const trialRobot = selectedRobot(state);
-    return state.fleet.agvs.filter(robot=>robot.state === 'IDLE' && !robot.error && robot.online !== false && robot.position_valid !== false &&
+    return state.fleet.agvs.filter(robot=>robot.participating !== false && robot.state === 'IDLE' && !robot.error && robot.online !== false && robot.position_valid !== false &&
       (!trialRobot || robot.id === trialRobot) && !robot.task_id && !used.has(robot.id));
   }
   function selectedRobot(state) {
     if (state.shift?.test_mode === 'robot01') return '01';
     if (state.shift?.test_mode === 'robot02') return '02';
     return state.shift?.trial_robot_id || state.fleet.trial_robot_id || null;
+  }
+  function standaloneScope(state) {
+    return ['robot01','robot02'].includes(state?.shift?.test_mode) || state?.shift?.operation_profile === 'scoped' &&
+      Array.isArray(state.shift.active_robot_ids) && state.shift.active_robot_ids.length === 1;
   }
   function preview(state,item,robot) {
     const route=(from,to)=>{const value=shortestRoute(state.map,from,to);return {path:value.path,cost:Number.isFinite(value.cost)?value.cost:null};};
@@ -154,7 +158,7 @@ function createOrderService({db,getState,getSession,send,publish}) {
       const state = getState();
       if (!state) return;
       // Xe01 is currently a warehouse-action test, not an order/cargo system.
-      if (state.shift?.test_mode === 'robot01') return;
+      if (standaloneScope(state)) return;
       for (const order of orders) {
         if (order.status !== 'active') continue;
         if (order.core_session_id !== getSession()) {interrupt(order,order.items.find(activeItem),'Phiên Core đã thay đổi');continue;}
@@ -196,7 +200,7 @@ function createOrderService({db,getState,getSession,send,publish}) {
   }
   function create(body) {
     const state = getState();
-    if (state?.shift?.test_mode === 'robot01') throw Object.assign(new Error('Test xe01 dùng nút Lấy hàng / Hạ hàng, chưa xử lý đơn hàng'),{status:409});
+    if (standaloneScope(state)) throw Object.assign(new Error('Phạm vi một xe dùng nút Lấy hàng / Hạ hàng, chưa xử lý đơn hàng'),{status:409});
     if (!state || state.mqtt_connected === false || state.fleet.accepting_tasks === false || state.shift?.phase !== 'RUNNING')
       throw Object.assign(new Error('Cần Core/MQTT sẵn sàng và ca RUNNING để tạo đơn'),{status:409});
     let plan;

@@ -84,7 +84,8 @@ bool CoreProtocol::decodeCommand(const uint8_t* payload, size_t length, CoreComm
             command.reverseAfterTurn = doc["reverse_after_turn"].as<bool>();
         }
         if (command.reverseAfterTurn && (!Config::REVERSE_HOME_SUPPORTED ||
-            std::strcmp(command.node,"GS1") != 0 || std::strcmp(command.nextNode,"S1") != 0 ||
+            !((std::strcmp(command.node,"GS1") == 0 && std::strcmp(command.nextNode,"S1") == 0) ||
+              (std::strcmp(command.node,"GS2") == 0 && std::strcmp(command.nextNode,"S2") == 0)) ||
             std::strcmp(command.maneuver,"STATION_TURN_RIGHT") == 0 || std::strcmp(command.maneuver,"REVERSE") == 0)) return false;
         return true;
     }

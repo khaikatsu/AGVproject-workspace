@@ -6,6 +6,9 @@ const finished=action=>['completed','interrupted'].includes(action.status);
 // Temporary warehouse tests; the servo cargo marker is not an order or a load sensor.
 function createWarehouseActions({getState,getSession,send,publish}) {
   const actions=[];let running=null,closed=false;
+  const scopedRobot=state=>state?.shift?.trial_robot_id ||
+    (state?.shift?.operation_profile==='scoped'&&state.shift.active_robot_ids?.length===1 ? state.shift.active_robot_ids[0] :
+      state?.shift?.test_mode==='robot01'?'01':state?.shift?.test_mode==='robot02'?'02':null);
   const changed=()=>publish();
   function interrupt(action,reason){action.status='interrupted';action.reason=reason;changed();}
   function at(state,action,node){const robot=state.fleet.agvs.find(robot=>robot.id===action.robot);
@@ -38,16 +41,16 @@ function createWarehouseActions({getState,getSession,send,publish}) {
   }
   async function create(robotId,body){
     const state=getState();
-    if(!state||state.shift?.test_mode!=='robot01'||state.shift.phase!=='RUNNING'||state.mqtt_connected===false||state.fleet.accepting_tasks===false)
-      throw Object.assign(Error('Cần Core test xe01 sẵn sàng và ca RUNNING'),{status:409});
-    if(robotId!=='01')throw Object.assign(Error('Chế độ này thử riêng xe01'),{status:409});
+    if(!state||!['01','02'].includes(scopedRobot(state))||state.shift.phase!=='RUNNING'||state.mqtt_connected===false||state.fleet.accepting_tasks===false)
+      throw Object.assign(Error('Cần Core phạm vi một xe sẵn sàng và ca RUNNING'),{status:409});
+    if(robotId!==scopedRobot(state))throw Object.assign(Error('Xe ngoài phạm vi vận hành'),{status:409});
     if(!['pickup','dropoff'].includes(body?.action))throw Object.assign(Error('Chọn lấy hàng hoặc hạ hàng'),{status:400});
     const warehouse=body.warehouse;
     if(typeof warehouse!=='string'||!/^K[1-6]$/.test(warehouse)||!state.map.nodes.some(node=>node.id===warehouse&&node.type==='station'))
       throw Object.assign(Error('Kho không hợp lệ'),{status:400});
     const gate=warehouse.replace('K','G'),robot=state.fleet.agvs.find(robot=>robot.id===robotId);
     if(!robot||robot.state!=='IDLE'||robot.error||robot.online===false||robot.position_valid===false||robot.task_id||robot.target||robot.path?.length)
-      throw Object.assign(Error('Xe01 cần IDLE, có RFID hợp lệ và không đang chạy tuyến'),{status:409});
+      throw Object.assign(Error(`Xe ${robotId} cần IDLE, có RFID hợp lệ và không đang chạy tuyến`),{status:409});
     if(actions.some(action=>!finished(action)))throw Object.assign(Error('Đang thực hiện thao tác kho hiện tại'),{status:409});
     if(state.fleet.pending_tasks?.length)throw Object.assign(Error('Core đang có task chờ; xử lý trước khi thử kho'),{status:409});
     if(!state.map.edges.some(edge=>edge.from===warehouse&&edge.to===gate||edge.two_way&&edge.to===warehouse&&edge.from===gate))

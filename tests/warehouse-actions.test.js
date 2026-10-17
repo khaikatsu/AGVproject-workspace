@@ -1,10 +1,10 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {createWarehouseActions,SERVICE_MS}=require('../AGVwebserver/warehouse-actions');
-function fixture(servo=false){
+function fixture(servo=false,scoped=false){
   const robot={id:'01',node:'S1',state:'IDLE',online:true,position_valid:true,error:'',path:[],task_id:null};
   if(servo)robot.lift={supported:true,fresh:true,ready:true,observed_node:'S1',active:false,state:'IDLE',command_id:0};
-  const state={mqtt_connected:true,shift:{phase:'RUNNING',test_mode:'robot01'},map:{
+  const state={mqtt_connected:true,shift:scoped?{phase:'RUNNING',test_mode:'normal',operation_profile:'scoped',active_robot_ids:['01']}:{phase:'RUNNING',test_mode:'robot01'},map:{
     nodes:['S1','G1','G2','K1','K2'].map(id=>({id,type:id.startsWith('K')?'station':'waypoint'})),
     edges:[{from:'S1',to:'G1',weight:10},{from:'G1',to:'K1',weight:20,two_way:true},{from:'G1',to:'G2',weight:50},{from:'G2',to:'K2',weight:20,two_way:true}],obstacles:[]},
     fleet:{agvs:[robot],tasks:[],pending_tasks:[],accepting_tasks:true}};
@@ -19,6 +19,24 @@ function fixture(servo=false){
     state.fleet.tasks.push(task);robot.state='WORKING';robot.task_id=task.task_id;return {task_id:task.task_id};}});
   return {state,robot,service,commands,session:value=>session=value,arrive(node){state.fleet.tasks.at(-1).status='completed';robot.node=node;robot.state='IDLE';robot.task_id=null;if(robot.lift){robot.lift.observed_node=node;robot.lift.ready=true;}}};
 }
+test('unified Core scope 01 keeps the standalone warehouse workflow',async()=>{
+  const f=fixture(false,true);try{
+    const action=await f.service.create('01',{action:'pickup',warehouse:'K1'});
+    assert.equal(action.status,'to_warehouse');assert.equal(f.commands.at(-1).agv_id,'01');
+  }finally{await f.service.close();}
+});
+test('scope 02 runs its servo cycle and cannot dispatch robot 01',async()=>{
+  const f=fixture(true,true);try{
+    f.robot.id='02';f.state.shift.active_robot_ids=['02'];
+    await assert.rejects(f.service.create('01',{action:'pickup',warehouse:'K1'}),/ngoài phạm vi/);
+    const action=await f.service.create('02',{action:'pickup',warehouse:'K1'});
+    f.arrive('K1');await f.service.tick();
+    assert.equal(f.commands.at(-1).cmd,'warehouse_lift');assert.equal(f.commands.at(-1).agv_id,'02');
+    Object.assign(f.robot.lift,{active:false,state:'DONE_UP',command_id:action.lift_command_id});
+    Object.assign(f.robot,{state:'IDLE',virtual_cargo:true,virtual_cargo_known:true});
+    await f.service.tick();assert.equal(f.commands.at(-1).agv_id,'02');assert.equal(f.commands.at(-1).target,'G1');
+  }finally{await f.service.close();}
+});
 test('pickup then dropoff are standalone: RFID, five seconds, reverse gate, next command',async()=>{
   const f=fixture();try {
     assert.equal(SERVICE_MS,5000);

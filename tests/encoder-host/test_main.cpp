@@ -8,6 +8,9 @@
 void near(double a,double b) {CHECK(std::fabs(a-b) < 0.02);}
 int main() {
     try {
+#if defined(AGV_PROFILE_ID)
+        static_assert(Config::ENCODER_ENABLED, "Both robot profiles need encoder support");
+#endif
         EncoderModule sensor; sensor.begin();
         const auto sampleAt = [&](uint32_t now) {EncoderIo::timeUs = now*1000;sensor.update(now);};
         if (!Config::ENCODER_ENABLED) {

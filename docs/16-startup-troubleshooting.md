@@ -1,5 +1,7 @@
 # Chẩn đoán khởi động gateway và core — 29/09/2026
 
+CURRENT 16/10/2026: menu F5 1/2/3 chọn scope `active01`, `active02`, `active-both` của cùng Core thống nhất; không còn chọn luật trial bỏ qua pin. Tự động hóa có thể dùng `build/agv_core.exe --mode active01` (tương tự `active02`, `active-both`, `normal`). Các tham số `robot01|robot02|both` bên dưới được giữ tạm cho hồi quy lịch sử. Chọn scope không tự mở ca hoặc phát GOTO/CHARGE_START. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).
+
 ### Telemetry treo, lỗi/phục hồi lặp khi F5 — 14/10/2026
 
 Cấu hình F5 đã thêm `_NO_DEBUG_HEAP=1`: debug heap Windows làm cấp phát JSON lịch sử chậm, giữ lock MQTT và khiến heartbeat vượt watchdog3s. Đối chứng400task:314ms dưới GDB mặc định so với16ms khi tắt debug heap. Fixture1000task/encoder5Hz qua GDB PASS heartbeat max278ms. Không tăng timeout hoặc xóa lịch sử. [ADR-052](decisions/ADR-052-core-debug-heap-heartbeat.md).

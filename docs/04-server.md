@@ -1,5 +1,9 @@
 # Phát triển server và lưu trữ
 
+CURRENT 16/10/2026, ghi đè tạm để test: Core main comment ngưỡng pin gốc, bật bypass cho mở ca/task/GOTO và tắt tự sạc vì nhóm sạc thủ công. Kết thúc ca vẫn về trạm, đỗ IDLE; RFID/MQTT/ACK/mutex và scope giữ nguyên. Hai cờ trạng thái được công bố cho dashboard; không sửa firmware. [ADR-060](decisions/ADR-060-temporary-battery-bypass-manual-charge.md).
+
+CURRENT 16/10/2026: một entrypoint/binary Core phục vụ scope xe 01, xe 02 hoặc cả hai. Scope là danh sách robot tham gia, không phải nhánh thuật toán trial; các chốt pin20/40, RFID, MQTT, ACK và mutex giữ như vận hành thật. State thêm `operation_profile` và `active_robot_ids`; robot thêm `participating`. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).
+
 Core C++ quản lý map/fleet/mutex. Gateway Node.js chuyển lệnh, phát state cho browser và ghi SQLite. Nền này là `OBSERVED`; các cải tiến bên dưới là `PROPOSED`.
 
 ## API đang có

@@ -1,4 +1,6 @@
-# Hợp đồng odometry xe 01 — schema 1
+# Hợp đồng odometry xe 01 và 02 — schema 1
+
+16/10/2026: REQ-ROBOT02-PARITY-01 mở cùng schema cho cả hai profile. Topic `agv/{id}/odometry`, `robot_id` là `01` hoặc `02` và phải trùng topic. Core lưu phiên/seq/route độc lập; cùng boot ID hoặc seq giữa hai xe không ghép dữ liệu. Ví dụ01 bên dưới vẫn hợp lệ; [ví dụ02](examples/robot02-odometry.json). [ADR-059](../docs/decisions/ADR-059-robot02-firmware-parity.md) thay các giới hạn chỉ xe01/mode test01 ở phần lịch sử dưới đây.
 
 Diagnostic01 bản `20261014-robot01-network-clock-fix` thêm `networkServiceAgeMs` (integer ms từ lần worker phục vụ), `coreHeartbeatAgeMs` (integer ms/null nếu chưa có heartbeat), `mqttClientState` (integer từ PubSubClient), `wifiRssi` (integer từ SDK). Đây là chẩn đoán, không đổi odometry/telemetry/command. Trong Core test01, session diagnostic encoder phải hợp lệ trước xử lý motion; SAFE_STOP/ERROR mới đúng phiên và node đưa Core ERROR qua luồng lỗi nếu Core còn khỏe, để không báo IDLE khi mất error event QoS0. [ADR-051](../docs/decisions/ADR-051-robot01-network-health-and-diagnostic-fault.md).
 
@@ -6,7 +8,7 @@ Diagnostic01 bản `20261014-robot01-network-clock-fix` thêm `networkServiceAge
 
 | Trường | Kiểu / giới hạn | Ý nghĩa |
 | --- | --- | --- |
-| schema_version/robot_id | số nguyên 1/string `01` | Phiên bản/xe |
+| schema_version/robot_id | số nguyên 1/string `01` hoặc `02` | Phiên bản/xe, ID phải trùng topic |
 | core_session_id | chuỗi 1–95byte | Phiên heartbeat Core |
 | boot_id/connection_session | số nguyên 1…2³²−1 | Boot ID ngẫu nhiên/generation MQTT |
 | seq/uptime_ms | số nguyên 0…2³²−1 | Thứ tự mẫu/millis, có wrap |

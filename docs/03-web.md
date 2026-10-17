@@ -1,5 +1,13 @@
 # Phát triển web giám sát AGV
 
+16/10/2026, test tạm: dashboard đọc `fleet.battery_gate_enabled=false` để hiện rõ bỏ chốt pin/sạc thủ công, không còn báo ngưỡng20/40 đang có hiệu lực. Bộ chọn xe vẫn giữ scope; thiếu cờ tương thích Core cũ. Số đo và cảnh báo pin vẫn hiển thị, không tự chặn nút theo %. [ADR-060](decisions/ADR-060-temporary-battery-bypass-manual-charge.md).
+
+16/10/2026, REQ-ROBOT02-PARITY-01: tốc độ/marker encoder, sonar và kiện ảo hiển thị cho cả01/02; scope riêng02 hiện cùng nút Lấy/Hạ, phát API tới02. Nhãn vị trí chi tiết theo xe scope/chọn; thanh tốc độ liệt kê cả hai. [ADR-059](decisions/ADR-059-robot02-firmware-parity.md).
+
+16/10/2026: dashboard nhận `operation_profile`, `active_robot_ids` và `participating` từ Core thống nhất. Bộ chọn task vô hiệu xe ngoài scope; scope riêng 01 vẫn hiện thao tác Lấy/Hạ, còn scope hai xe dùng điều phối bình thường. Nhãn UI ghi rõ scope vẫn áp dụng pin/mutex như Core thật. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).
+
+16/10/2026, phần trăm pin diagnostic đã được người dùng chấp nhận làm chuẩn điều phối. Dashboard tô cảnh báo ở≤20%, ghi rõ nguồn diagnostic và mode thường dùng ngưỡng20/40. Các mode trial vẫn không chặn theo ngưỡng dù Core đã nhận số pin. [ADR-021](decisions/ADR-021-display-only-battery.md).
+
 15/10/2026, test servo xe01: trạng thái LIFTING/LOWERING hiện Đang nâng hàng/Đang hạ hàng, lift.state=PENDING hiện Đang gửi lệnh servo. Sau nhúng hoàn tất chu kỳ5s, virtual_cargo=true vẽ đúng một kiện trên marker và nhãn1kiệnảo; DONE_DOWN bỏ kiện. Khi mất độ tin cậy, dấu kiện cũ mờ/chưa xác minh, không giả là hàng thật. Nút lấy/hạ kho giữ tuyến tới kho và lùi gate; có capability mới chờ kết quả servo đúng lệnh, firmware cũ ghi rõ mô phỏng5s/chưa điều khiển servo. [ADR-057](decisions/ADR-057-robot01-servo-lift-test.md).
 
 14/10/2026, test 01: marker nét đứt là vị trí ước tính encoder giữa hai RFID, vòng nhỏ là RFID gần nhất. Tốc độ cm/s hiện ở đầu/bên dưới bản đồ và dòng xe 01; chưa đo/cũ là `—`. Web nối hai mẫu đã nhận bằng animation 180 ms, dừng/giữ marker và ghi dữ liệu cũ sau 1000 ms hoặc mất liên kết/lỗi. Chỉ RFID xác nhận node/hoàn thành. [ADR-050](decisions/ADR-050-robot01-encoder-position-speed.md) thay quy ước chấm chỉ ở node của xe 01 trong đoạn lịch sử bên dưới; mode khác giữ RFID.
@@ -67,9 +75,9 @@ Khung Giao nhiệm vụ có hai chế độ: Đơn hàng kho (mặc định, nh�
 
 Chế độ Đơn hàng kho hiện thanh tiến độ theo đơn được chọn: tử số là số kiện có `status=delivered`, mẫu số là tổng kiện của đơn. Khi có nhiều đơn, người vận hành chọn đơn trong danh sách ngay trên thanh; mặc định ưu tiên đơn đang hoạt động. Kho giao đang ở bước mô phỏng dỡ hàng 10 giây chưa được tính là đã giao. Đây là KPI tiến độ đơn, không phải cảm biến xác nhận hàng vật lý.
 
-Khi Core trả `shift.single_robot_trial=true`, form Đi tới node chọn xe 01 trực tiếp thay cho tùy chọn tự phân xe. Nếu pin chỉ có `battery_display_percent` mà `battery_measured=false` ở Core thường, form giải thích % này chưa được dùng để cấp nhiệm vụ. Giao diện không tự biến % hiển thị thành pin điều khiển hoặc thay ngưỡng 20%/40%.
+Khi Core trả `shift.single_robot_trial=true`, form Đi tới node chọn xe 01 trực tiếp thay cho tùy chọn tự phân xe. Từ REQ-BATTERY-06, Core mới tự chuyển diagnostic calibrated thành pin điều phối; giao diện chỉ trình bày `battery_control_source` và không tự thay ngưỡng 20%/40%.
 
-Khung Ca làm việc hiện rõ Core đang ở chế độ thường hay thử một xe 01. Khi Core thường và xe chỉ có % pin display-only, khung này cảnh báo rằng số % chưa được dùng để cấp nhiệm vụ; người vận hành không cần suy ra trạng thái trial từ lời báo lỗi pin.
+Khung Ca làm việc hiện rõ Core đang ở chế độ thường hay thử. Mode thường ghi pin diagnostic dùng cho điều phối; mode trial ghi rõ ngoại lệ không chặn theo ngưỡng.
 ## Cảnh báo vật cản xe 01 (15/10/2026)
 
 Core test 01 nhận hai sonar và encoder: khi dừng vì vật cản, cạnh đang đi được tô đỏ và một chấm đỏ biểu diễn vị trí ước tính của vật cản. Tooltip cho biết phía trước/sau và khoảng cách đo cm. Điểm dùng tọa độ map cm, không phải pixel cố định; thiếu mẫu encoder/sonar mới thì ẩn cảnh báo vị trí. Khi vật cản rời đi và firmware đọc >20 cm, trạng thái đỏ biến mất, xe tiếp tục tuyến cũ nếu mọi chốt an toàn khác còn hợp lệ. Độ chính xác điểm và quãng phanh cần thử xe thật; xem [ADR-055](decisions/ADR-055-robot01-dual-sonar-edge-warning.md).

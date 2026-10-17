@@ -1,6 +1,18 @@
-# ADR-021 — Hiển thị pin tách khỏi ngưỡng điều phối
+# ADR-021 — Nguồn phần trăm pin NCKHAGV
 
 Ngày 08/10/2026. Trạng thái: đã chốt theo REQ-BATTERY-02.
+
+## Bổ sung 16/10/2026 — REQ-BATTERY-06
+
+Người dùng xác nhận số phần trăm đã lọc đang hiển thị khá hợp lý và yêu cầu dùng nó làm chuẩn. Quyết định này thay phần “display-only” của REQ-BATTERY-02, nhưng không đổi cách firmware lấy mẫu hoặc payload telemetry v0.
+
+- Core chỉ nhận làm pin điều phối khi message diagnostic sống có đúng robot ID, `batteryCalibrated=true` và `batteryPercentage` hữu hạn trong 0–100. Message retained bị loại như trước.
+- Giá trị cập nhật đồng thời `battery`, `battery_measured`, `needs_recharge` và trường hiển thị. Chính sách hiện có tiếp tục dùng ngưỡng thấp20%, nhận việc lại40% và mục tiêu90%.
+- Snapshot thêm `battery_control_source`: `diagnostic`, `telemetry` hoặc `unavailable`. Telemetry số0–100 của firmware cũ vẫn là nguồn hợp lệ và được ưu tiên khi nhận.
+- NCKHAGV tiếp tục gửi `?` trong telemetry để giữ tương thích v0. Dấu `?` không xóa pin diagnostic còn mới trong3giây; nếu diagnostic ngừng/không calibrated thì Core trở lại `battery_measured=false`, pin−1 và khóa giao việc mode thường.
+- Các mode thử vẫn giữ ngoại lệ không chặn theo ngưỡng đã có; mode thường dùng nguồn diagnostic này cho mở ca, nhận task và chính sách pin.
+
+Thay đổi này không chứng minh bộ sạc thật. Mode thường ở pin thấp vẫn có thể đi vào luồng về trạm/`CHARGE_START` hiện có; cần nghiệm thu riêng trước khi vận hành không giám sát. Chưa restart Core vận hành hoặc phát lệnh xe thật trong thay đổi source này.
 
 ## Bối cảnh
 

@@ -1,5 +1,17 @@
 # Giao thức mạng và hợp đồng MCU với server
 
+16/10/2026, REQ-ROBOT02-LEFT-CAPTURE-01: LEFT xe02 thêm pha STOP/xác nhận line và chỉnh ngược ngắn tại MCU; vẫn giữ route_cmd_id/path_index/task và translating=false trong pha này. Không phát lại NODE_ORDER, không đổi payload hoặc ACK; thất bại mới phátLINE_LOST. Quy tắc retry trái dài xe02 trong mục REQ-TURN-LINE-RETRY-01 bên dưới đã được thay thế. BuildID02 `20261016-robot02-left-capture`. [ADR-063](decisions/ADR-063-robot02-left-turn-capture.md).
+
+16/10/2026, REQ-LINE-SEARCH-01: tìm lại line tiến/lùi cục bộ giữ route_cmd_id/path_index và grant, không phát error trước khi hết giới hạn. Motor tìm dùng action LEFT/RIGHT và PWM180; odometry tracking giữ chặng nhưng translating=false trong lúc tìm/xác nhận line nên không cộng pivot. Mắt giữa ổn định mới tiếp tục, thất bại phát `LINE_LOST` theo contract hiện có. Không đổi topic/schema/ACK hoặc gửi lại GOTO/NODE_ORDER. [ADR-062](decisions/ADR-062-local-line-search.md).
+
+16/10/2026, REQ-TURN-LINE-RETRY-01 không đổi MQTT/payload: firmware tự thử lại LEFT/RIGHT cùng hướng một lần trước khi phát lỗi. Timeout lần đầu chỉ STOP một vòng và giữ route/task/mutex; không publish error nên Core không khóa hoặc gửi lại `NODE_ORDER`. Nếu lần hai vẫn không bắt line, MCU phát `LINE_LOST` như cũ và Core mới gián đoạn task/giữ vùng chưa xác minh. ACK không chứng minh phục hồi chuyển động. [ADR-061](decisions/ADR-061-single-turn-line-retry.md).
+
+16/10/2026, REQ-ROBOT02-PARITY-01: firmware02 phát cùng capability/schema diagnostic, lift và odometry như01 qua topic `agv/02/...`; encoder `robot_id` phải bằng ID trong topic (01/02), boot/connection/seq/route riêng từng xe. Core nhận sonar/lift02 đúng phiên, NODE_ORDER hỗ trợ `reverse_after_turn` trên cặp GS2→S2 như GS1→S1; cặp chéo bị từ chối. Telemetry pipe/ACK/mutex không đổi. [ADR-059](decisions/ADR-059-robot02-firmware-parity.md).
+
+16/10/2026, REQ-CORE-UNIFIED-01: chọn thử xe 01/02/cả hai là cấu hình scope của cùng Core, không tạo giao thức firmware khác. Topic/payload giữ nguyên; Core chỉ phát lệnh chuyển động/sạc/NODE_ORDER và cấp mutex cho ID trong `active_robot_ids`. Diagnostic capability xe01 vẫn được đọc khi chạy scope hai xe. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).
+
+16/10/2026, REQ-BATTERY-06: người dùng chấp nhận phần trăm pin diagnostic đã lọc làm chuẩn. Core dùng `batteryPercentage` khi `batteryCalibrated=true` để cập nhật `battery`, `battery_measured`, `needs_recharge` và ngưỡng20/40; snapshot ghi `battery_control_source=diagnostic`. NCKHAGV vẫn gửi telemetry `node|?|obstacle` để tương thích; dấu `?` không xóa diagnostic còn mới trong3s. Diagnostic mất/không calibrated làm mode thường trở lại chưa đo và khóa task. Các mô tả display-only bên dưới là lịch sử trước quyết định này. [ADR-021](decisions/ADR-021-display-only-battery.md).
+
 15/10/2026, REQ-ROBOT01-SERVO-LIFT-01: thêm Core v0 `LIFT_UP`/`LIFT_DOWN` với `cmd_id` và `node=K1..K6`, không retained. Chỉ firmware01 một servo GPIO17 nhận; ACK vẫn là biên nhận và dedup cùng ID không phát PWM lại. Diagnostic thêm `liftSupported`, `liftCommandId`, `liftBusy`, `liftState` (IDLE/LIFTING/LOWERING/DONE_UP/DONE_DOWN/INTERRUPTED), `liftElapsedMs`, `virtualCargo` boolean/null. Core chỉ đọc các trường này từ diagnostic đúng phiên Core/boot/kết nối encoder đã bind của xe01. Trạng thái fleet thêm LIFTING/LOWERING, object `lift`, `virtual_cargo` và `virtual_cargo_known`. Chỉ DONE đúng cmd/node/phiên, MCU IDLE/taskActivefalse/STOP/duty0/0, kết quả cargo tương ứng và đủ5s ở MCU/Core mới đổi kiện ảo và mở khóa di chuyển. Mất kết quả12s/STOP/lỗi/mạng không tự hoàn tất; giữ mutex/counter. [ADR-057](decisions/ADR-057-robot01-servo-lift-test.md), [ví dụ](../contracts/examples/robot01-servo-lift.json).
 
 15/10/2026, REQ-ROBOT01-REVERSE-HOME-01: diagnostic thêm boolean `reverseHomeSupported` (profile01 true, còn lại false). Core chỉ cho ID01/capability này nhận NODE_ORDER GS1→S1 với boolean `reverse_after_turn:true`: maneuver/crossings mô tả góc xoay trước, sau đó mới bám lùi vào S1. Các lệnh khác thiếu cờ được hiểu false; parser/dedup/ủy quyền MCU kiểm tra cờ và cấm áp ngoài GS1→S1. Firmware cũ tiếp tục luồng tiến vào/quay tại S1; cần chạy Core mới cùng firmware01 mới để dùng luồng lùi. Không đổi telemetry v0, ACK vẫn chỉ là nhận lệnh, hoàn thành vẫn chờ RFID/diagnostic stationReady theo ADR-053. [ADR-056](decisions/ADR-056-robot01-reverse-home-request.md), [ví dụ](../contracts/examples/robot01-reverse-home.json).
@@ -38,7 +50,7 @@ Trạng thái `OBSERVED`, cập nhật 01/10/2026: telemetry/command giữ v0, m
 | `agv/{id}/mutex_grant` | Core → robot | JSON `{zone,grant_id}` |
 | `agv/{id}/mutex_ack` | Robot → core | JSON `{zone,grant_id}`; đã nhận quyền, chưa chứng minh chuyển động |
 | `agv/{id}/status` | Robot → core | online / LWT offline, retained |
-| `agv/{id}/diagnostic` | Robot → core | JSON chẩn đoán; NCKHAGV gửi `batteryPercentage`, `batteryCalibrated` để hiển thị thử |
+| `agv/{id}/diagnostic` | Robot → core | JSON chẩn đoán; NCKHAGV gửi `batteryPercentage`, `batteryCalibrated`; Core dùng giá trị calibrated làm pin điều phối theo REQ-BATTERY-06 |
 | `agv/server/heartbeat` | Core → mọi xe | core_session_id, không retained |
 | `agv/{id}/obstacle` | Robot → core | ID node có vật cản |
 | `agv/{id}/error` | Robot → core | Nội dung lỗi dạng text |

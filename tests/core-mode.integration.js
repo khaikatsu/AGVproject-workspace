@@ -61,7 +61,7 @@ async function main() {
       assert.equal(core.exitCode,0);assert.equal(fs.existsSync(env.AGV_COMMAND_ID_PATH),false);
       assert.equal(fs.existsSync(env.AGV_SHIFT_STATE_PATH),false);
     }
-    for(const [choice,mode,id] of [['1','robot01','01'],['2','robot02','02'],['3','both','']]) {
+    for(const [choice,mode,id,active] of [['1','active01','01',['01']],['2','active02','02',['02']],['3','active-both','',['01','02']]]) {
       const port=await freePort(),env=caseEnv(mode,port),core=child(executable,['--select-mode'],env);
       await until(()=>core.captured.includes('Nhap lua chon'));
       assert.equal(fs.existsSync(env.AGV_COMMAND_ID_PATH),false);
@@ -84,9 +84,12 @@ async function main() {
         }
         return state?.mqtt_connected;
       });
-      assert.equal(state.shift.test_mode,mode);assert.equal(state.shift.trial_robot_id,id);
-      assert.equal(state.shift.supervised_trial,true);assert.equal(state.shift.single_robot_trial,false);
-      assert.equal(state.shift.two_robot_trial,mode==='both');assert.equal(state.shift.can_start,false);
+      assert.equal(state.shift.test_mode,'normal');assert.equal(state.shift.trial_robot_id,'');
+      assert.equal(state.shift.operation_profile,'scoped');assert.deepEqual(state.shift.active_robot_ids,active);
+      assert.equal(state.shift.supervised_trial,false);assert.equal(state.shift.single_robot_trial,false);
+      assert.equal(state.shift.two_robot_trial,false);assert.equal(state.shift.can_start,false);
+      assert.equal(state.fleet.battery_gate_enabled,false);
+      assert.equal(state.fleet.automatic_charging_enabled,false);
       async function command(body) {
         const request_id=randomUUID();peer.send(JSON.stringify({...body,request_id}));
         await until(()=>results.has(request_id));return results.get(request_id);
@@ -100,7 +103,8 @@ async function main() {
       });
       const nodes={'01':'S1','02':'S2'};
       if(id) nodes[id==='01'?'02':'01']='UNKNOWN';
-      const telemetry=()=>{for(const robot of ['01','02']) mqtt.publish(`agv/${robot}/telemetry`,`${nodes[robot]}|?|0`);};
+      let battery='?';
+      const telemetry=()=>{for(const robot of ['01','02']) mqtt.publish(`agv/${robot}/telemetry`,`${nodes[robot]}|${battery}|0`);};
       telemetry();heartbeat=setInterval(telemetry,150);
       await until(()=>state?.fleet?.agvs?.length===2);
       if(id) {
@@ -108,7 +112,28 @@ async function main() {
         nodes[id==='01'?'02':'01']=id==='01'?'S2':'S1';telemetry();
       }
       await until(()=>state.shift.can_start);
+      assert.equal(state.fleet.agvs.every(a=>!a.battery_measured),true,'unknown battery does not block opening shift');
+      battery='0';telemetry();
+      await until(()=>state.fleet.agvs.every(a=>a.battery===0) && state.shift.can_start);
       assert.equal((await command({cmd:'start_shift'})).ok,true);
+      // Both upgraded firmwares bind independent streams, even with identical boot/session/seq.
+      const samples=new Map();
+      for(const robot of active){
+        mqtt.publish(`agv/${robot}/diagnostic`,JSON.stringify({version:1,agvId:robot,batteryCalibrated:true,batteryPercentage:0,
+          encoderSupported:true,encoderCoreSessionId:state.core_session_id,encoderBootId:1234,session:1,uptimeMs:1000,
+          node:nodes[robot],state:'AGV_IDLE',error:'NONE',motor:'STOP',taskActive:false,wifi:true,mqtt:true,rfidAgeMs:0,leftDuty:0,rightDuty:0}));
+        const sample={schema_version:1,robot_id:robot,core_session_id:state.core_session_id,boot_id:1234,connection_session:1,
+          seq:1,uptime_ms:1000,left_ticks:10,right_ticks:10,pulses_per_100cm:161,route_cmd_id:0,path_index:0,
+          from_node:nodes[robot],to_node:'',tracking:false,translating:false,reverse:false,distance_cm:0,speed_cm_s:0};
+        samples.set(robot,sample);mqtt.publish(`agv/${robot}/odometry`,JSON.stringify(sample));
+      }
+      await until(()=>active.every(id=>state.fleet.agvs.find(a=>a.id===id)?.odometry?.seq===1)).catch(error=>{
+        console.error(JSON.stringify({mode,session:state.core_session_id,robots:state.fleet.agvs,samples:[...samples]}));
+        console.error(output.split('\n').filter(line=>line.includes('[LOI]')||line.includes('Encoder')).slice(-20).join('\n'));throw error;
+      });
+      const target=active[0],spoof={...samples.get(target),robot_id:target==='01'?'02':'01',seq:2};
+      mqtt.publish(`agv/${target}/odometry`,JSON.stringify(spoof));await delay(150);
+      assert.equal(state.fleet.agvs.find(a=>a.id===target).odometry.seq,1,'topic/robot identity mismatch rejected');
       if(id) {
         const other=id==='01'?'02':'01';
         assert.equal((await command({cmd:'direct_goto',agv_id:other,target:other==='01'?'GS1':'M3'})).ok,false);
@@ -127,6 +152,7 @@ async function main() {
         mqtt.publish('agv/02/mutex_request','M2');await until(()=>state.mutex.M2.waiting.includes('02'));
         assert.equal(state.mutex.M2.owner,'01');
       }
+      assert.equal(commands.some(c=>c.cmd==='CHARGE_START'),false,'manual charging never emits CHARGE_START');
       clearInterval(heartbeat);heartbeat=null;mqtt.close();mqtt=null;peer.terminate();peer=null;
       const counter=JSON.parse(fs.readFileSync(env.AGV_COMMAND_ID_PATH,'utf8')).reserved_through;
       await stop(core);
@@ -146,8 +172,9 @@ async function main() {
     });
     assert.equal(normalState.shift.test_mode,'normal');assert.equal(normalState.shift.supervised_trial,false);
     assert.equal(normalState.shift.single_robot_trial,false);assert.equal(normalState.shift.two_robot_trial,false);
+    assert.equal(normalState.fleet.battery_gate_enabled,false);assert.equal(normalState.fleet.automatic_charging_enabled,false);
     peer.terminate();peer=null;await stop(normal);
-    console.log('PASS Core menu: invalid input, cancel/EOF, robot01/robot02 filtering, passive RFID gate, dual mutex, explicit modes and counter continuation');
+    console.log('PASS unified Core menu: scopes 01/02/both, temporary unknown/0% battery bypass, manual charging, dual mutex, modes and counter continuation');
     console.log('Artifacts: '+directory);
   } catch(error) {console.error(output.slice(-6500));throw error;}
   finally {

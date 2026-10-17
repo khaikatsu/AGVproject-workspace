@@ -58,7 +58,8 @@ public:
                     (*a)["uncertain_path"].empty()) {
                     const auto shift = shift_->snapshot();
                     const auto& homes = shift["home_stations"];
-                    parkedAndStopped = (shift.value("two_robot_trial",false) || shift.value("supervised_trial",false)) &&
+                    parkedAndStopped = (shift.value("two_robot_trial",false) || shift.value("supervised_trial",false) ||
+                        shift.value("operation_profile",std::string{}) == "scoped") &&
                         homes.contains(owner) && (*a).value("node","") == homes[owner];
                 }
                 if (a != robots.end() && (*a)["state"] != "ERROR" &&
@@ -78,6 +79,7 @@ public:
             } else if (cmd == "clear_error") {
                 const auto trial = fleet_.toJson().value("trial_robot_id",std::string{});
                 const auto robot = id(j,"id");
+                if (!fleet_.isActiveRobot(robot)) return failure(result,409,"Xe khong nam trong pham vi van hanh hien tai");
                 const bool robot01Reset = trial == "01" && robot == "01";
                 if (!robot01Reset && ((shift_ && shift_->snapshot().value("supervised_trial",false)) ||
                     !trial.empty())) {

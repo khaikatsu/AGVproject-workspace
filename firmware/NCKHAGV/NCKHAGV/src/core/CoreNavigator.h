@@ -22,10 +22,28 @@ public:
     void revokeGrant(const char* zone, int32_t grantId);
     void resetGrants();
     MotorAction update(const ControlInput& input);
+    // Observe before potentially slow RFID work; caller must STOP immediately
+    // when a new center-line candidate is latched. Does not authorize motion.
+    bool observeTurnLine(const ControlInput& input);
+    bool capturingTurnLine() const { return phase_ == Phase::TurnCapture; }
+    bool settlingTurnLine() const { return phase_ == Phase::Following && turnSettling_; }
+    bool precisionPivot() const {
+        return recoveringLine() || (Config::LEFT_TURN_CAPTURE_ENABLED && phase_ == Phase::Turning &&
+            turns_[index_] == RouteTurn::Left && oldLineDeparted_);
+    }
+    int precisionPivotPwm() const {
+        // Left-turn capture has its own torque setting; ordinary line-loss
+        // recovery must retain the existing bounded search PWM.
+        return Config::LEFT_TURN_CAPTURE_ENABLED &&
+            (phase_ == Phase::TurnCapture || (phase_ == Phase::Turning &&
+             turns_[index_] == RouteTurn::Left && oldLineDeparted_))
+            ? Config::LEFT_TURN_CAPTURE_PWM : Config::LINE_RECOVERY_PWM;
+    }
     const char* missingZone() const;
     const char* requestedZone() const;
     bool active() const { return phase_ != Phase::Idle && phase_ != Phase::Fault; }
-    bool following() const { return phase_ == Phase::Following; }
+    bool following() const { return phase_ == Phase::Following && !recoveringLine(); }
+    bool recoveringLine() const { return Config::LINE_RECOVERY_ENABLED && lineLossPending_; }
     bool obstaclePaused() const { return obstaclePaused_; }
     bool stationOriented() const { return stationOriented_; }
     AGVState state() const;
@@ -39,9 +57,13 @@ public:
              (phase_ == Phase::WaitingGrant && turns_[index_] == RouteTurn::Straight))));
     }
 private:
-    enum class Phase { Idle, WaitingGrant, Turning, Following, StationDwell, StationTurning, Fault };
+    enum class Phase { Idle, WaitingGrant, Turning, TurnCapture, Following, StationDwell, StationTurning, Fault };
     static int zoneIndex(const char* node);
     bool hasGrant(const char* node) const;
+    void resetLineTracking();
+    void rememberLine(const ControlInput& input, MotorAction action);
+    MotorAction recoverLine(const ControlInput& input);
+    MotorAction alignTurnLine(const ControlInput& input);
     Phase phase_ = Phase::Idle;
     ErrorCode error_ = ErrorCode::None;
     char current_[NODE_TEXT_SIZE]{};
@@ -58,8 +80,18 @@ private:
     uint32_t segmentStartedMs_ = 0, turnStartedMs_ = 0;
     uint32_t stoppedAtMs_ = 0;
     bool oldLineDeparted_ = false;
+    bool turnRetryUsed_ = false;
     uint32_t lineLossStartedMs_ = 0;
     bool lineLossPending_ = false;
+    uint8_t lastLinePattern_ = 0, centerSamples_ = 0;
+    MotorAction lastLineMotor_ = MotorAction::Stop;
+    MotorAction lastCorrection_ = MotorAction::Stop, searchDirection_ = MotorAction::Stop;
+    uint32_t lastCorrectionMs_ = 0, centerSinceMs_ = 0, centerSampleMs_ = 0;
+    uint32_t searchMotorChangedMs_ = 0;
+    bool lineRecoveryUsed_ = false, searchPulse_ = false;
+    uint8_t captureHistory_ = 0, captureCount_ = 0;
+    uint32_t captureSampleMs_ = 0;
+    bool turnSettling_ = false;
     bool soloTrial_ = false;
     bool requireNodeOrders_ = false, nodeOrderReceived_ = false;
     int32_t routeCmdId_ = 0;

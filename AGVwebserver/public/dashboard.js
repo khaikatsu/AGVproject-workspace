@@ -30,15 +30,17 @@ function updateRobotMotionLabels() {
     const robot = lastState?.fleet.agvs.find(a=>a.id === el.dataset.robotSpeed);
     el.textContent = robotSpeedText(robot);
   });
-  const robot = lastState?.fleet.agvs.find(a=>a.id === '01'),estimate = robot?.estimated_position;
-  $('robot01Speed').textContent = `Xe 01: ${robotSpeedText(robot)}`;
+  const focus = singleWarehouseRobot() || selectedAgvId || '01';
+  const robot = lastState?.fleet.agvs.find(a=>a.id === focus),estimate = robot?.estimated_position;
+  $('robot01Speed').textContent = (lastState?.fleet.agvs||[]).filter(a=>['01','02'].includes(a.id))
+    .map(a=>`Xe ${a.id}: ${robotSpeedText(a)}`).join(' · ') || 'Chờ dữ liệu tốc độ';
   $('robot01Speed').title = `Tốc độ ước tính từ hai encoder${robot?.odometry?.pulses_per_100cm ? `, hệ số thử ${robot.odometry.pulses_per_100cm} xung/100 cm` : ''}`;
-  const live = encoderFresh(robot),held = robotMarkerMotion.get('01')?.source === 'encoder_stale';
+  const live = encoderFresh(robot),held = robotMarkerMotion.get(focus)?.source === 'encoder_stale';
   $('robot01Position').textContent = live && estimate
-    ? `Xe 01: ${robotSpeedText(robot)} · ước tính ${estimate.from} → ${estimate.to} · ${finite(estimate.distance_cm).toFixed(1)} / ${finite(estimate.edge_length_cm).toFixed(1)} cm · RFID gần nhất: ${robot.node}`
+    ? `Xe ${focus}: ${robotSpeedText(robot)} · ước tính ${estimate.from} → ${estimate.to} · ${finite(estimate.distance_cm).toFixed(1)} / ${finite(estimate.edge_length_cm).toFixed(1)} cm · RFID gần nhất: ${robot.node}`
     : held || robot?.encoder_supported && !live
-      ? `Xe 01: ${robotSpeedText(robot)} · ${live ? 'vị trí ước tính cuối, chờ chặng/RFID mới' : 'dữ liệu encoder cũ / chưa có, giữ vị trí hiển thị'} · RFID gần nhất: ${robot?.node || '—'}`
-      : `Xe 01: vị trí RFID ${robot?.node || '—'}${live ? ' · tốc độ encoder' : ' · chờ encoder'}`;
+      ? `Xe ${focus}: ${robotSpeedText(robot)} · ${live ? 'vị trí ước tính cuối, chờ chặng/RFID mới' : 'dữ liệu encoder cũ / chưa có, giữ vị trí hiển thị'} · RFID gần nhất: ${robot?.node || '—'}`
+      : `Xe ${focus}: vị trí RFID ${robot?.node || '—'}${live ? ' · tốc độ encoder' : ' · chờ encoder'}`;
   if (robot?.obstacle_alert) {
     const alert = robot.obstacle_alert;
     $('robot01Position').textContent += ` · VẬT CẢN ${alert.direction === 'rear' ? 'PHÍA SAU' : 'PHÍA TRƯỚC'} ${finite(alert.range_cm).toFixed(1)} cm — đang dừng chờ`;
@@ -318,13 +320,13 @@ function renderFleet(agvs) {
     const batteryKnown = (a.battery_display_available === true || a.battery_measured === true) &&
       batteryValue != null && Number.isFinite(Number(batteryValue)) && Number(batteryValue) >= 0 && Number(batteryValue) <= 100;
     battery.textContent = a.last_seen_s == null ? 'Chưa có' : batteryKnown ? `${Math.round(Number(batteryValue))}%` : 'Chưa đo';
-    battery.style.color = a.battery_display_available !== true && batteryKnown && Number(batteryValue) <= 20 ? colors.ERROR : colors.IDLE;
-    if (a.battery_display_available === true) battery.title = 'Ước tính từ điện áp; chưa dùng cho ngưỡng điều phối';
+    battery.style.color = batteryKnown && Number(batteryValue) <= 20 ? colors.ERROR : colors.IDLE;
+    if (a.battery_control_source === 'diagnostic') battery.title = 'Phần trăm diagnostic đã lọc; Core dùng cho ngưỡng pin điều phối';
     const state = document.createElement('div');state.textContent = labels[a.state] || a.state || 'Chưa xác định';state.style.color = colors[a.state] || colors.UNKNOWN;
     if(a.lift?.active&&a.lift.state==='PENDING')state.textContent='Đang gửi lệnh servo';
     if(a.virtual_cargo===true){const cargo=document.createElement('small');cargo.textContent=a.virtual_cargo_known?'1 kiện ảo':'1 kiện ảo (chưa xác minh lại)';state.append(document.createElement('br'),cargo);}
     const age = document.createElement('small');age.dataset.robotAge = a.id;state.append(document.createElement('br'),age);
-    if (a.id === '01') {
+    if (a.id === '01' || a.id === '02') {
       const speed = document.createElement('small');speed.dataset.robotSpeed = a.id;
       speed.textContent = robotSpeedText(a);state.append(document.createElement('br'),speed);
     }
@@ -407,30 +409,37 @@ async function submitOrder() {
   const result = await control('POST','/api/orders',{pickups,deliveries},$('submitOrderBtn'));
   if (result) {toast(`Đã tạo đơn ${result.order.id.slice(0,19)} · ${result.order.total} kiện`);showView('tasks');}
 }
+function singleWarehouseRobot() {
+  const shift=lastState?.shift;
+  if(shift?.operation_profile==='scoped'&&shift.active_robot_ids?.length===1)return shift.active_robot_ids[0];
+  return shift?.test_mode==='robot01'?'01':shift?.test_mode==='robot02'?'02':null;
+}
 function updateWarehouseControls() {
-  const robot=lastState?.fleet.agvs.find(robot=>robot.id==='01');
+  const robotId=singleWarehouseRobot(),robot=lastState?.fleet.agvs.find(robot=>robot.id===robotId);
   const active=lastState?.warehouse_actions?.find(action=>!['completed','interrupted'].includes(action.status));
-  const ready=tasksReady()&&Array.isArray(lastState?.warehouse_actions)&&lastState.shift?.phase==='RUNNING'&&lastState.shift?.test_mode==='robot01'&&
+  const ready=tasksReady()&&Array.isArray(lastState?.warehouse_actions)&&lastState.shift?.phase==='RUNNING'&&robotId&&
     robot?.state==='IDLE'&&robot.online!==false&&robot.position_valid!==false&&!robot.error&&!robot.task_id&&!active&&!!$('warehouseTarget').value;
   for(const id of ['pickupWarehouseBtn','dropoffWarehouseBtn']) $(id).disabled=!ready||$(id).dataset.busy==='true';
 }
 async function warehouseAction(action,button) {
-  const result=await control('POST','/api/agvs/01/warehouse-action',{action,warehouse:$('warehouseTarget').value},button);
-  if(result)toast(`Xe 01: ${action==='pickup'?'lấy':'hạ'} tại ${result.action.warehouse}, ${result.action.servo?'servo 5s':'chờ mô phỏng 5s (chưa có servo)'} rồi lùi ra ${result.action.gate}`);
+  const robotId=singleWarehouseRobot();if(!robotId)return;
+  const result=await control('POST',`/api/agvs/${robotId}/warehouse-action`,{action,warehouse:$('warehouseTarget').value},button);
+  if(result)toast(`Xe ${robotId}: ${action==='pickup'?'lấy':'hạ'} tại ${result.action.warehouse}, ${result.action.servo?'servo 5s':'chờ mô phỏng 5s (chưa có servo)'} rồi lùi ra ${result.action.gate}`);
 }
 function renderWarehouseActionStatus() {
-  const test=lastState?.shift?.test_mode==='robot01';$('warehouseModeBtn').hidden=!test;$('orderModeBtn').hidden=test;
+  const robotId=singleWarehouseRobot(),test=!!robotId;
+  $('warehouseModeBtn').hidden=!test;$('orderModeBtn').hidden=test;
   if(test&&!$('orderTaskForm').hidden)setTaskMode('warehouse');
   if(!test&&!$('warehouseTaskForm').hidden)setTaskMode('order');
   const warehouses=(lastState?.map.nodes||[]).filter(node=>node.type==='station'&&/^K[1-6]$/.test(node.id)).map(node=>node.id);
   const select=$('warehouseTarget'),key=JSON.stringify(warehouses);
   if(select.dataset.nodes!==key){const prior=select.value;select.replaceChildren();for(const node of warehouses)select.add(new Option(node,node));if(warehouses.includes(prior))select.value=prior;select.dataset.nodes=key;}
-  const action=lastState?.warehouse_actions?.[0],robot=lastState?.fleet.agvs.find(robot=>robot.id==='01');
+  const action=lastState?.warehouse_actions?.find(action=>action.robot===robotId),robot=lastState?.fleet.agvs.find(robot=>robot.id===robotId);
   const names={dispatching:'Đang cấp tuyến tới kho',to_warehouse:'Đang đi tới kho',waiting_servo:'Chờ nhúng xác nhận dừng tại kho',dispatching_lift:'Đang gửi lệnh servo',handling:robot?.lift?.state==='PENDING'?'Chờ nhúng nhận lệnh':action?.action==='pickup'?'Đang nâng hàng (servo 5s)':'Đang hạ hàng (servo 5s)',dispatching_exit:'Đang cấp lệnh lùi',to_gate:'Đang lùi ra gate',completed:'Đã ra gate; chờ lệnh tiếp theo',interrupted:'Thao tác gián đoạn'};
   $('warehouseActionStatus').textContent=test&&!Array.isArray(lastState?.warehouse_actions)?'Cần khởi động lại gateway để nạp chức năng Lấy / hạ hàng.':action ? action.status==='waiting' ?
     `Dừng tại ${action.warehouse}: còn ${Math.max(0,Math.ceil((Date.parse(action.service_until)-Date.now())/1000))}s (mô phỏng, chưa điều khiển servo)` :
     `${names[action.status]||action.status} · ${action.warehouse} → ${action.gate}${action.reason?' · '+action.reason:''}` :
-    robot?.state==='IDLE'?'Xe 01 sẵn sàng. Chọn kho rồi bấm Lấy hàng hoặc Hạ hàng.':`Xe 01: ${robot?.error||robot?.state||'chưa có dữ liệu'}`;
+    robot?.state==='IDLE'?`Xe ${robotId} sẵn sàng. Chọn kho rồi bấm Lấy hàng hoặc Hạ hàng.`:`Xe ${robotId||'—'}: ${robot?.error||robot?.state||'chưa có dữ liệu'}`;
   updateWarehouseControls();
 }
 function updateOrderTimers() {
@@ -464,7 +473,8 @@ function renderOrderProgress(orders) {
   $('orderProgressCount').textContent = `${delivered}/${total} kiện`;
 }
 function renderOrders(orders) {
-  $('orderList').closest('section').hidden=lastState?.shift?.test_mode==='robot01';
+  const robot01Scope=!!singleWarehouseRobot();
+  $('orderList').closest('section').hidden=robot01Scope;
   const selected=lastState?.shift?.test_mode === 'robot01' ? '01' : lastState?.shift?.test_mode === 'robot02' ? '02' :
     lastState?.shift?.trial_robot_id || lastState?.fleet?.trial_robot_id;
   if ($('orderDispatchHint')) $('orderDispatchHint').textContent=selected ?
@@ -548,12 +558,14 @@ function populateTaskAgvSelect(agvs) {
   const select = $('task_agv'),previous = select.value,trial = lastState?.shift?.single_robot_trial === true;
   const trialRobot = lastState?.shift?.trial_robot_id || '';
   const twoRobotTrial = lastState?.shift?.two_robot_trial === true;
-  const automatic = new Option(trial ? 'Chỉ xe 01 trong lần thử' : trialRobot ? `Tự động giao cho xe ${trialRobot}` : 'Tự động chọn xe gần nhất','');
+  const active=lastState?.shift?.operation_profile==='scoped' ? lastState.shift.active_robot_ids||[] : [];
+  const automatic = new Option(trial ? 'Chỉ xe 01 trong lần thử' : trialRobot ? `Tự động giao cho xe ${trialRobot}` : active.length ?
+    `Tự động chọn trong xe ${active.join(' + ')}` : 'Tự động chọn xe gần nhất','');
   automatic.disabled = trial;
   select.replaceChildren(automatic);
   agvs.forEach(a=>{
     const option = new Option(`${a.id} — ${labels[a.state] || a.state}`,a.id);
-    option.disabled = (trial && a.id !== '01') || (trialRobot && a.id !== trialRobot) || (twoRobotTrial && !['01','02'].includes(a.id)) ||
+    option.disabled = a.participating === false || (trial && a.id !== '01') || (trialRobot && a.id !== trialRobot) || (twoRobotTrial && !['01','02'].includes(a.id)) ||
       !['IDLE','WORKING','BLOCKED'].includes(a.state) || a.online === false || a.position_valid === false;
     select.add(option);
   });
@@ -566,17 +578,25 @@ function populateTaskAgvSelect(agvs) {
     return;
   }
   if (Array.from(select.options).some(option=>option.value === previous && !option.disabled)) select.value = previous;
+  if (lastState?.fleet?.battery_gate_enabled === false) {
+    $('taskBatteryHint').textContent = 'Đang tạm bỏ chốt pin để test: pin thấp hoặc chưa có số đo không chặn nhận việc/mở ca. Sạc thủ công; RFID, MQTT và mutex vẫn được kiểm tra.';
+    return;
+  }
   if (trialRobot) {
-    $('taskBatteryHint').textContent = `Thử riêng xe ${trialRobot}: chỉ xe này nhận nhiệm vụ; mutex vẫn bật, pin % chỉ hiển thị.`;
+    $('taskBatteryHint').textContent = `Thử riêng xe ${trialRobot}: chỉ xe này nhận nhiệm vụ; mutex vẫn bật. Core nhận pin diagnostic, nhưng chế độ thử không chặn theo ngưỡng.`;
     return;
   }
   if (twoRobotTrial) {
-    $('taskBatteryHint').textContent = 'Thử hai xe 01/02: pin % chỉ hiển thị. Core giữ mutex; vùng chỉ được nhả khi đã xác minh toàn bộ xe rời vùng.';
+    $('taskBatteryHint').textContent = 'Thử hai xe 01/02: Core nhận pin diagnostic, nhưng chế độ thử không chặn theo ngưỡng. Core giữ mutex; vùng chỉ được nhả khi đã xác minh toàn bộ xe rời vùng.';
     return;
   }
-  const displayOnly = agvs.some(agv=>agv.battery_display_available === true && agv.battery_measured !== true);
-  $('taskBatteryHint').textContent = displayOnly
-    ? 'Pin % mới dùng để hiển thị. Core thường chưa nhận pin điều khiển nên có thể từ chối task; muốn thử xe 01 cần chạy Core ở chế độ trial.'
+  if (active.length) {
+    $('taskBatteryHint').textContent = `Core thống nhất chỉ giao việc cho xe ${active.join(' + ')}; vẫn áp dụng pin 20%/40%, RFID, MQTT và mutex như vận hành thật.`;
+    return;
+  }
+  const diagnosticBattery = agvs.some(agv=>agv.battery_control_source === 'diagnostic');
+  $('taskBatteryHint').textContent = diagnosticBattery
+    ? 'Core đang dùng phần trăm pin diagnostic đã lọc cho ngưỡng thấp 20% và nhận việc lại từ 40%.'
     : '';
 }
 function render(state) {
@@ -630,15 +650,17 @@ async function addTask() {
 function renderShift(shift) {
   const names = {RUNNING:'Đang làm việc',CLOSING:'Đang hoàn tất task / đưa xe về trạm',CLOSED:'Đã tập kết tại trạm • chờ bắt đầu ca'};
   $('shiftStatus').textContent = shift?.supported ? names[shift.phase] || shift.phase : 'Chưa có quản lý ca trên core / bản đồ này';
-  const displayOnly = lastState?.fleet?.agvs?.some(robot=>robot.battery_display_available === true && robot.battery_measured !== true);
+  const diagnosticBattery = lastState?.fleet?.agvs?.some(robot=>robot.battery_control_source === 'diagnostic');
   const mode = $('coreModeStatus');
   mode.textContent = !shift?.supported ? 'Chưa xác định chế độ Core'
-    : shift.trial_robot_id ? `Core: thử riêng xe ${shift.trial_robot_id} · mutex bật · pin % chỉ hiển thị`
-    : shift.single_robot_trial ? 'Core: thử một xe 01 · pin % chỉ hiển thị'
-    : shift.two_robot_trial ? 'Core: thử hai xe 01/02 · mutex bật · pin % chỉ hiển thị'
-    : displayOnly ? 'Core: chế độ thường · pin % chưa dùng để cấp nhiệm vụ'
+    : lastState?.fleet?.battery_gate_enabled === false ? `Core · xe ${(shift.active_robot_ids||['01','02']).join(' + ')} · tạm bỏ chốt pin · sạc thủ công · mutex giữ nguyên`
+    : shift.operation_profile==='scoped' ? `Core thống nhất · đang vận hành xe ${(shift.active_robot_ids||[]).join(' + ')} · áp dụng pin/mutex như Core thật`
+    : shift.trial_robot_id ? `Core: thử riêng xe ${shift.trial_robot_id} · mutex bật · trial không chặn ngưỡng pin`
+    : shift.single_robot_trial ? 'Core: thử một xe 01 · trial không chặn ngưỡng pin'
+    : shift.two_robot_trial ? 'Core: thử hai xe 01/02 · mutex bật · trial không chặn ngưỡng pin'
+    : diagnosticBattery ? 'Core: chế độ thường · pin diagnostic dùng cho điều phối'
       : 'Core: chế độ thường';
-  mode.className = displayOnly && shift?.supported && !shift.single_robot_trial && !shift.two_robot_trial && !shift.trial_robot_id ? 'field-hint core-mode-warning' : 'field-hint';
+  mode.className = 'field-hint';
   $('homeStationCaption').textContent = shift?.supported && shift.home_stations
     ? Object.entries(shift.home_stations).map(([robot,station])=>`${robot} → ${station}`).join(' · ') || 'Theo cấu hình core'
     : 'Theo cấu hình core';
@@ -655,7 +677,11 @@ function renderShift(shift) {
   }
   if (shift?.phase === 'CLOSED' && !shift.can_start) {
     const note = document.createElement('small');
-    note.textContent = shift.trial_robot_id
+    note.textContent = lastState?.fleet?.battery_gate_enabled === false
+      ? 'Chờ xe tham gia online tại trạm riêng, RFID mới và trạng thái an toàn; xe ngoài phạm vi phải an toàn tại trạm. Pin đang không chặn mở ca.'
+      : shift.operation_profile==='scoped'
+      ? `Chờ xe tham gia ${(shift.active_robot_ids||[]).join(' + ')} đủ pin, RFID và trạng thái an toàn. Xe ngoài phạm vi nếu đã xuất hiện phải đứng yên tại trạm, hết task/vùng.`
+      : shift.trial_robot_id
       ? `Chờ xe ${shift.trial_robot_id} tại trạm riêng. Xe không chọn đã xuất hiện cần dừng/rảnh tại trạm và hết lỗi/vùng chưa xác minh.`
       : shift.single_robot_trial
       ? 'Chờ xe 01 online tại S1, RFID mới và xử lý lỗi/vùng chiếm. Pin không chặn ca thử một xe.'

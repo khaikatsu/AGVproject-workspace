@@ -12,6 +12,21 @@ void tearDown() {}
 static bool decode(const char* json, CoreCommand& command) {
     return CoreProtocol::decodeCommand(reinterpret_cast<const uint8_t*>(json), std::strlen(json), command);
 }
+// Existing route tests may finish a newly captured left turn before asserting
+// the subsequent translation. Capture/STOP details have dedicated tests below.
+static MotorAction updateAfterTurnCapture(CoreNavigator& nav, ControlInput& in) {
+    auto action = nav.update(in);
+    if (!nav.capturingTurnLine()) return action;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(action));
+    in.linePattern = 2; in.now += Config::LEFT_CAPTURE_SAMPLE_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+    if (nav.capturingTurnLine()) {
+        in.now += Config::LEFT_CAPTURE_SAMPLE_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+    }
+    ++in.now;
+    return nav.update(in);
+}
 
 void test_core_commands() {
     CoreCommand command;
@@ -183,7 +198,7 @@ void test_fixed_bay_heading_and_reverse_exit() {
         TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(input)));
         std::strcpy(command.path[0],bays[i]);std::strcpy(command.target,bays[i]);
         TEST_ASSERT_TRUE(RoutePlanner::plan(nullptr,gate,command,route,false,RoutePlanner::edgeHeading(gate,bays[i])));
-        if (i == 0 && Config::REVERSE_HOME_SUPPORTED) {
+        if (station && Config::REVERSE_HOME_SUPPORTED) {
             TEST_ASSERT_TRUE(route.reverseAfterTurn[0]);
             TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::TurnAround),static_cast<int>(route.departure[0]));
             continue; // Rotation and backward translation covered by reverse-home test.
@@ -202,6 +217,7 @@ void test_fixed_bay_heading_and_reverse_exit() {
 }
 
 void test_station_arrival_turns_at_station_before_ready() {
+    if (Config::REVERSE_HOME_SUPPORTED) return; // Both stations now reverse-dock; legacy profiles keep this test.
     const char* stations[]={"S1","S2"};const char* gates[]={"GS1","GS2"};const char* previous[]={"M1","M4"};
     for (unsigned i=0;i<2;++i) {
         if (i == 0 && Config::REVERSE_HOME_SUPPORTED) continue; // Dedicated GS1 reverse-dock coverage below.
@@ -390,7 +406,7 @@ void test_turn_does_not_reacquire_junction_before_blank() {
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft), static_cast<int>(nav.update(input)));
     input.linePattern = 2;
     ++input.now;
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward), static_cast<int>(nav.update(input)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward), static_cast<int>(updateAfterTurnCapture(nav,input)));
 }
 
 void test_robot02_gs2_turn_waits_for_grant_and_stops_on_network_loss() {
@@ -418,7 +434,7 @@ void test_robot02_gs2_turn_waits_for_grant_and_stops_on_network_loss() {
     input.linePattern=0;++input.now;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft),static_cast<int>(nav.update(input)));
     input.linePattern=2;++input.now;
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(input)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(updateAfterTurnCapture(nav,input)));
     input.mqtt=false;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(input)));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::NotConnected),static_cast<int>(nav.error()));
@@ -473,7 +489,7 @@ static CoreCommand orderFor(const char* node,const char* next,const char* turn,u
     c.pathIndex=step;c.turnCrossings=crossings;return c;
 }
 
-#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+#if defined(AGV_PROFILE_ID)
 void test_robot01_blank_line_waits_for_rfid_without_moving() {
     static_assert(Config::LINE_LOSS_CONFIRM_MS == 5000u, "Robot 01 blank-line hold must be five seconds");
     CoreCommand command; RoutePlan route;
@@ -519,8 +535,12 @@ void test_robot01_blank_line_waits_for_rfid_without_moving() {
     in.now = blankAt; in.linePattern = 0;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(recovered.update(in)));
     in.now = blankAt + 100; in.linePattern = 2;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(recovered.update(in)));
+    in.now = blankAt + 150;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(recovered.update(in)));
+    in.now = blankAt + 200;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward), static_cast<int>(recovered.update(in)));
-    in.now = blankAt + 200; in.linePattern = 0;
+    in.now = blankAt + 300; in.linePattern = 0;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(recovered.update(in)));
     in.mqtt = false; ++in.now;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(recovered.update(in)));
@@ -529,8 +549,8 @@ void test_robot01_blank_line_waits_for_rfid_without_moving() {
 #endif
 
 #if defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
-void test_robot02_still_faults_immediately_on_blank_line() {
-    static_assert(Config::LINE_LOSS_CONFIRM_MS == 0u, "Robot 02 line-loss policy is unchanged");
+void test_robot02_blank_line_holds_before_fault() {
+    static_assert(Config::LINE_LOSS_CONFIRM_MS == 5000u, "Robot 02 shares robot01 line-loss hold");
     CoreCommand command; RoutePlan route;
     TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":161,"path":["GS2"],"target":"GS2"})", command));
     TEST_ASSERT_TRUE(RoutePlanner::plan(nullptr, "S2", command, route));
@@ -542,6 +562,9 @@ void test_robot02_still_faults_immediately_on_blank_line() {
     in.now = Config::RFID_STOP_DWELL_MS;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward), static_cast<int>(nav.update(in)));
     in.linePattern = 0; ++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None), static_cast<int>(nav.error()));
+    in.now += Config::LINE_LOSS_CONFIRM_MS;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost), static_cast<int>(nav.error()));
 }
@@ -571,7 +594,7 @@ void test_server_node_order_stops_then_pivots_left_with_mutex() {
     in.linePattern=7;in.now+=Config::TURN_MIN_MS+1;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft),static_cast<int>(nav.update(in)));
     in.linePattern=0;++in.now;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft),static_cast<int>(nav.update(in)));
-    in.linePattern=2;++in.now;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
+    in.linePattern=2;++in.now;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(updateAfterTurnCapture(nav,in)));
     TEST_ASSERT_FALSE(nav.authorizeNodeOrder(order)); // Duplicate cannot restart a pivot during following.
     in.mqtt=false;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
 }
@@ -612,7 +635,7 @@ void test_reverse_home_turn_translation_and_safety() {
     TEST_ASSERT_TRUE(parsed.reverseAfterTurn);
     auto changed=parsed;changed.reverseAfterTurn=false;TEST_ASSERT_FALSE(CoreProtocol::sameCommand(parsed,changed));
     TEST_ASSERT_FALSE(decode(R"({"cmd":"NODE_ORDER","cmd_id":210,"route_cmd_id":200,"node":"GS1","next_node":"S1","path_index":0,"maneuver":"RIGHT","turn_crossings":1,"reverse_after_turn":1})",parsed));
-    TEST_ASSERT_FALSE(decode(R"({"cmd":"NODE_ORDER","cmd_id":210,"route_cmd_id":200,"node":"GS2","next_node":"S2","path_index":0,"maneuver":"RIGHT","turn_crossings":1,"reverse_after_turn":true})",parsed));
+    TEST_ASSERT_FALSE(decode(R"({"cmd":"NODE_ORDER","cmd_id":210,"route_cmd_id":200,"node":"GS2","next_node":"S1","path_index":0,"maneuver":"RIGHT","turn_crossings":1,"reverse_after_turn":true})",parsed));
     const RobotHeading heads[]={RobotHeading::East,RobotHeading::West,RobotHeading::North,RobotHeading::South};
     const RouteTurn turns[]={RouteTurn::Right,RouteTurn::Left,RouteTurn::TurnAround,RouteTurn::Straight};
     for (unsigned i=0;i<4;++i) {
@@ -641,7 +664,7 @@ void test_reverse_home_turn_translation_and_safety() {
                 TEST_ASSERT_EQUAL_INT(static_cast<int>(k+1==crossings ? MotorAction::Stop : pivot),static_cast<int>(action));
             }
         }
-        ++in.now;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Backward),static_cast<int>(nav.update(in)));
+        ++in.now;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Backward),static_cast<int>(updateAfterTurnCapture(nav,in)));
         TEST_ASSERT_TRUE(nav.segmentReverse());TEST_ASSERT_TRUE(nav.active());TEST_ASSERT_FALSE(nav.stationOriented());
         in.obstacle=true;++in.now;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
         TEST_ASSERT_TRUE(nav.active());TEST_ASSERT_TRUE(nav.segmentReverse());
@@ -669,7 +692,108 @@ void test_reverse_home_turn_translation_and_safety() {
     ControlInput in;in.wifi=in.mqtt=in.motionConfigured=in.lineConfigured=in.distanceValid=true;
     in.linePattern=2;in.now=Config::RFID_STOP_DWELL_MS;turnTimeout.update(in);in.now+=Config::TURN_TIMEOUT_MS;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(turnTimeout.update(in)));
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::TurnTimeout),static_cast<int>(turnTimeout.error()));
+    if (Config::TURN_RETRY_ENABLED &&
+        (route.departure[0] == RouteTurn::Left || route.departure[0] == RouteTurn::Right)) {
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None),static_cast<int>(turnTimeout.error()));
+        TEST_ASSERT_TRUE(turnTimeout.active());
+        ++in.now;
+        const auto retryAction = route.departure[0] == RouteTurn::Left ?
+            MotorAction::PivotLeft : MotorAction::PivotRight;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(retryAction),static_cast<int>(turnTimeout.update(in)));
+        in.now += Config::TURN_TIMEOUT_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(turnTimeout.update(in)));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost),static_cast<int>(turnTimeout.error()));
+    } else {
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::TurnTimeout),static_cast<int>(turnTimeout.error()));
+    }
+}
+
+void test_left_turn_retries_same_direction_once() {
+    if (!Config::TURN_RETRY_ENABLED || Config::LEFT_TURN_CAPTURE_ENABLED) return;
+    CoreCommand command; RoutePlan route;
+    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":270,"path":["M6"],"target":"M6"})", command));
+    TEST_ASSERT_TRUE(RoutePlanner::plan("G2", "M5", command, route));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Left), static_cast<int>(route.departure[0]));
+
+    ControlInput in;
+    in.wifi = in.mqtt = in.motionConfigured = in.lineConfigured = in.distanceValid = true;
+    in.linePattern = 2;
+    in.now = Config::RFID_STOP_DWELL_MS;
+
+    CoreNavigator recovered;
+    TEST_ASSERT_TRUE(recovered.start("M5", command, route, 0, true));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft), static_cast<int>(recovered.update(in)));
+    in.now += Config::TURN_TIMEOUT_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(recovered.update(in)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None), static_cast<int>(recovered.error()));
+    TEST_ASSERT_TRUE(recovered.active());
+    ++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft), static_cast<int>(recovered.update(in)));
+    in.linePattern = 0; ++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft), static_cast<int>(recovered.update(in)));
+    in.linePattern = 2; in.now += Config::TURN_MIN_MS + 1;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward), static_cast<int>(recovered.update(in)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None), static_cast<int>(recovered.error()));
+    TEST_ASSERT_TRUE(recovered.active());
+
+    CoreNavigator failed;
+    in.linePattern = 2; in.now = Config::RFID_STOP_DWELL_MS;
+    TEST_ASSERT_TRUE(failed.start("M5", command, route, 0, true));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft), static_cast<int>(failed.update(in)));
+    in.now += Config::TURN_TIMEOUT_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(failed.update(in)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None), static_cast<int>(failed.error()));
+    ++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft), static_cast<int>(failed.update(in)));
+    in.now += Config::TURN_TIMEOUT_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(failed.update(in)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost), static_cast<int>(failed.error()));
+    TEST_ASSERT_FALSE(failed.active());
+
+    CoreNavigator disconnected;
+    in.mqtt = true; in.linePattern = 2; in.now = Config::RFID_STOP_DWELL_MS;
+    TEST_ASSERT_TRUE(disconnected.start("M5", command, route, 0, true));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft), static_cast<int>(disconnected.update(in)));
+    in.now += Config::TURN_TIMEOUT_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(disconnected.update(in)));
+    in.mqtt = false; ++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(disconnected.update(in)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::NotConnected), static_cast<int>(disconnected.error()));
+    TEST_ASSERT_FALSE(disconnected.active());
+}
+
+void test_reverse_home_s2_uses_matching_route_and_order() {
+    if (!Config::REVERSE_HOME_SUPPORTED) return;
+    CoreCommand command;command.type=CoreCommandType::Goto;command.cmdId=250;command.pathLength=1;
+    std::strcpy(command.path[0],"S2");std::strcpy(command.target,"S2");
+    const RobotHeading heads[]={RobotHeading::East,RobotHeading::West,RobotHeading::North,RobotHeading::South};
+    const RouteTurn turns[]={RouteTurn::Left,RouteTurn::Right,RouteTurn::Straight,RouteTurn::TurnAround};
+    for(unsigned i=0;i<4;++i){
+        RoutePlan route;TEST_ASSERT_TRUE(RoutePlanner::plan(nullptr,"GS2",command,route,false,heads[i]));
+        TEST_ASSERT_TRUE(route.reverseAfterTurn[0]);
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(turns[i]),static_cast<int>(route.departure[0]));
+        CoreNavigator nav;TEST_ASSERT_TRUE(nav.start("GS2",command,route,0,false,true));
+        auto order=orderFor("GS2","S2",RoutePlanner::turnName(turns[i]),0,250,i==2?0:i==3?2:1);
+        TEST_ASSERT_FALSE(nav.authorizeNodeOrder(order));order.reverseAfterTurn=true;
+        TEST_ASSERT_TRUE(nav.authorizeNodeOrder(order));
+        ControlInput in;in.wifi=in.mqtt=in.motionConfigured=in.lineConfigured=in.distanceValid=true;
+        in.linePattern=2;in.now=Config::RFID_STOP_DWELL_MS;
+        if(i!=2){
+            const auto pivot=i==0?MotorAction::PivotLeft:MotorAction::PivotRight;
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(pivot),static_cast<int>(nav.update(in)));
+            for(unsigned k=0;k<(i==3?2u:1u);++k){
+                in.linePattern=0;in.now+=Config::TURN_MIN_MS+1;nav.update(in);
+                in.linePattern=2;in.now+=Config::TURN_MIN_MS+1;nav.update(in);
+            }
+        }
+        ++in.now;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Backward),static_cast<int>(updateAfterTurnCapture(nav,in)));
+        in.obstacle=true;++in.now;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        in.obstacle=false;++in.now;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Backward),static_cast<int>(nav.update(in)));
+        nav.reachedNode("S2",++in.now);TEST_ASSERT_FALSE(nav.active());TEST_ASSERT_TRUE(nav.stationOriented());
+        TEST_ASSERT_FALSE(nav.stationTurnRequired());
+    }
+    CoreCommand parsed;
+    TEST_ASSERT_TRUE(decode(R"({"cmd":"NODE_ORDER","cmd_id":251,"route_cmd_id":250,"node":"GS2","next_node":"S2","path_index":0,"maneuver":"LEFT","turn_crossings":1,"reverse_after_turn":true})",parsed));
 }
 
 static ControlInput straightInput() {
@@ -804,6 +928,339 @@ void test_sonar_pause_keeps_route_and_segment_clock() {
     TEST_ASSERT_FALSE(nav.active());
 }
 
+// Exercise the actual navigator with sensor/time sequences, not just config values.
+static void startRecoveryTrip(CoreNavigator& nav, ControlInput& in, bool reverse = false,
+                              uint32_t startedAt = 0) {
+    CoreCommand c; RoutePlan route;
+    TEST_ASSERT_TRUE(decode(reverse ?
+        R"({"cmd":"GOTO","cmd_id":301,"path":["G5"],"target":"G5"})" :
+        R"({"cmd":"GOTO","cmd_id":301,"path":["GS1"],"target":"GS1"})", c));
+    TEST_ASSERT_TRUE(RoutePlanner::plan(nullptr, reverse ? "K5" : "S1", c, route));
+    TEST_ASSERT_TRUE(nav.start(reverse ? "K5" : "S1", c, route, startedAt));
+    in = straightInput(); in.now = startedAt + Config::RFID_STOP_DWELL_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(reverse ? MotorAction::Backward : MotorAction::Forward),
+                          static_cast<int>(nav.update(in)));
+}
+static uint32_t loseLine(CoreNavigator& nav, ControlInput& in, uint8_t side) {
+    in.linePattern = side; ++in.now; nav.update(in);
+    in.linePattern = 0; ++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+    TEST_ASSERT_TRUE(nav.active()); TEST_ASSERT_TRUE(nav.recoveringLine());
+    TEST_ASSERT_FALSE(nav.following());
+    TEST_ASSERT_EQUAL_INT(301, nav.routeCommandId()); TEST_ASSERT_EQUAL_INT(0, nav.pathIndex());
+    return in.now;
+}
+void test_line_search_direction_pulses_and_reverse() {
+    if (!Config::LINE_RECOVERY_ENABLED) return;
+    for (bool reverse : {false, true}) for (uint8_t side : {4, 6, 1, 3}) {
+        CoreNavigator nav; ControlInput in; startRecoveryTrip(nav, in, reverse);
+        const auto lostAt = loseLine(nav, in, side);
+        const auto pivot = side == 4 || side == 6 ? MotorAction::PivotLeft : MotorAction::PivotRight;
+        TEST_ASSERT_EQUAL(reverse, nav.segmentReverse());
+        in.now = lostAt + Config::LINE_RECOVERY_STOP_MS - 1;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        in.now++;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(pivot), static_cast<int>(nav.update(in)));
+        in.now += Config::LINE_RECOVERY_PULSE_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        in.now += Config::LINE_RECOVERY_REST_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(pivot), static_cast<int>(nav.update(in)));
+        // A delayed loop landing in the next nominal pulse must still rest.
+        in.now += Config::LINE_RECOVERY_PULSE_MS + Config::LINE_RECOVERY_REST_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        ++in.now;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None), static_cast<int>(nav.error()));
+        TEST_ASSERT_TRUE(nav.recoveringLine()); TEST_ASSERT_FALSE(nav.following());
+        in.now = lostAt + Config::LINE_RECOVERY_TIMEOUT_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost), static_cast<int>(nav.error()));
+        in.linePattern = 2; ++in.now;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        TEST_ASSERT_FALSE(nav.active());
+    }
+}
+void test_line_search_requires_stable_center_and_keeps_task() {
+    if (!Config::LINE_RECOVERY_ENABLED) return;
+    for (bool reverse : {false, true}) {
+        CoreNavigator nav; ControlInput in; startRecoveryTrip(nav, in, reverse);
+        const auto lostAt = loseLine(nav, in, 4);
+        in.now = lostAt + Config::LINE_RECOVERY_STOP_MS;
+        nav.update(in);
+        // Side-only and 101/111 must never resume translation during recovery.
+        for (uint8_t pattern : {4, 1, 5, 7, 6, 3}) {
+            in.linePattern = pattern; ++in.now;
+            const auto a = nav.update(in);
+            TEST_ASSERT_TRUE(a == MotorAction::Stop || a == MotorAction::PivotLeft);
+            TEST_ASSERT_FALSE(nav.following());
+        }
+        in.linePattern = 2; ++in.now; const auto centeredAt = in.now;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        // Repeated reads with one timestamp cannot establish stable line.
+        for (int i = 0; i < 5; ++i)
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        in.now = centeredAt + Config::LINE_RECOVERY_CENTER_MS / 2;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        in.linePattern = 0; ++in.now; nav.update(in); // Break continuity.
+        in.linePattern = 2; ++in.now; nav.update(in);
+        in.now += Config::LINE_RECOVERY_CENTER_MS / 2; nav.update(in);
+        in.now += Config::LINE_RECOVERY_CENTER_MS / 2;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(reverse ? MotorAction::Backward : MotorAction::Forward),
+                              static_cast<int>(nav.update(in)));
+        TEST_ASSERT_TRUE(nav.following()); TEST_ASSERT_FALSE(nav.recoveringLine());
+        TEST_ASSERT_EQUAL_INT(301, nav.routeCommandId()); TEST_ASSERT_EQUAL_INT(0, nav.pathIndex());
+        TEST_ASSERT_EQUAL_STRING(reverse ? "G5" : "GS1", nav.nextNode());
+        TEST_ASSERT_FALSE(nav.needsNodeOrder());
+        // A second loss in the same segment may wait but cannot sweep again.
+        const auto secondLoss = loseLine(nav, in, 1);
+        in.now = secondLoss + Config::LINE_RECOVERY_STOP_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        in.now = secondLoss + Config::LINE_LOSS_CONFIRM_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost), static_cast<int>(nav.error()));
+    }
+}
+void test_line_search_no_direction_and_expired_memory_hold_still() {
+    if (!Config::LINE_RECOVERY_ENABLED) return;
+    for (int memoryCase = 0; memoryCase < 3; ++memoryCase) {
+        CoreNavigator nav; ControlInput in; startRecoveryTrip(nav, in);
+        if (memoryCase) { in.linePattern = 4; ++in.now; nav.update(in); }
+        in.linePattern = 2;
+        in.now += memoryCase == 2 ? Config::LINE_RECOVERY_MEMORY_MS / 2 : Config::LINE_RECOVERY_MEMORY_MS + 1;
+        nav.update(in);
+        in.linePattern = 0; ++in.now; const auto lostAt = in.now; nav.update(in);
+        in.now = lostAt + Config::LINE_RECOVERY_STOP_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(memoryCase == 2 ? MotorAction::PivotLeft : MotorAction::Stop),
+                              static_cast<int>(nav.update(in)));
+    }
+}
+void test_line_search_hazards_stop_cancel_and_grant() {
+    if (!Config::LINE_RECOVERY_ENABLED) return;
+    for (int hazard = 0; hazard < 7; ++hazard) {
+        CoreNavigator nav; auto in = straightInput(); TEST_ASSERT_TRUE(startStraightTrip(nav, in));
+        in.linePattern = 1; ++in.now; nav.update(in);
+        in.linePattern = 0; ++in.now; nav.update(in);
+        in.now += Config::LINE_RECOVERY_STOP_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotRight), static_cast<int>(nav.update(in)));
+        if (hazard == 0) in.mqtt = false;
+        if (hazard == 1) in.wifi = false;
+        if (hazard == 2) in.distanceValid = false;
+        if (hazard == 3) in.motionConfigured = false;
+        if (hazard == 4) nav.stop();
+        if (hazard == 5) nav.revokeGrant("M4", 101);
+        if (hazard == 6) in.obstacle = true;
+        ++in.now;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        if (hazard < 5) TEST_ASSERT_FALSE(nav.active());
+        if (hazard == 5) { TEST_ASSERT_TRUE(nav.active()); TEST_ASSERT_EQUAL_STRING("M4", nav.missingZone()); }
+        if (hazard == 6) {
+            TEST_ASSERT_TRUE(nav.obstaclePaused()); TEST_ASSERT_TRUE(nav.recoveringLine());
+            in.now += 1000; TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+            in.obstacle = false; ++in.now; nav.update(in);
+            TEST_ASSERT_TRUE(nav.active()); TEST_ASSERT_EQUAL_INT(42, nav.routeCommandId());
+        }
+    }
+}
+void test_line_search_rfid_stops_and_clears_old_direction() {
+    if (!Config::LINE_RECOVERY_ENABLED) return;
+    CoreNavigator nav; auto in = straightInput(); TEST_ASSERT_TRUE(startStraightTrip(nav, in));
+    in.linePattern = 4; ++in.now; nav.update(in);
+    in.linePattern = 0; ++in.now; nav.update(in);
+    TEST_ASSERT_FALSE(nav.canPassThrough("M4", in));
+    nav.reachedNode("M4", ++in.now, &in);
+    TEST_ASSERT_FALSE(nav.recoveringLine()); TEST_ASSERT_TRUE(nav.needsNodeOrder());
+    TEST_ASSERT_EQUAL_INT(1, nav.pathIndex()); TEST_ASSERT_NULL(nav.missingZone());
+    TEST_ASSERT_TRUE(nav.authorizeNodeOrder(orderFor("M4", "GS2", "STRAIGHT", 1, 42, 0)));
+    in.linePattern = 2; in.now += Config::RFID_STOP_DWELL_MS; nav.update(in);
+    in.linePattern = 0; ++in.now; nav.update(in);
+    in.now += Config::LINE_RECOVERY_STOP_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+    CoreNavigator wrong; ControlInput bad; startRecoveryTrip(wrong, bad);
+    loseLine(wrong, bad, 4); wrong.reachedNode("M3", ++bad.now);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::UnexpectedNode), static_cast<int>(wrong.error()));
+}
+void test_line_search_clock_wrap_and_segment_deadline() {
+    if (!Config::LINE_RECOVERY_ENABLED) return;
+    CoreNavigator nav; ControlInput in; startRecoveryTrip(nav, in, false, UINT32_MAX - 1100u);
+    const auto lostAt = loseLine(nav, in, 4);
+    in.now = lostAt + Config::LINE_RECOVERY_STOP_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft), static_cast<int>(nav.update(in)));
+    in.linePattern = 2; ++in.now; nav.update(in);
+    in.now += 50; nav.update(in); in.now += 50;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward), static_cast<int>(nav.update(in)));
+    CoreNavigator deadline; startRecoveryTrip(deadline, in);
+    in.now += Config::SEGMENT_TIMEOUT_MS - 100;
+    loseLine(deadline, in, 4); in.now += 100;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(deadline.update(in)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::MotionTimeout), static_cast<int>(deadline.error()));
+}
+
+static void startG1Left(CoreNavigator& nav, ControlInput& in) {
+    CoreCommand c; RoutePlan route;
+    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":510,"path":["K1"],"target":"K1"})",c));
+    TEST_ASSERT_TRUE(RoutePlanner::plan("C3","G1",c,route));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Left),static_cast<int>(route.departure[0]));
+    TEST_ASSERT_TRUE(nav.start("G1",c,route,0,false,true));
+    TEST_ASSERT_TRUE(nav.authorizeNodeOrder(orderFor("G1","K1","LEFT",0,510,1)));
+    in=straightInput();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft),static_cast<int>(nav.update(in)));
+}
+void test_robot02_left_captures_center_before_min_without_blank() {
+    if (!Config::LEFT_TURN_CAPTURE_ENABLED) return;
+    CoreNavigator nav; ControlInput in; startG1Left(nav,in);
+    const auto turnAt=in.now;
+    TEST_ASSERT_FALSE(nav.observeTurnLine(in)); // Still the original stripe.
+    in.linePattern=1;in.now+=10;
+    TEST_ASSERT_FALSE(nav.observeTurnLine(in)); // Only right eye: no 000 sample.
+    TEST_ASSERT_TRUE(nav.precisionPivot());
+    in.linePattern=3;in.now+=10;
+    TEST_ASSERT_TRUE(nav.observeTurnLine(in)); // Center returns before TURN_MIN_MS.
+    TEST_ASSERT_TRUE(in.now-turnAt<Config::TURN_MIN_MS);
+    TEST_ASSERT_TRUE(nav.capturingTurnLine());
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_EQUAL_INT(510,nav.routeCommandId());TEST_ASSERT_EQUAL_INT(0,nav.pathIndex());
+    TEST_ASSERT_EQUAL_STRING("K1",nav.nextNode());TEST_ASSERT_FALSE(nav.needsNodeOrder());
+    TEST_ASSERT_FALSE(nav.following());
+    in.linePattern=2;in.now+=Config::LEFT_CAPTURE_SAMPLE_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_TRUE(nav.following());TEST_ASSERT_FALSE(nav.capturingTurnLine());
+    ++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None),static_cast<int>(nav.error()));
+}
+void test_robot02_left_old_line_and_timeout_never_start_long_retry() {
+    if (!Config::LEFT_TURN_CAPTURE_ENABLED) return;
+    CoreNavigator nav; ControlInput in; startG1Left(nav,in);
+    const auto turnAt=in.now;
+    for (uint8_t pattern : {2,6,7,5,3}) {
+        in.linePattern=pattern;in.now+=30;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft),static_cast<int>(nav.update(in)));
+        TEST_ASSERT_FALSE(nav.capturingTurnLine());
+    }
+    in.linePattern=0;++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotLeft),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_TRUE(nav.precisionPivot());
+    in.now=turnAt+Config::TURN_TIMEOUT_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost),static_cast<int>(nav.error()));
+    TEST_ASSERT_FALSE(nav.active());
+    in.linePattern=2;++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+}
+void test_robot02_left_overshoot_countersteers_briefly_then_faults() {
+    if (!Config::LEFT_TURN_CAPTURE_ENABLED) return;
+    CoreNavigator nav; ControlInput in; startG1Left(nav,in);
+    in.linePattern=0;++in.now;nav.update(in);
+    in.linePattern=2;++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    const auto capturedAt=in.now;
+    in.linePattern=0;++in.now;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    in.now=capturedAt+Config::LINE_RECOVERY_STOP_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotRight),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_TRUE(nav.precisionPivot());TEST_ASSERT_FALSE(nav.following());
+    in.now+=Config::LINE_RECOVERY_PULSE_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    in.linePattern=2;++in.now;nav.update(in);
+    in.now+=Config::LEFT_CAPTURE_MAX_GAP_MS+1;nav.update(in);
+    in.linePattern=7;++in.now; // Wide junction breaks centered stability.
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_TRUE(nav.capturingTurnLine());
+    in.linePattern=0;in.now=capturedAt+Config::LINE_RECOVERY_TIMEOUT_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost),static_cast<int>(nav.error()));
+    TEST_ASSERT_FALSE(nav.active());
+}
+void test_robot02_left_capture_hazards_and_grant_remain_effective() {
+    if (!Config::LEFT_TURN_CAPTURE_ENABLED) return;
+    for (int hazard=0;hazard<4;++hazard) {
+        CoreNavigator nav;ControlInput in;startG1Left(nav,in);
+        in.linePattern=0;++in.now;nav.update(in);
+        in.linePattern=2;++in.now;nav.update(in);
+        TEST_ASSERT_TRUE(nav.capturingTurnLine());
+        if(hazard==0)in.mqtt=false;
+        if(hazard==1)in.distanceValid=false;
+        if(hazard==2)nav.stop();
+        if(hazard==3)in.obstacle=true;
+        ++in.now;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        if(hazard<3)TEST_ASSERT_FALSE(nav.active());
+        else {TEST_ASSERT_TRUE(nav.active());TEST_ASSERT_TRUE(nav.obstaclePaused());}
+    }
+    CoreCommand c;RoutePlan route;CoreNavigator nav;
+    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":511,"path":["M6"],"target":"M6"})",c));
+    TEST_ASSERT_TRUE(RoutePlanner::plan("G2","M5",c,route));
+    TEST_ASSERT_TRUE(nav.start("M5",c,route,0));
+    TEST_ASSERT_TRUE(nav.grant("M5",501));TEST_ASSERT_TRUE(nav.grant("M6",502));
+    auto in=straightInput();nav.update(in);
+    in.linePattern=0;++in.now;nav.update(in);
+    in.linePattern=2;++in.now;nav.update(in);
+    TEST_ASSERT_TRUE(nav.capturingTurnLine());nav.revokeGrant("M6",502);
+    in.linePattern=0;in.now+=Config::LINE_RECOVERY_STOP_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_EQUAL_STRING("M6",nav.missingZone());TEST_ASSERT_TRUE(nav.active());
+}
+
+void test_robot02_left_side_center_votes_align_and_settle() {
+    if (!Config::LEFT_TURN_CAPTURE_ENABLED) return;
+    for (uint8_t side : {3,6}) {
+        CoreNavigator nav; ControlInput in; startG1Left(nav,in);
+        in.linePattern=0;++in.now;nav.update(in);
+        in.linePattern=side;++in.now;nav.update(in);
+        const auto capturedAt=in.now;
+        TEST_ASSERT_TRUE(nav.capturingTurnLine());
+        // Constant 011/110 is real line evidence and selects the sensor side.
+        in.now+=Config::LINE_RECOVERY_REST_MS;
+        if(side==6) nav.update(in); // Direction reversal requires a STOP first.
+        in.now+=Config::LINE_RECOVERY_REST_MS;
+        const auto expected=side==3 ? MotorAction::PivotRight : MotorAction::PivotLeft;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(expected),static_cast<int>(nav.update(in)));
+        TEST_ASSERT_FALSE(nav.following());TEST_ASSERT_FALSE(nav.settlingTurnLine());
+        // Mixed side+center votes complete without 010 being held for 100ms.
+        in.now+=Config::LEFT_CAPTURE_SAMPLE_MS;in.linePattern=2;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        TEST_ASSERT_TRUE(nav.following());TEST_ASSERT_TRUE(nav.settlingTurnLine());
+        TEST_ASSERT_EQUAL_INT(510,nav.routeCommandId());TEST_ASSERT_EQUAL_INT(0,nav.pathIndex());
+        TEST_ASSERT_TRUE(in.now-capturedAt<Config::LINE_RECOVERY_TIMEOUT_MS);
+        ++in.now;TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
+        in.now+=Config::LEFT_CAPTURE_SETTLE_MS;nav.update(in);
+        TEST_ASSERT_FALSE(nav.settlingTurnLine());
+    }
+}
+void test_robot02_left_vote_noise_spacing_wide_and_blank() {
+    if (!Config::LEFT_TURN_CAPTURE_ENABLED) return;
+    CoreNavigator nav;ControlInput in;startG1Left(nav,in);
+    in.linePattern=0;++in.now;nav.update(in);
+    in.linePattern=3;++in.now;nav.update(in);
+    in.linePattern=2;
+    for(int i=0;i<5;++i)nav.update(in); // Same millisecond cannot add votes.
+    TEST_ASSERT_TRUE(nav.capturingTurnLine());
+    in.now+=Config::LEFT_CAPTURE_SAMPLE_MS;in.linePattern=0;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    in.now+=Config::LEFT_CAPTURE_SAMPLE_MS;in.linePattern=2;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_TRUE(nav.following()); // 011,000,010: two of three.
+    for(uint8_t wide : {5,7}) {
+        CoreNavigator wideNav;startG1Left(wideNav,in);
+        in.linePattern=0;++in.now;wideNav.update(in);
+        in.linePattern=3;++in.now;wideNav.update(in);
+        in.linePattern=wide;
+        for(int i=0;i<5;++i) {
+            in.now+=Config::LEFT_CAPTURE_SAMPLE_MS;
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(wideNav.update(in)));
+            TEST_ASSERT_FALSE(wideNav.following());
+        }
+    }
+    CoreNavigator stale;startG1Left(stale,in);
+    in.linePattern=0;++in.now;stale.update(in);
+    in.linePattern=3;++in.now;stale.update(in);
+    in.linePattern=2;in.now+=Config::LEFT_CAPTURE_MAX_GAP_MS+1;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(stale.update(in)));
+    TEST_ASSERT_TRUE(stale.capturingTurnLine()); // Old side sample expired.
+    in.now+=Config::LEFT_CAPTURE_SAMPLE_MS;stale.update(in);
+    TEST_ASSERT_TRUE(stale.following());
+}
+
 int main() {
     static_assert(Config::ENABLE_CORE_MOTION ==
                   (Config::ONE_ROBOT_TRIAL || Config::TWO_ROBOT_BENCH_TRIAL),
@@ -814,6 +1271,18 @@ int main() {
                   Config::GENTLE_CORRECTION_SPEED < Config::CORRECTION_SPEED),
                   "Trial gentle correction must keep both wheels moving");
     UNITY_BEGIN();
+    RUN_TEST(test_robot02_left_captures_center_before_min_without_blank);
+    RUN_TEST(test_robot02_left_old_line_and_timeout_never_start_long_retry);
+    RUN_TEST(test_robot02_left_overshoot_countersteers_briefly_then_faults);
+    RUN_TEST(test_robot02_left_capture_hazards_and_grant_remain_effective);
+    RUN_TEST(test_robot02_left_side_center_votes_align_and_settle);
+    RUN_TEST(test_robot02_left_vote_noise_spacing_wide_and_blank);
+    RUN_TEST(test_line_search_direction_pulses_and_reverse);
+    RUN_TEST(test_line_search_requires_stable_center_and_keeps_task);
+    RUN_TEST(test_line_search_no_direction_and_expired_memory_hold_still);
+    RUN_TEST(test_line_search_hazards_stop_cancel_and_grant);
+    RUN_TEST(test_line_search_rfid_stops_and_clears_old_direction);
+    RUN_TEST(test_line_search_clock_wrap_and_segment_deadline);
     RUN_TEST(test_pass_through_parser_dedup_and_bounds);
     RUN_TEST(test_straight_trip_reports_each_rfid_without_dwell);
     RUN_TEST(test_through_waits_at_gate_without_lookahead_grant);
@@ -826,11 +1295,13 @@ int main() {
     RUN_TEST(test_server_node_order_stops_then_pivots_left_with_mutex);
     RUN_TEST(test_server_node_order_right_then_station_turn);
     RUN_TEST(test_reverse_home_turn_translation_and_safety);
-#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+    RUN_TEST(test_left_turn_retries_same_direction_once);
+    RUN_TEST(test_reverse_home_s2_uses_matching_route_and_order);
+#if defined(AGV_PROFILE_ID)
     RUN_TEST(test_robot01_blank_line_waits_for_rfid_without_moving);
 #endif
 #if defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
-    RUN_TEST(test_robot02_still_faults_immediately_on_blank_line);
+    RUN_TEST(test_robot02_blank_line_holds_before_fault);
 #endif
     RUN_TEST(test_bad_commands_stay_rejected);
     RUN_TEST(test_core_wire_formats);

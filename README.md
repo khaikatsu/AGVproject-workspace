@@ -1,5 +1,9 @@
 # Workspace nghiên cứu hệ thống AGV trong kho
 
+Ngày16/10/2026: xe02 dùng chung cấu hình phần cứng/thông số/capability xe01, giữ PWM02 tiến/lùi/chỉnh230 và xoay230. Core/web nhận encoder, hai sonar, servo và kiện02; scope02 có nút Lấy/Hạ, lùi vềS2 tương tự01 vềS1. Xem [ADR-059](docs/decisions/ADR-059-robot02-firmware-parity.md), env `esp32dev_two_robot_bench_02`. Đã chuẩn bị build/test; chưa upload xe thật.
+
+Ngày 16/10/2026: Core được thống nhất theo [ADR-058](docs/decisions/ADR-058-unified-core-active-robot-scope.md). Menu 1/2/3 giờ chọn phạm vi vận hành xe 01, xe 02 hoặc cả hai trên cùng source/binary và cùng chốt pin, RFID, MQTT, ACK, mutex như Core thật. Capability firmware đi theo diagnostic, không đi theo tên bản test. Bản mới chỉ build/test riêng trong `.qa`, chưa thay Core vận hành hoặc chạy xe thật.
+
 Ngày 15/10/2026: mã thử xe 01 tích hợp hai HC-SR04 trước/sau theo chân người dùng, dừng ở ≤15 cm và tiếp tục tuyến khi thông; Core test 01/web cảnh báo hướng và đánh dấu vật cản ước tính trên cạnh. Xem [ADR-055](docs/decisions/ADR-055-robot01-dual-sonar-edge-warning.md). Ảnh ESP32 đã build trong workspace; chưa nạp hoặc thử phanh trên xe thật.
 
 Ngày 14/10/2026: firmware xe 01 có [encoder bánh trước trái/phải](docs/decisions/ADR-050-robot01-encoder-position-speed.md) theo sketch test người dùng, GPIO16/4 và hệ số thử 161 xung/100 cm. Core menu **1 — thử xe 01** hiển thị vị trí ước tính liên tục trên chặng; web có tốc độ cm/s. RFID vẫn xác nhận node/task, mutex giữ chốt hiện tại. [Kiểm thử phần mềm](docs/testing-encoder-robot01-2026-10-14.md) dùng môi trường riêng; chưa nạp/hiệu chuẩn xe thật.
@@ -18,7 +22,7 @@ Ngày 14/10/2026: firmware xe 01 có [encoder bánh trước trái/phải](docs/
 
 ## Bản web/server mới
 
-Core có [menu chọn chế độ khi mở server](docs/16-startup-troubleshooting.md): F5 hiện console, nhập **1** thử riêng xe 01, **2** thử riêng xe 02, **3** thử hai xe, **4** vận hành thường, **0** thoát. Các lựa chọn thử giữ mutex; chọn chế độ chưa tự mở ca hoặc cho xe chạy. [ADR-028](docs/decisions/ADR-028-core-startup-mode-menu.md).
+Core có [menu chọn phạm vi khi mở server](docs/16-startup-troubleshooting.md): F5 hiện console, nhập **1** vận hành xe 01, **2** vận hành xe 02, **3** vận hành cả hai, **4** tất cả xe cấu hình, **0** thoát. Đây là cùng một Core và cùng luật an toàn; chọn phạm vi chưa tự mở ca hoặc cho xe chạy. [ADR-058](docs/decisions/ADR-058-unified-core-active-robot-scope.md) thay cách dùng menu trial trong [ADR-028](docs/decisions/ADR-028-core-startup-mode-menu.md).
 
 Đã chạy [audit lỗi/xung đột 02/10/2026](docs/testing-simulation-audit-2026-10-02.md): 16 bộ PASS, 15 nhóm lỗi và stress 30 lượt hai xe. Đã sửa đặt trước đường thường/hành lang mutex, mất broker và phục hồi sau restart; giữ Dijkstra/FIFO, payload và dữ liệu vận hành. Runner: `node tests/run-simulation-audit.js --browser` sau khi build/cấu hình theo báo cáo.
 

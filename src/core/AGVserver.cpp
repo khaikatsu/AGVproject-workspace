@@ -485,7 +485,7 @@ static void on_connect(mosquitto* mosq, void*, int rc) {
         }
         mosquitto_subscribe(mosq, NULL, "agv/+/telemetry", 0);
         mosquitto_subscribe(mosq, NULL, "agv/+/diagnostic", 0);
-        mosquitto_subscribe(mosq, NULL, "agv/01/odometry", 0);
+        mosquitto_subscribe(mosq, NULL, "agv/+/odometry", 0);
         mosquitto_subscribe(mosq, NULL, "agv/+/mutex_request", 0);
         mosquitto_subscribe(mosq, NULL, "agv/+/mutex_release", 0);
         mosquitto_subscribe(mosq, NULL, "agv/+/obstacle", 0);
@@ -527,7 +527,7 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
 
     if (action == "odometry") {
         const auto sample = EncoderSample::parse(json::parse(payload));
-        if (agvId == "01" && sample.coreSession == CORE_SESSION && g_fleet.observeOdometry(agvId,sample))
+        if (sample.robotId == agvId && sample.coreSession == CORE_SESSION && g_fleet.observeOdometry(agvId,sample))
             broadcastState(true);
         return; // dữ liệu hiển thị không ghi checkpoint hoặc điều phối
     } else if (action == "telemetry") {
@@ -572,7 +572,7 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                 diagnostic["session"].get<uint32_t>(),diagnostic["uptimeMs"].get<uint32_t>())) return;
             encoderBound = true;
         }
-        g_fleet.updateBatteryDisplay(agvId, displayPercent);
+        g_fleet.updateBatteryDiagnostic(agvId, displayPercent);
         if (diagnostic.contains("node") && diagnostic["node"].is_string() &&
             diagnostic.contains("state") && diagnostic["state"].is_string() &&
             diagnostic.contains("error") && diagnostic["error"].is_string() &&
@@ -625,7 +625,7 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                 motion.heading = diagnostic.value("heading",string{});
                 motion.headingNode = diagnostic.value("headingNode",string{});
                 motion.headingSource = diagnostic.value("headingSource",string{});
-                if (encoderBound && agvId == "01" && diagnostic.contains("obstacle") && diagnostic["obstacle"].is_boolean() &&
+                if (encoderBound && diagnostic.contains("obstacle") && diagnostic["obstacle"].is_boolean() &&
                     diagnostic.contains("ultrasonicCm") &&
                     diagnostic.contains("obstacleDirection") && diagnostic["obstacleDirection"].is_string()) {
                     const double cm = diagnostic["ultrasonicCm"].is_number() ? diagnostic["ultrasonicCm"].get<double>() : -1;
@@ -646,6 +646,10 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
         auto fleet = g_fleet.toJson();
         const auto selected = fleet.value("trial_robot_id",string{});
         if (!selected.empty() && selected != agvId) { pushLog("[LOI] Xe khong duoc chon xin mutex"); return; }
+        const auto active = fleet.value("active_robot_ids",json::array());
+        if (std::find(active.begin(),active.end(),json(agvId)) == active.end()) {
+            pushLog("[LOI] Xe ngoai pham vi van hanh xin mutex"); return;
+        }
         bool online = false;
         for (const auto& robot : fleet["agvs"]) if (robot["id"] == agvId && robot.value("online", false) && robot.value("position_valid", false) && robot["state"] != "ERROR") online = true;
         if (!zones.contains(payload) || !online) { pushLog("[LOI] Mutex request khong hop le"); return; }
@@ -735,7 +739,7 @@ static string startupMode(int argc, char** argv, bool& quit) {
         const string arg = argv[i];
         if (arg == "--select-mode") menu = true;
         else if (arg == "--mode" && i + 1 < argc) mode = argv[++i];
-        else throw std::invalid_argument("Dung --select-mode hoac --mode robot01|robot02|both|normal");
+        else throw std::invalid_argument("Dung --select-mode hoac --mode active01|active02|active-both|normal (legacy: robot01|robot02|both)");
     }
 #if defined(_WIN32)
     const bool terminal = _isatty(_fileno(stdin)) != 0;
@@ -745,10 +749,10 @@ static string startupMode(int argc, char** argv, bool& quit) {
     const bool configured = enabled("AGV_ONE_ROBOT_TRIAL") || enabled("AGV_TWO_ROBOT_TRIAL") || enabled("AGV_MONITOR_ONLY_02");
     if (menu || (mode.empty() && terminal && !configured)) {
         cout << "\n========== CHON CHE DO CORE AGV ==========\n"
-             << "  1. Thu rieng xe 01 (tram S1, mutex bat)\n"
-             << "  2. Thu rieng xe 02 (tram S2, mutex bat)\n"
-             << "  3. Thu ca hai xe 01 + 02 (mutex bat)\n"
-             << "  4. Che do van hanh thuong\n"
+             << "  1. Van hanh xe 01 (Core that, day du chot an toan)\n"
+             << "  2. Van hanh xe 02 (Core that, day du chot an toan)\n"
+             << "  3. Van hanh ca hai xe 01 + 02 (Core that, mutex bat)\n"
+             << "  4. Van hanh tat ca xe cau hinh\n"
              << "  0. Thoat\n"
              << "Chon che do khong tu mo ca/cho xe chay.\n";
         string choice;
@@ -758,15 +762,16 @@ static string startupMode(int argc, char** argv, bool& quit) {
             stringstream input(choice);string token, extra;input >> token;
             if (!(input >> extra)) {
                 if (token == "0") {quit = true;return "";}
-                if (token == "1") {mode = "robot01";break;}
-                if (token == "2") {mode = "robot02";break;}
-                if (token == "3") {mode = "both";break;}
+                if (token == "1") {mode = "active01";break;}
+                if (token == "2") {mode = "active02";break;}
+                if (token == "3") {mode = "active-both";break;}
                 if (token == "4") {mode = "normal";break;}
             }
             cout << "Lua chon khong hop le. Nhap 1, 2, 3, 4 hoac 0.\n";
         }
     }
-    if (!mode.empty() && mode != "robot01" && mode != "robot02" && mode != "both" && mode != "normal")
+    if (!mode.empty() && mode != "active01" && mode != "active02" && mode != "active-both" &&
+        mode != "robot01" && mode != "robot02" && mode != "both" && mode != "normal")
         throw std::invalid_argument("Che do khong hop le: " + mode);
     if (!mode.empty()) cout << "[MODE] " << mode << "\n" << flush;
     return mode;
@@ -848,16 +853,24 @@ int main(int argc, char** argv) {
     g_fleet.setCommandIdAllocator([&commandIds] { return commandIds.next(); });
     g_fleet.setPublishCallback(publishTo);
     g_fleet.setStateChangedCallback(requestWake);
-    g_fleet.setChargeThresholds(20, 40, 90); // <=20% -> di sac; can >=40% moi nhan task moi; sac xong ~90% neu ESP32 khong bao pin that
+    // g_fleet.setChargeThresholds(20, 40, 90); // Cau hinh goc: giu nguyen de bat lai sau test.
+    // g_fleet.setBatteryTestBypass(false); // Bo // dong nay va comment dong true ben duoi de bat lai chot pin.
+    g_fleet.setBatteryTestBypass(true); // TAM THOI theo nguoi dung: khong chan task/mo ca boi pin.
+    g_fleet.setAutomaticChargingEnabled(false); // Nhom sac thu cong; khong tu ve sac/CHARGE_START theo pin.
     const bool singleRobotTrial = mode.empty() && enabled("AGV_ONE_ROBOT_TRIAL");
     const bool twoRobotTrial = mode.empty() ? enabled("AGV_TWO_ROBOT_TRIAL") : mode == "both";
     const bool monitorRobot02 = mode.empty() && enabled("AGV_MONITOR_ONLY_02");
     const string trialRobot = mode == "robot01" ? "01" : mode == "robot02" ? "02" : "";
+    std::unordered_set<string> activeRobots;
+    if (mode == "active01") activeRobots = {"01"};
+    else if (mode == "active02") activeRobots = {"02"};
+    else if (mode == "active-both") activeRobots = {"01","02"};
     if (twoRobotTrial && (singleRobotTrial || monitorRobot02))
         throw std::invalid_argument("Khong ket hop che do thu hai xe voi thu mot xe/giam sat xe 02");
     g_fleet.setSingleRobotTrial(singleRobotTrial);
     g_fleet.setTwoRobotTrial(twoRobotTrial);
     g_fleet.setTrialRobot(trialRobot);
+    g_fleet.setActiveRobots(activeRobots);
     if (monitorRobot02) g_fleet.setMonitorOnlyRobot("02");
     g_fleet.setOfflineTimeout(10);    // >10s không telemetry -> OFFLINE, task gián đoạn, giữ vùng
     g_fleet.setAckTimeout(3000);             // 3s khong thay ACK lenh -> gui lai
@@ -876,9 +889,12 @@ int main(int argc, char** argv) {
     if (singleRobotTrial) homes = {{"01","S1"}};
     if (!trialRobot.empty()) homes = {{trialRobot,trialRobot == "01" ? "S1" : "S2"}};
     if (!mode.empty() && trialRobot.empty() && twoRobotTrial) homes = {{"01","S1"},{"02","S2"}};
+    if (mode == "active01") homes = {{"01","S1"}};
+    if (mode == "active02") homes = {{"02","S2"}};
+    if (mode == "active-both") homes = {{"01","S1"},{"02","S2"}};
     const auto shiftFile = std::getenv("AGV_SHIFT_STATE_PATH") ? std::filesystem::path(std::getenv("AGV_SHIFT_STATE_PATH"))
         : std::filesystem::path(MAP_SAVE_PATH).parent_path()/"shift_state.json";
-    g_shift = std::make_unique<ShiftController>(g_map,g_fleet,g_arbiter,shiftFile,homes,singleRobotTrial,twoRobotTrial,trialRobot);
+    g_shift = std::make_unique<ShiftController>(g_map,g_fleet,g_arbiter,shiftFile,homes,singleRobotTrial,twoRobotTrial,trialRobot,activeRobots);
     if ((std::getenv("AGV_HOME_STATIONS") || !mode.empty()) && !homes.empty() && !g_shift->supported())
         throw std::invalid_argument("AGV_HOME_STATIONS phai dung robot ID va tram sac hop le/khong trung");
     g_commands.setShiftController(g_shift.get());

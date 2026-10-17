@@ -239,6 +239,11 @@ void AGVController::update() {
     bool inhibited = consumePriority();
     if (controlArmed_) control_.checkSafety(input());
     if (!navigator_.active() && control_.state() != AGV_MOVING) movement_.stop();
+    if (navigator_.observeTurnLine(input())) {
+        movement_.stop(); // Apply STOP before RFID/SPI and before any Serial log.
+        if (Config::DEBUG_ENABLED) Serial.printf("[TURN] center_capture xe=%s node=%s next=%s line=%u\n",
+            Config::AGV_ID, control_.currentNode(), navigator_.nextNode(), line_.readSensors().pattern);
+    }
     if (rfid_.readCard()) {
         const RFIDEvent& event = rfid_.event();
         if (!event.node[0]) {
@@ -367,7 +372,8 @@ void AGVController::update() {
         headingBayDefault_ = false;
     }
     movement_.apply(navigator_.state() == AGV_SAFE_STOP ? MotorAction::Stop :
-                    (navigator_.active() ? coreMotor : output.motor));
+                    (navigator_.active() ? coreMotor : output.motor), navigator_.precisionPivot(),
+                    navigator_.precisionPivotPwm(), navigator_.settlingTurnLine());
     if (output.servo != ServoAction::None) {
         movement_.stop();
         const bool moved = output.servo == ServoAction::LiftUp ? servo_.liftUp() : servo_.liftDown();
@@ -383,7 +389,8 @@ void AGVController::update() {
             Config::BUZZER_PIN, buzzer_.pinLevel(), Config::BUZZER_ACTIVE_STATE);
     }
     if (Config::DEBUG_ENABLED && Config::ENABLE_CORE_MOTION && motorAction != lastMotorAction_ &&
-        (std::strcmp(control_.currentNode(), "GS1") == 0 || std::strcmp(control_.currentNode(), "GS2") == 0)) {
+        (std::strcmp(control_.currentNode(), "GS1") == 0 || std::strcmp(control_.currentNode(), "GS2") == 0 ||
+         std::strcmp(control_.currentNode(), "G1") == 0)) {
         Serial.printf("[MOTOR] xe=%s node=%s action=%s left=%d right=%d line=%u next=%s zone=%s\n",
                       Config::AGV_ID, control_.currentNode(), motorActionName(motorAction),
                       motor_.leftDuty(), motor_.rightDuty(),

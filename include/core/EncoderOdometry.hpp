@@ -11,7 +11,7 @@ struct EncoderSample {
     uint32_t boot = 0, connection = 0, seq = 0, uptime = 0, leftTicks = 0, rightTicks = 0;
     long route = 0;
     int index = 0;
-    std::string from, to, coreSession;
+    std::string robotId, from, to, coreSession;
     bool tracking = false, translating = false, reverse = false;
     double distance = 0, speed = 0, pulsesPer100Cm = 0;
     static EncoderSample parse(const nlohmann::json& j) {
@@ -35,9 +35,11 @@ struct EncoderSample {
             if (!j.at(key).is_boolean()) throw std::invalid_argument("Odometry boolean sai");
             return j.at(key).get<bool>();
         };
-        if (!j.is_object() || integer("schema_version", 1, 1) != 1 || j.at("robot_id") != "01")
-            throw std::invalid_argument("Odometry chi ho tro xe 01/schema 1");
+        if (!j.is_object() || integer("schema_version", 1, 1) != 1 ||
+            (j.at("robot_id") != "01" && j.at("robot_id") != "02"))
+            throw std::invalid_argument("Odometry chi ho tro xe 01/02/schema 1");
         EncoderSample s;
+        s.robotId = j.at("robot_id").get<std::string>();
         s.boot = integer("boot_id", UINT32_MAX, 1); s.connection = integer("connection_session", UINT32_MAX, 1);
         s.seq = integer("seq", UINT32_MAX); s.uptime = integer("uptime_ms", UINT32_MAX);
         s.leftTicks = integer("left_ticks", UINT32_MAX); s.rightTicks = integer("right_ticks", UINT32_MAX);

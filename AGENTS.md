@@ -20,6 +20,18 @@ Kỹ năng nằm trong `.agents/skills/`. Chỉ đọc kỹ năng liên quan đ�
 
 Nếu ứng dụng chưa khám phá kỹ năng mới, có thể đọc trực tiếp `SKILL.md` tại đường dẫn tương ứng. Sáu kỹ năng không yêu cầu tự động gọi agent khác.
 
+## Ngân sách context
+
+- Với sửa lỗi hoặc tính năng cục bộ, bắt đầu bằng `rg`, kỹ năng liên quan, hợp đồng liên quan và các đoạn mã trực tiếp ảnh hưởng. Không mặc định đọc toàn bộ workspace.
+- Chỉ đọc toàn bộ `README.md`, `docs/00-project-brief.md`, `docs/02-current-system.md` và sổ yêu cầu khi thay đổi kiến trúc, thay đổi yêu cầu hệ thống hoặc chưa xác định được phạm vi sau bước tìm kiếm ban đầu.
+- Khi tra sổ yêu cầu, tìm theo từ khóa, feature hoặc mã `REQ`; không mặc định đọc toàn bộ `docs/requirements/register.md`.
+- Chỉ mở ADR được tài liệu, contract hoặc mã của feature hiện tại tham chiếu. Mở rộng sang ADR khác khi bằng chứng hiện tại chưa đủ hoặc có xung đột cần giải quyết.
+- Không đọc `node_modules`, thư viện vendored, `.qa`, artifact build hoặc log cũ trừ khi task trực tiếp cần chúng. Không tính các tệp này là mã ứng dụng cần rà soát mặc định.
+- Với file lớn, tìm đúng symbol trước rồi đọc đoạn liên quan; chỉ đọc toàn bộ file khi cần hiểu luồng xuyên suốt hoặc chuẩn bị refactor file đó.
+- Giới hạn output tìm kiếm, build và test ở phần liên quan đến lỗi. Chỉ mở rộng kiểm thử để xử lý rủi ro cụ thể hoặc đáp ứng gate bắt buộc.
+- Không đọc lại file không thay đổi trong cùng một task. Tái sử dụng kết luận đã xác minh trong lượt hiện tại và ghi rõ khi kết luận phụ thuộc trạng thái runtime có thể đã đổi.
+- Mục tiêu thông thường là hoàn thành một task với context dưới 100k token, gồm hướng dẫn, lịch sử, tài liệu, mã, test và output công cụ. Đây là ngân sách định hướng; tính đúng và an toàn quan trọng hơn việc giữ giới hạn máy móc.
+
 ## Quy ước dự án
 
 - Dùng tiếng Việt cho tài liệu; định danh mã, topic, API giữ đúng cách viết đang có.

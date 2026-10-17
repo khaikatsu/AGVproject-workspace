@@ -94,7 +94,8 @@ inline bool dockingReverse(const char* from, const char* to) {
 }
 inline bool reverseHome(const char* from, const char* to) {
     return Config::REVERSE_HOME_SUPPORTED && from && to &&
-        std::strcmp(from,"GS1") == 0 && std::strcmp(to,"S1") == 0;
+        ((std::strcmp(from,"GS1") == 0 && std::strcmp(to,"S1") == 0) ||
+         (std::strcmp(from,"GS2") == 0 && std::strcmp(to,"S2") == 0));
 }
 inline bool straightThrough(const char* from, const char* current, const char* next) {
     if (!current || station(current) || bayGate(current) || dockingReverse(from,current)) return false;

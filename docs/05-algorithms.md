@@ -1,5 +1,7 @@
 # Thuật toán tìm đường và điều phối
 
+16/10/2026, phục hồi bắt line sau LEFT/RIGHT là máy trạng thái cục bộ của firmware, không phải replan: giữ nguyên chặng, task và mutex; retry cùng hướng đúng một lần rồi mới phát `LINE_LOST`. Server không cấp lại `NODE_ORDER`; mất liên lạc vẫn dừng và quyền vùng không tự nhả. [ADR-061](decisions/ADR-061-single-turn-line-retry.md).
+
 ## Bài toán nền
 
 Hai robot di chuyển trên graph của kho. Node biểu diễn điểm nhận biết hoặc dừng; cạnh có hướng và trọng số. Mã hiện có dùng RFID/node, Dijkstra, task priority, quản lý pin và mutex zone. Kích thước robot, tốc độ và loại nhận biết vị trí vẫn chờ thông số.

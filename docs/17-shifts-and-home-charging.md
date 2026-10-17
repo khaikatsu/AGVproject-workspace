@@ -1,5 +1,11 @@
 # Ca làm việc và tự về trạm sạc
 
+16/10/2026 — **Ghi đè tạm thời để test:** nhóm sạc thủ công; Core main bỏ chốt pin (giữ mã cũ bằng `//`). Pin thấp/chưa đo không chặn mở ca hoặc task/GOTO; không tự chuyển tuyến đi sạc, không phát CHARGE_START. Kết thúc ca vẫn về trạm riêng và đỗ IDLE. RFID, lỗi, MQTT và mutex vẫn giữ nguyên. Những mô tả ngưỡng20/40 và CHARGING bên dưới là hành vi gốc, hiện không áp dụng; yêu cầu ≤30% sẽ cần triển khai/kiểm chứng trước khi bật chốt lại. [ADR-060](decisions/ADR-060-temporary-battery-bypass-manual-charge.md).
+
+16/10/2026: menu scope `active01`, `active02`, `active-both` dùng cùng quản lý ca và ngưỡng pin như Core thật. Chỉ các xe trong `active_robot_ids` tham gia ca; xe ngoài scope nếu đã xuất hiện phải được xác minh IDLE tại trạm và không giữ task/tuyến/vùng. Chọn scope lúc khởi động không tự gửi GOTO/CHARGE_START; sau khi ca đã RUNNING, kết thúc ca vẫn theo luồng về trạm hiện có. Bộ sạc/CHARGE_START vật lý còn OPEN. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).
+
+16/10/2026, REQ-BATTERY-06: mode thường dùng `batteryPercentage` calibrated từ diagnostic làm pin điều phối cho ngưỡng20/40; telemetry `?` không xóa số diagnostic còn mới. Các mode trial vẫn giữ ngoại lệ không chặn theo ngưỡng. Luồng `CHARGE_START`/bộ sạc thật chưa được nghiệm thu và không được suy là đang sạc chỉ từ trạng thái Core. [ADR-021](decisions/ADR-021-display-only-battery.md).
+
 14/10/2026: [ADR-053](decisions/ADR-053-station-completion-rfid-anchor.md) sửa task kẹt WORKING tại S1 dù MCU đã đỗ xong. RFID đích cùng diagnostic mới stationReady/IDLE/NONE/STOP/hướng ra GS chốt task; không đòi đầu đọc còn nằm trên thẻ sau pivot. Task/đích rỗng cho phép ca CLOSING→CLOSED; phục hồi lỗi/mutex giữ250ms.
 
 Cập nhật 01/10: sau Core restart, xe đã biết được giữ dưới dạng OFFLINE/vị trí chưa xác minh, task đang chạy gián đoạn, queue và mutex được khôi phục. RFID mới, xác minh lỗi/vùng và quy trình mở ca vẫn bắt buộc. [Chi tiết phục hồi](18-hardening.md).

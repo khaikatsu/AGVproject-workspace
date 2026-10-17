@@ -1,5 +1,85 @@
 # Hồ sơ kiểm thử AGV
 
+16/10/2026 — REQ-ROBOT02-REVERSE-BALANCE-01: chỉ chạy kiểm tra cơ bản motor-host profile02 PASS (lùi215/195, chỉnh lùi225/205, trim lùi trong pha cap, tiến/xoay/STOP/còi), không chạy bộ native/integration. Build `esp32dev_two_robot_bench_02` PASS, RAM57940byte/flash962661byte, buildID `20261016-robot02-reverse-left215`. Chưa upload/thử phần cứng. Giữ các tuning mới người dùng đã chỉnh: reverse210/correction220/capture230.
+
+## 16/10/2026 — Xe02 tách bắt line và căn giữa
+
+BuildID02 `20261016-robot02-line-align`. Native bốn env **166/166 PASS** (02=43,01=42,trial=41,two-robot=40). Test mới:011/110 được tính phiếu có line, hướng căn phải/trái tương ứng; mẫu mới nhất010 và≥2 phiếu trong3 mẫu thì tiếp tục trước100ms, không xác nhận từ111/101, không thêm phiếu cùng thời điểm, mẫu cũ>40ms hết hiệu lực. Giữ timeout600ms, STOP/grant/mạng/sonar/vật cản, không nhận line cũ và hồi quy route/lùi trạm/tìm line.
+
+Build `esp32dev_two_robot_bench_02` **PASS**, RAM57940byte/flash962613byte; ảnh `.pio/build/esp32dev_two_robot_bench_02/firmware.bin` có đúng buildID mới. Chưa upload.
+
+Host `left_capture.cpp` **PASS**: GPIO STOP trước RFID, pivot theo từng mắt±215, cap duty215 sau bắt line rồi về tuning thường sau200ms; blank000 dừng, giữ route/index và odometry không cộng pivot. Reverse correction trong pha cap giữ dấu/zero/còi đúng; host motor01/02 hồi quy **PASS**. Chỉ mô phỏng GPIO, không phải kiểm thử quán tính/nguồn/góc thật. Chưa upload. Các báo cáo bên dưới là bản trước cập nhật này.
+
+## 16/10/2026 — Tăng lực xoay xe02
+
+Native `native_robot02_bench`: **41/41 PASS**. Build `esp32dev_two_robot_bench_02`: **PASS**, RAM57940byte/flash962077byte, ảnh `.pio/build/esp32dev_two_robot_bench_02/firmware.bin`. Chỉ kiểm chứng phần mềm, chưa upload.
+
+Host `left_capture.cpp` PASS PWM230→215 khi rời line, chốt mắt giữa STOPGPIO0/0 trước RFID, chỉnh ngược−215/+215, xác nhận line rồi tiếp tục task/index cũ; odometry không cộng pivot. Host `reverse_speed.cpp` profile01/02 PASS tiến/lùi/chỉnh line giữ nguyên, pivot02=230, phục hồi mất line thông thường vẫn180 và STOP/còi đúng. Chưa nạp hoặc đo lực xoay thật. BuildID02 `20261016-robot02-turn230-capture215`; báo cáo LEFT-CAPTURE bên dưới là bản trước tuning mới.
+
+## Xe02 xoay trái bắt line thì dừng — 16/10/2026
+
+REQ-ROBOT02-LEFT-CAPTURE-01/[ADR-063](../docs/decisions/ADR-063-robot02-left-turn-capture.md). Native01/02/trial/two-robot không profile: **158/158 PASS** (40/41/39/38). Ca G1 C3→G1→K1 tái hiện `010→001→011` không có000 và trướcTURN_MIN_MS vẫn chốtSTOP; xác nhận010100ms/≥3 mẫu rồi STOP trước Forward. Kiểm không nhận lại line cũ, trôi vạch chỉ PivotRight ngắn, timeoutLINE_LOST không retry trái dài, giữ task/index/grant và ưu tiên mạng/sonar/STOP/vật cản. Hồi quy RIGHT/quay đầu/đỗ trạm/lùi S1/S2/tìm line/encoder context PASS.
+
+Host [left_capture.cpp](motor-host/left_capture.cpp) link CoreNavigator/ControlLogic/MovementModule/MotorModule/LineFollowModule thật với adapter GPIO: **PASS**, đầu ra `.qa/robot02-left-capture.exe`. Kiểm PWM215→180, STOPGPIO0/0 ngay khi chốt mắt giữa trước công việc RFID, chỉnh ngược−180/+180, giữ quãng đường odometry khi pivot và trở lại PWM tiến hiện có sau xác nhận. Không phải phép đo dạng sóng hoặc góc quay thật.
+
+`platformio run -e esp32dev_two_robot_bench_02`: **PASS**, RAM57940byte/flash962025byte, ảnh `.pio/build/esp32dev_two_robot_bench_02/firmware.bin`, buildID `20261016-robot02-left-capture`. Chưa upload hoặc điều khiển xe thật. Chạy host: g++ C++17, define AGV_TWO_ROBOT_BENCH_TRIAL=1/AGV_ROBOT_PROFILE_02=1, include firmware/src và tests/motor-host, link các module nêu trên; không cần MQTT/broker thật.
+
+## Tìm lại line tại chỗ và tiếp tục chặng — 16/10/2026
+
+REQ-LINE-SEARCH-01/[ADR-062](../docs/decisions/ADR-062-local-line-search.md): `platformio test -e native_robot01_bench -e native_robot02_bench -e native_trial -e native_two_robot_bench` **142/142 PASS** (36/37/35/34). Sáu nhóm ca mới mô phỏng mất line theo mắt trái/phải khi tiến/lùi, STOP100ms, xung/nghỉ/timeout600ms (kể cả vòng lặp chậm vẫn phải STOP/nghỉ trước xung kế), mẫu giữa `010` ổn định100ms/≥3 mẫu khác thời điểm, nhiễu/bắt giao điểm không cho tiến, giữ route_cmd_id/index/next_node, một lượt quét/chặng, bộ nhớ hướng cũ/không có hướng, RFID đúng/sai, STOP/hủy/mạng/sonar/cấu hình/vật cản/grant, trànmillis và timeout chặng. Khi đang tìm, following=false và không pass-through/prefetch zone kế. Native legacy tắt tìm line vẫn giữ hành vi cũ.
+
+Host `tests/motor-host/reverse_speed.cpp` link motor/movement/line thật: **PASS01/02**, kiểm pivot tìm trái/phải ±180 và PWM hai channel, nghỉ/STOP0/0, còi tắt khi pivot; hồi quy tiến/lùi/chỉnh/pivot thường theo tuning đang có. Xe02 hiện tiến245/215, lùi235/205, chỉnh250/220, chỉnh lùi245/215, pivot215; đây là cấu hình có sẵn lúc bắt đầu yêu cầu tìm line, không sửa lại thành tuning cũ của các hồ sơ bên dưới. Đầu ra `.qa/line-search-motor-01.exe`/`line-search-motor-02.exe`.
+
+Build ESP32 env01/02 **PASS**; RAM57940byte mỗi ảnh, flash01=961641/02=961649byte; buildID01 `20261016-robot01-line-search`,02 `20261016-robot02-line-search`. Lần chạy PlatformIO trong sandbox bị chặn platforms.lock/cache; chạy lại với quyền cache PASS. Hồi quy phát hiện static_assert áp lên profile cũ đang tắt tính năng, đã sửa chỉ kiểm PWM≤TURN_SPEED khi bật tìm line rồi chạy lại toàn bộ bốn env PASS. Chưa upload, restart Core hoặc thử xe thật; thời gian xung chưa được hiệu chuẩn thành góc quét.
+
+## Thử bắt lại line sau quẹo — 16/10/2026
+
+REQ-TURN-LINE-RETRY-01/[ADR-061](../docs/decisions/ADR-061-single-turn-line-retry.md): native profile01 **30/30 PASS**, profile02 **31/31 PASS**. Ca mới kiểm LEFT timeout lần đầu chỉ STOP/không lỗi/giữ route, lần thử lại vẫn PivotLeft, bắt `000→010` thì tiếp tục Forward; timeout lần hai dừng `LINE_LOST`; mất MQTT trong retry dừng `NOT_CONNECTED`. Hồi quy `native_trial` **29/29 PASS** và `native_two_robot_bench` **28/28 PASS**, capability tắt giữ hành vi timeout cũ.
+
+Build ESP32 env01 **PASS** RAM57900/flash960953byte, env02 **PASS** RAM57900/flash960961byte. Build ID01 `20261016-robot01-turn-line-retry`, ID02 `20261016-robot02-pwm230-turn-retry`. Chưa upload hoặc thử motor thật; cần kiểm tra trên giá kê rồi đoạn cua ngắn, quan sát log `turn_retry=1`, STOP giữa hai lần và góc quét thân xe trước khi chạy cùng robot khác.
+
+## Xe02 tiến/lùi230, duty trái195/phải245 — 16/10/2026
+
+REQ-ROBOT02-PWM-230-ASYM-01: probe host motor cho cả hai profile **PASS**; xe02 tiến195/245, lùi−195/−245, chỉnh line/lùi cùng trim mới, pivot vẫn±245, còi lùi và STOP đúng; xe01 hồi quy PASS. `platformio test -e native_robot02_bench`: **30/30 PASS**, gồm parser, route, mutex, mất mạng/line, interlock điện áp và lùi về S2. Đây là kiểm thử lệnh PWM phần mềm, không phải phép đo bánh xe thật.
+
+`platformio run -e esp32dev_two_robot_bench_02`: **PASS**; RAM57900byte, flash960697byte. Ảnh `firmware/NCKHAGV/NCKHAGV/.pio/build/esp32dev_two_robot_bench_02/firmware.bin` chứa buildID `20261016-robot02-pwm230-l195-r245`. `git diff --check` không có lỗi whitespace. Chưa upload hoặc thử trên giá kê/sàn; cần xác minh đúng bo02, chiều bánh, STOP và quãng dừng trước chạy tuyến.
+
+## Xe02 PWM245 — 16/10/2026
+
+Giới hạn hồi quy mở rộng: `scripts/test-robot-parity.ps1` PASS motor/servo/encoder MCU/sonar của cả hai profile, nhưng dừng tại `encoder_core.exe` (exit−1073741819). Chạy GDB: hai ca encoder đơn PASS, sau đó nlohmann type_error305 trong ca hai xe. Fixture `twoRobots()` có vòng duyệt `f.toJson()["agvs"]` tham chiếu vào JSON tạm; cần xử lý riêng lifetime fixture. Không ghi nhận toàn bộ script parity PASS, chưa chạy tới servo_core trong lượt này. Không sửa Core/thuật toán encoder trong yêu cầu PWM.
+
+REQ-ROBOT02-PWM-245-01: tăng tiến/lùi/chỉnh/xoay245, trim chạy−40/0, trim xoay0/0. `platformio test -e native_robot01_bench -e native_robot02_bench`: **59/59 PASS**, gồm interlock điện áp, STOP, mất mạng/line và mutex. Host motor cả hai profile PASS: xe02 tiến205/245, lùi−205/−245, chỉnh line/lùi, pivot±245, STOP về0; xe01 vẫn tiến180/220, lùi150/190, pivot210. Không phải phép đo motor vật lý.
+
+`platformio run -e esp32dev_two_robot_bench_02`: **PASS**; RAM57900byte, flash960681byte. BuildID `20261016-robot02-pwm245`, ảnh `firmware/NCKHAGV/NCKHAGV/.pio/build/esp32dev_two_robot_bench_02/firmware.bin`. Lượt PlatformIO đầu bị sandbox chặn platforms.lock, chạy lại với quyền ghi cache PASS. Chưa upload/kiểm thử bàn hoặc sàn; không đổi ngưỡng sonar, timeout, servo hay PWM01. Cần kiểm tra chiều/STOP/quãng dừng trước chạy tải thật.
+
+## Tạm bỏ chốt pin, sạc thủ công — 16/10/2026
+
+REQ-BATTERY-TEST-BYPASS-01/[ADR-060](../docs/decisions/ADR-060-temporary-battery-bypass-manual-charge.md). `./scripts/build-core.ps1 -Tests -OutputDirectory .qa/battery-bypass-build`: **build Core và full unit PASS**. Ca mới kiểm cả01/02: pin chưa đo hoặc0/29/30/39% vẫn mở ca/GOTO; queue tự giao task, pin0% không lấy mất tuyến đi sạc; kết thúc ca về trạm/IDLE, không CHARGE_START; mất mạng vẫn chặn, bật lại cờ pin khôi phục chốt.
+
+`$env:AGV_CORE_BIN=(Resolve-Path .qa/battery-bypass-build/agv_core.exe).Path; node tests/core-mode.integration.js`: **PASS** main thật ởscope01/02/cảhai, pin`?` và0%, lọc xe, mutex owner/waiter và counter tiếp tục sau restart. Artifact `.qa/core-mode-test-bqVfke`. Lượt đầu `.qa/core-mode-test-evu20t` timeout kết nối trong sandbox; chạy lại với quyền loopback PASS. Broker/cổng/map/runtime/counter riêng, không dùng broker1883 hay điều khiển xe thật.
+
+`node --test tests/dashboard-battery.test.js`: **4/4 PASS**, mock UI hiển thị bypass/sạc thủ công cho ba scope, giữ vô hiệu xe ngoài scope và tương thích khi Core cũ thiếu cờ. `node --test tests/orders.test.js tests/warehouse-actions.test.js`: **20/20 PASS**. JS syntax và `git diff --check` PASS. Chưa thay `build/agv_core.exe`, chưa restart Core vận hành hoặc upload/thử xe thật; F5 sẽ build lại source mới trước khi chạy.
+
+## Xe02 đồng bộ phần cứng xe01, giữ PWM — 16/10/2026
+
+REQ-ROBOT02-PARITY-01/[ADR-059](../docs/decisions/ADR-059-robot02-firmware-parity.md). `platformio test -e native_robot01_bench -e native_robot02_bench`: **59/59 PASS** (29 profile01,30 profile02), gồm xoay/lùi S2, vật cản/mạng/mất line/grant/dedup. Build ESP32 hai env **PASS**, RAM57900byte mỗi profile; flash01=960689byte,02=960697byte. Ảnh02: `firmware/NCKHAGV/NCKHAGV/.pio/build/esp32dev_two_robot_bench_02/firmware.bin`, buildID `20261016-robot02-hardware-parity`.
+
+`scripts/test-robot-parity.ps1`: **PASS** motor driver (01 tiến180/220,lùi150/190,xoay210;02 tiến/lùi190/230,xoay230), encoder ISR/codec, sonar hai hướng, servo GPIO17/50Hz/0–45°/5s cho cả hai profile; Core servo01/02 và encoder01/02 PASS. Encoder Core bổ sung mẫu có ID khác stream bị từ chối, cùng boot/session/seq của hai xe độc lập. Core build/full unit PASS tại `.qa/robot02-parity-build`.
+
+`tests/servo.integration.js` dùng `AGV_TEST_ROBOT=02`, Core mới và host `servo_02.exe`, broker/cổng/map/counter/DB riêng: **PASS**, Edge headless/browsertrue tại `.qa/servo-integration-UfgiLg/verification.json`. Kiểm tra nâng/hạ5s, ACK đầu bị mất/retry không ghiPWM lại, GOTO bị khóa, kiện đúng02 và chỉ lùi gate sau DONE. Hồi quy01 PASS tại `.qa/servo-integration-MYQyVs/verification.json`. Gateway/order/warehouse **20/20 PASS**. Chưa upload, restart Core vận hành hoặc dùng xe thật.
+
+Fixture `core-mode.integration.js` bản mới **PASS** tại `.qa/core-mode-test-qwmiua`: scope01/02/hai xe nhận odometry qua subscription `agv/+/odometry`, cùng boot1234/connection1/seq1 vẫn riêng từng ID; gói robot_id khác topic bị bỏ qua. Bài thử phát hiện và sửa subscription cũ chỉ `agv/01/odometry`. Tất cả cổng/broker/data tách vận hành.
+
+Xác nhận binary cuối sau sửa subscription: full unit Core **PASS**; servo02 + Edge **PASS** tại `.qa/servo-integration-08ZLVV/verification.json`. Các cổng serial hiện có COM3/COM4/COM5/COM7 chưa được gán danh tính xe02, không chọn cổng/nạp tự động.
+
+## Core thống nhất theo phạm vi xe — 16/10/2026
+
+REQ-CORE-UNIFIED-01/[ADR-058](../docs/decisions/ADR-058-unified-core-active-robot-scope.md): `build-core.ps1 -Tests -OutputDirectory .qa/unified-core-build` PASS toàn bộ unit, gồm scope/lọc GOTO/tự phân công/participating/encoder/ca/pin. `core-mode.integration.js` với broker/map/counter/cổng riêng PASS menu `active01`, `active02`, `active-both`, xe ngoài scope, pin thật, mutex hai xe và restart giữ counter; artifact cuối `.qa/core-mode-test-210bQo`. `orders.test.js` + `warehouse-actions.test.js` 19/19 PASS; ba tệp JS liên quan qua `node --check`. Chưa thay Core vận hành hoặc chạy phần cứng.
+
+## Pin diagnostic dùng cho điều phối — 16/10/2026
+
+REQ-BATTERY-06/[ADR-021](../docs/decisions/ADR-021-display-only-battery.md): Core unit kiểm tra diagnostic calibrated cập nhật `battery=67`, `battery_measured=true`, `battery_control_source=diagnostic`; telemetry `?` kế tiếp không xóa giá trị còn mới và mode normal nhận GOTO khi ≥40%. Telemetry số cũ đổi nguồn về `telemetry`; diagnostic không hợp lệ/không calibrated không được dùng. Build Core/toàn bộ unit Core PASS tại `.qa/battery-control-build-final2`; `node --check AGVwebserver/public/dashboard.js` PASS. Gateway suite thử trong sandbox bị EACCES loopback và đã dừng, nên không ghi PASS/FAIL sản phẩm. Chưa restart Core vận hành hoặc thử về trạm/`CHARGE_START` trên xe thật.
+
 ## Một servo GPIO17 xe01, 0/45° và kiện ảo — 15/10/2026
 
 [ADR-057](../docs/decisions/ADR-057-robot01-servo-lift-test.md), REQ-ROBOT01-SERVO-LIFT-01. Host [servo-host/test_main.cpp](servo-host/test_main.cpp) link ServoModule/CoreProtocol/LiftCycle thật, Arduino GPIO/time adapter: PASS01 kênh5/GPIO17 duy nhất, boot duty0/không góc,50Hz/16bit, nâng45 danh định PWM4095 (1250µs), hạ0 PWM3276 (1000µs), đủ5000ms, busy/STOP/mất an toàn/trànmillis/parser/dedup identity. Profile02 PASS servo disabled. Dải1000–2000µs và0/45 là quy ước test, không số đo góc ngoài đời.
