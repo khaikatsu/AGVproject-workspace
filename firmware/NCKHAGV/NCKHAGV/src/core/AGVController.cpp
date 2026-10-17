@@ -55,8 +55,10 @@ void AGVController::begin() {
             Config::REAR_ULTRASONIC_TRIG_PIN, Config::REAR_ULTRASONIC_ECHO_PIN);
         Serial.printf("[BOOT] xe=%s reset_reason=%d motion=%d bench=%d\n", Config::AGV_ID,
                       static_cast<int>(esp_reset_reason()), Config::ENABLE_CORE_MOTION, Config::TWO_ROBOT_BENCH_TRIAL);
-        Serial.printf("[AGV] Core motion %s; mutex release requires verified exit RFID\n",
-                      Config::ENABLE_CORE_MOTION ? "configured" : "locked");
+        Serial.printf("[AGV] Core motion %s; mutex encoder release=%d threshold=%lu pulses/wheel\n",
+                      Config::ENABLE_CORE_MOTION ? "configured" : "locked",
+                      Config::MUTEX_ENCODER_RELEASE_ENABLED,
+                      static_cast<unsigned long>(Config::MUTEX_RELEASE_MIN_PULSES));
     }
 }
 ControlInput AGVController::input() const {
@@ -244,8 +246,19 @@ void AGVController::update() {
         if (Config::DEBUG_ENABLED) Serial.printf("[TURN] center_capture xe=%s node=%s next=%s line=%u\n",
             Config::AGV_ID, control_.currentNode(), navigator_.nextNode(), line_.readSensors().pattern);
     }
+    // Sample and apply the latest line BEFORE RC522/SPI may wait for a card.
+    // Only refresh a segment already in Following; all start/turn/grant gates
+    // stay in the normal navigator path below. Stop takes effect immediately.
+    if (Config::FAST_LINE_RESPONSE && !inhibited && !lift_.busy() && controlArmed_ &&
+        positionConfirmed_ && positionSession_ == mqtt_.session() &&
+        control_.state() != AGV_SAFE_STOP && control_.state() != AGV_ERROR &&
+        !(Config::ULTRASONIC_MOTION_GUARD && Config::REAR_ULTRASONIC_ECHO_PIN >= 0 && sonars_.acquiring())) {
+        MotorAction early = MotorAction::Stop;
+        if (navigator_.refreshFollowing(input(),early)) movement_.apply(early);
+    }
     if (rfid_.readCard()) {
         const RFIDEvent& event = rfid_.event();
+        if (event.node[0]) clearance_.seen(event.node, millis());
         if (!event.node[0]) {
             if (navigator_.active()) movement_.stop();
             navigator_.reachedNode("", millis());
@@ -280,15 +293,18 @@ void AGVController::update() {
                 navigator_.reachedNode(event.node, millis(),through ? &arrivalInput : nullptr);
                 char fromNode[NODE_TEXT_SIZE]{};
                 AGVMath::copyText(fromNode, sizeof(fromNode), control_.currentNode());
-                if (expected && fromNode[0] && navigator_.error() == ErrorCode::None)
-                    clearance_.reached(fromNode, event.node);
+                if (expected && fromNode[0] && navigator_.error() == ErrorCode::None) {
+                    const auto translation = encoder_.translationTicks();
+                    clearance_.reached(fromNode, event.node, translation.left,
+                                       translation.right, millis());
+                }
                 const char* incoming = RoutePlanner::confirmedIncoming(
                     expected && navigator_.error() == ErrorCode::None, fromNode, event.node);
                 if (incoming)
                     AGVMath::copyText(previousNode_, sizeof(previousNode_), incoming);
                 else previousNode_[0] = '\0';
                 previousSegmentReverse_ = incoming && reverse;
-                heading_ = incoming ? RoutePlanner::edgeHeading(fromNode, event.node, reverse) : RobotHeading::Unknown;
+                heading_ = incoming ? RoutePlanner::edgeHeading(fromNode, event.node, reverse, true) : RobotHeading::Unknown;
                 headingBayDefault_ = false;
                 control_.reachedNode(event.node, millis());
                 if (!navigator_.active() && control_.state() != AGV_MOVING) movement_.stop();
@@ -327,10 +343,27 @@ void AGVController::update() {
             navigator_.grant(grant.zone, grant.grantId))
             clearance_.grant(grant.zone, grant.grantId, control_.currentNode(),
                              positionConfirmed_ && positionSession_ == mqtt_.session());
+    const auto clearanceTicks = encoder_.translationTicks();
+    const MotorAction clearanceAction = movement_.action();
+    const bool clearanceTranslating = clearanceAction != MotorAction::Stop &&
+        clearanceAction != MotorAction::PivotLeft && clearanceAction != MotorAction::PivotRight;
+    const bool safeClearance = controlArmed_ && mqtt_.isConnected() &&
+        positionConfirmed_ && positionSession_ == mqtt_.session() && navigator_.active() &&
+        navigator_.following() && navigator_.error() == ErrorCode::None &&
+        control_.error() == ErrorCode::None && clearanceTranslating;
+    clearance_.progress(clearanceTicks.left, clearanceTicks.right, millis(), safeClearance);
     MutexClearance::Release release;
     while (clearance_.pending(release)) {
         if (!mqtt_.releaseZone(release.zone, release.grantId)) break;
-        navigator_.revokeGrant(release.zone, release.grantId);
+        if (Config::DEBUG_ENABLED) {
+            Serial.printf("[MUTEX_RELEASE] zone=%s grant=%ld proof=%s left=%lu right=%lu threshold=%lu\n",
+                release.zone, static_cast<long>(release.grantId),
+                release.encoderProof ? "encoder" : "exit_rfid",
+                static_cast<unsigned long>(release.leftPulses),
+                static_cast<unsigned long>(release.rightPulses),
+                static_cast<unsigned long>(Config::MUTEX_RELEASE_MIN_PULSES));
+        }
+        navigator_.completeZoneExit(release.zone, release.grantId);
         clearance_.queued(release);
     }
     inhibited = consumePriority() || inhibited;
@@ -382,13 +415,17 @@ void AGVController::update() {
     if (navigator_.state() == AGV_SAFE_STOP ||
         (!navigator_.active() && control_.state() != AGV_MOVING)) movement_.stop();
     const MotorAction motorAction = movement_.action();
-    if (Config::ENCODER_ENABLED && Config::DEBUG_ENABLED && motorAction != lastMotorAction_) {
+    const bool motionLog = motorAction != lastMotorAction_ && (!Config::FAST_LINE_RESPONSE ||
+        motorAction == MotorAction::Stop ||
+        static_cast<uint32_t>(millis()-lastMotionLogMs_) >= Config::MOTION_LOG_INTERVAL_MS);
+    if (motionLog) lastMotionLogMs_ = millis();
+    if (Config::ENCODER_ENABLED && Config::DEBUG_ENABLED && motionLog) {
         Serial.printf("[BUZZER] xe=%s motor=%s left=%d right=%d requested=%d gpio=%d level=%d activeLevel=%d\n",
             Config::AGV_ID, motorActionName(motorAction), motor_.leftDuty(), motor_.rightDuty(),
             AGVMath::reverseBuzzerRequired(motorAction, motor_.leftDuty(), motor_.rightDuty()),
             Config::BUZZER_PIN, buzzer_.pinLevel(), Config::BUZZER_ACTIVE_STATE);
     }
-    if (Config::DEBUG_ENABLED && Config::ENABLE_CORE_MOTION && motorAction != lastMotorAction_ &&
+    if (Config::DEBUG_ENABLED && Config::ENABLE_CORE_MOTION && motionLog &&
         (std::strcmp(control_.currentNode(), "GS1") == 0 || std::strcmp(control_.currentNode(), "GS2") == 0 ||
          std::strcmp(control_.currentNode(), "G1") == 0)) {
         Serial.printf("[MOTOR] xe=%s node=%s action=%s left=%d right=%d line=%u next=%s zone=%s\n",
@@ -416,7 +453,7 @@ void AGVController::update() {
     observeState();
     if (static_cast<uint32_t>(millis() - lastSonarLogMs_) >= 1000) {
         lastSonarLogMs_ = millis();
-        logSonars();
+        if (!Config::FAST_LINE_RESPONSE || !navigator_.following()) logSonars();
     }
     if (static_cast<uint32_t>(millis() - lastTelemetryMs_) >= Config::TELEMETRY_INTERVAL_MS) publishTelemetry();
     if (Config::DEBUG_ENABLED && !Config::ENABLE_CORE_MOTION &&

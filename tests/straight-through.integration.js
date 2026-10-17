@@ -85,14 +85,14 @@ async function main(){
       return {id:result.task_id,command:commands.findLast(c=>c.cmd==='GOTO')};
     };
     pump=setInterval(publish,180);publish();await until(async()=>(await state()).shift.can_start);
-    await post('/api/shift/start');await set({node:'C4',heading:'W',headingSource:'route'});await until(async()=>(await robot()).heading==='W');
+    await post('/api/shift/start');await set({node:'G6',heading:'S',headingSource:'route'});await until(async()=>(await robot()).heading==='S');
     // Robot 02 owns M3: 01 may enter M4, but must wait before M3.
     mqtt.publish('agv/02/mutex_request','M3');await until(()=>latestGrant('02','M3'));
-    const blocked=await goto('C3');assert.deepEqual(blocked.command.path,['M4','GS2','M3','C3']);assert.deepEqual(blocked.command.pass_through,[0,1,2]);
+    const blocked=await goto('G1');assert.deepEqual(blocked.command.path,['M4','GS2','M3','G1']);assert.deepEqual(blocked.command.pass_through,[0,1,2]);
     await until(()=>orderAt(0));assert.equal(orderAt(0).maneuver,'STRAIGHT');
     assert.equal((await task(blocked.id)).status,'dispatched'); // GOTO/ACK does not finish a trip.
     mqtt.publish('agv/01/mutex_request','M4');await until(()=>latestGrant('01','M4'));
-    await set({node:'M4',pathIndex:1,nextNode:'GS2',state:'AGV_MOVING',motor:'FORWARD',leftDuty:180,rightDuty:220,awaitingNodeOrder:false});
+    await set({node:'M4',pathIndex:1,nextNode:'GS2',heading:'W',state:'AGV_MOVING',motor:'FORWARD',leftDuty:180,rightDuty:220,awaitingNodeOrder:false});
     await pause(200);assert.equal(orderAt(1),undefined);
     mqtt.publish('agv/01/mutex_request','M3');await pause(200);assert.equal(latestGrant('01','M3'),undefined);
     await set({node:'GS2',pathIndex:2,nextNode:'M3',state:'AGV_WAITING',motor:'STOP',leftDuty:0,rightDuty:0,awaitingNodeOrder:true});
@@ -104,31 +104,31 @@ async function main(){
     assert.equal((await state()).mutex.M3.owner,'02');assert.equal((await task(blocked.id)).status,'dispatched');
     release(held);await until(()=>latestGrant('01','M3'));
     await until(async()=>(await state()).mutex.M3.owner==='01');
-    await set({node:'M3',pathIndex:3,nextNode:'C3',state:'AGV_MOVING',motor:'FORWARD',leftDuty:180,rightDuty:220,awaitingNodeOrder:false});
+    await set({node:'M3',pathIndex:3,nextNode:'G1',state:'AGV_MOVING',motor:'FORWARD',leftDuty:180,rightDuty:220,awaitingNodeOrder:false});
     assert.equal((await task(blocked.id)).status,'dispatched');
-    await set({node:'C3',pathIndex:4,nextNode:'',state:'AGV_IDLE',motor:'STOP',taskActive:false,leftDuty:0,rightDuty:0});
+    await set({node:'G1',pathIndex:4,nextNode:'',state:'AGV_IDLE',motor:'STOP',taskActive:false,leftDuty:0,rightDuty:0});
     await until(async()=>(await task(blocked.id)).status==='completed');release(latestGrant('01','M3'));
     await until(async()=>(await state()).mutex.M3.owner==='');
     // Clear route: Core gets all intermediate RFIDs while MCU never requests a node order there.
-    await set({node:'C4',heading:'W'});const continuous=await goto('C3');await until(()=>orderAt(0));
+    await set({node:'G6',heading:'S'});const continuous=await goto('G1');await until(()=>orderAt(0));
     mqtt.publish('agv/01/mutex_request','M4');const priorM4=latestGrant('01','M4').grant_id;
     await until(()=>latestGrant('01','M4').grant_id!==priorM4);
-    await set({node:'M4',pathIndex:1,nextNode:'GS2',state:'AGV_MOVING',motor:'FORWARD',leftDuty:180,rightDuty:220,awaitingNodeOrder:false});
+    await set({node:'M4',pathIndex:1,nextNode:'GS2',heading:'W',state:'AGV_MOVING',motor:'FORWARD',leftDuty:180,rightDuty:220,awaitingNodeOrder:false});
     const priorM3=latestGrant('01','M3').grant_id;mqtt.publish('agv/01/mutex_request','M3');
     await until(()=>latestGrant('01','M3').grant_id!==priorM3);
-    for(const [node,index,next] of [['GS2',2,'M3'],['M3',3,'C3']]){
+    for(const [node,index,next] of [['GS2',2,'M3'],['M3',3,'G1']]){
       await set({node,pathIndex:index,nextNode:next});assert.equal((await task(continuous.id)).status,'dispatched');
       if(node==='GS2')release(latestGrant('01','M4'));
     }
-    await set({node:'C3',pathIndex:4,nextNode:'',taskActive:false,state:'AGV_IDLE',motor:'STOP',leftDuty:0,rightDuty:0});
+    await set({node:'G1',pathIndex:4,nextNode:'',taskActive:false,state:'AGV_IDLE',motor:'STOP',leftDuty:0,rightDuty:0});
     await until(async()=>(await task(continuous.id)).status==='completed');assert.equal(orders().length,1);
     release(latestGrant('01','M3'));await until(async()=>(await state()).mutex.M3.owner==='');
-    await set({node:'C4'});const turn=await goto('K5');assert(!turn.command.pass_through.includes(0));await until(()=>orderAt(0));
+    await set({node:'G6'});const turn=await goto('K5');assert(!turn.command.pass_through.includes(0));await until(()=>orderAt(0));
     await set({node:'M4',pathIndex:1,nextNode:'G5',state:'AGV_WAITING',motor:'STOP',awaitingNodeOrder:true});
     await until(()=>orderAt(1));assert.equal(orderAt(1).maneuver,'RIGHT');assert.equal((await task(turn.id)).status,'dispatched');
     await post('/api/tasks/cancel',{task_id:turn.id});
-    await set({node:'C4',state:'AGV_IDLE',taskActive:false,awaitingNodeOrder:false,straightThroughSupported:false});
-    await pause(200);const legacy=await goto('C3');assert.equal(legacy.command.pass_through,undefined);
+    await set({node:'G6',state:'AGV_IDLE',taskActive:false,awaitingNodeOrder:false,straightThroughSupported:false});
+    await pause(200);const legacy=await goto('G1');assert.equal(legacy.command.pass_through,undefined);
     await post('/api/tasks/cancel',{task_id:legacy.id});
     fs.writeFileSync(path.join(dir,'verification.json'),JSON.stringify({pass:true,commands,grants,observed},null,2));
     console.log(`PASS straight-through: route metadata, per-RFID progress, no intermediate NODE_ORDER; M3 contention/offline holds token, correct release; turn/legacy fallback. ${dir}`);

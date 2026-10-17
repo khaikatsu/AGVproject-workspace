@@ -51,6 +51,7 @@ private:
     uint32_t lastZoneRequestMs_ = 0;
     uint32_t lastBenchPrintMs_ = 0;
     uint32_t lastSonarLogMs_ = 0;
+    uint32_t lastMotionLogMs_ = 0;
     MotorAction lastMotorAction_ = MotorAction::Stop;
     AGVState lastState_ = AGV_IDLE;
     ErrorCode lastError_ = ErrorCode::None;

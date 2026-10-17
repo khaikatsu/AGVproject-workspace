@@ -1,5 +1,60 @@
 # Hồ sơ kiểm thử AGV
 
+## 17/10/2026 — Sửa dừng/xin lại mutex sau30 xung
+
+REQ-MUTEX-EXIT-CONTINUE-01 / [ADR-068](../docs/decisions/ADR-068-encoder-mutex-tail-clearance.md): native profile01/02 PASS92/92. Ba ca hồi quy mới nối clearance với navigator: sáu mutex trả đúng token rồi bám tiếp/fast-line không dừng hoặc xin lại; token sai/lặp/tới muộn bị từ chối; M5 đã trả không miễn grantM6 và vẫn đi xuyên khi đủ quyền; dấu clearance xóa khi đổi RFID, STOP/tuyến mới, lỗi mạng hoặc reset phiên. `scripts/test-fast-line.ps1` PASS cảhai, gồm thu hồi grant thường vẫn STOP và mạng/sonar/mất line giữ chốt.
+
+Build ESP32 cảhai PASS, RAM58076byte mỗi ảnh; flash01=963701byte,02=963717byte. BuildID01 `20261017-robot01-mutex30-exitfix-v4`, SHA256 `54283E642CA445B780F91054D4ACF1E338967D9FB67AF9464490554FEE9A9CA8`; buildID02 `20261017-robot02-mutex30-exitfix-v4`, SHA256 `43AB628E4C2E9FC55583B8853D2FFAC986724EAF27968DB916C95D8647376B39`. Binary chứa đúng buildID đã kiểm tra. Giữ tuning profile hiện tại và grace7s của02; không sửa Core/gateway/map. Chưa upload/chạy xe thật trong lượt này.
+
+## 17/10/2026 — Nhả mutex theo encoder30 xung, hai xe
+
+REQ-MUTEX-ENCODER-01 / [ADR-068](../docs/decisions/ADR-068-encoder-mutex-tail-clearance.md). PlatformIO `native_robot01_bench` và `native_robot02_bench` PASS tổng86/86. Ca mutex kiểm tra số đo17cm/18,5cm, 29/30 xung, bắt buộc cả hai bánh, đọc lại thẻ đặt lại cửa sổ100ms, STOP/trạng thái không an toàn giữ khóa, đúng zone/token, queue một lần và counter wrap. Test riêng robot01 chỉ chạy đúng profile01; test grace7s chạy profile02.
+
+`scripts/test-encoder.ps1 -SkipCoreBuild` PASS cả profile01/02:161xung/100cm, debounce300µs, tổng xung tịnh tiến không tăng trong STOP/pivot, đổi RFID/route/session, lùi và wrap; Core odometry regression PASS và không tự sửa task/mutex/checkpoint. Đây là mô phỏng ISR/GPIO và logic host, không đo trượt bánh thật.
+
+Build ESP32 cuối PASS: cả hai dùng RAM58076byte; flash01=963589byte,02=963621byte. BuildID01 `20261017-robot01-mutex30-v4`, SHA256 `00A1D74B4E68712B374FEB0BDD5D328B76B26313F2E0CF11CC1DAC49BBF56255`; buildID02 `20261017-robot02-mutex30-line-grace7s-v4`, SHA256 `D276F92A5AB78FF6AC30FAB0FAF06D50D623DB0EC46943F9E8199185D6F50931`. Chưa upload hoặc phát lệnh xe. OPEN: thử từng xe/từng hướng có đánh dấu biên, quan sát `[MUTEX_RELEASE] proof=encoder left/right`, đo vị trí đuôi và tăng ngưỡng nếu cần.
+
+17/10/2026 — REQ-ROBOT02-LINE-GRACE-7S-01: build `esp32dev_two_robot_bench_02` PASS, RAM57948byte/flash962913byte, binary xác nhận buildID `20261017-robot02-line-grace7s-v4`. Kiểm tra host cơ bản `tests/motor-host/line_grace.cpp` PASS: tiến/lùi, có/không hướng tìm, STOP ở600ms và giữ route/index/cmd ở5–6,5s, bắt lại010 ở6,6s rồi tiếp tục sau xác nhận100ms, hết7s mớiLINE_LOST, mạng/STOP ưu tiên. Cập nhật expectation timeout các fixture native liên quan; không chạy toàn bộ native/integration theo yêu cầu người dùng. Chưa upload/thử xe thật. Xe01/TurnCapture/timeout chặng15s giữ nguyên.
+
+17/10/2026 — REQ-ROBOT02-REVERSE-GENTLE-01: chỉ build và kiểm tra motor cơ bản `tests/motor-host/reverse_gentle.cpp` profile01/02 PASS; không chạy native/integration toàn bộ. Kiểm duty lùi02=205/190,011/001=205/170,110/100=185/190 (cả hai bánh lùi), settling cùng hướng/duty, PWM adapter, còi và STOP000;01 giữ chỉnh một bánh, tiến/xoay theo tuning hiện tại không đổi. Build `esp32dev_two_robot_bench_02` PASS RAM57948byte/flash962909byte, buildID `20261017-robot02-gentle-reverse-v4`. Đây là host GPIO, chưa đo khả năng hội tụ line và chưa upload/chạy xe thật.
+
+## 17/10/2026 — Giảm trễ bám line hai xe, fast-line-v4
+
+REQ-LINE-RESPONSE-01 / [ADR-066](../docs/decisions/ADR-066-fast-line-response.md). `scripts/test-fast-line.ps1` PASS hai profile với driver/movement/navigator thật và GPIO/PWM stub. Kiểm tra pattern010/100/001/110/011 được áp ra motor trước bước giả lập RFID25ms, không đổi cmd/index, không khởi động sớm khi chờ grant, revocation giữ STOP cả lượt sớm/thường,000 dừng rồi trả quyền xử lý cho recovery, mất WiFi/MQTT/vật cản/sonarinvalid/configinvalid dừng. Kiểm tra ghi PWM: duty lặp không ghi lại, cùng chiều thay duty không xen0, đổi chiều có0 trước cấp duty, STOP hai channel0. Đây là kiểm tra thứ tự/đầu ra phần mềm, không phải đo thời gian trên ESP32. Binary `.qa/fast-line/fast-line-01.exe` và02.
+
+PlatformIO native_robot01_bench/native_robot02_bench PASS85/85. `scripts/test-rounded-map.ps1` PASS22node/4cạnh bo/60bộ ba Core–MCU mỗi profile và navigator đi liên tục. `node scripts/generate-firmware-route.js --check` và `git diff --check` PASS.
+
+Build ESP32 `esp32dev_two_robot_bench_01` và02 PASS. RAM57948byte mỗi xe; flash01=962901byte,02=962913byte. File nạp ở `.pio/build/<env>/firmware.bin` trong project firmware. SHA25601 `F457B69E28B3468DC0D6AAAAE4E74A1056D58AEB91BD35A3DD8D98A91D7A0AA8`;02 `15751A65C4AC8BCDFABAF011AF24920D30400A6985A6FAFA3856DA090DA6AC54`. BuildID `20261017-robot01-fast-line-v4` / `20261017-robot02-fast-line-v4`. Chưa upload, không thay Core sống hoặc phát lệnh xe. OPEN: người dùng nạp đúng hai env và đối chiếu độ trễ/bám góc trên sàn; chưa chứng minh hết văng/độ mượt hoặc chọn được PWM tối ưu thực tế.
+
+## 17/10/2026 — Khôi phục checkpoint khi đổi map v3 → v4
+
+[ADR-065](../docs/decisions/ADR-065-rounded-map-checkpoint-recovery.md), REQ-MAP-RECOVERY-01. Build `scripts/build-core.ps1 -Tests -OutputDirectory .qa/runtime-map-recovery` PASS, toàn bộ unit Core PASS.
+
+`tests/runtime-map-migration.cpp` biên dịch g++17 với `-I include`, chạy độc lập và với tham số `data/runtime_state.json` v3 trước triển khai đều PASS. Kiểm tra giữ lịch sử, owner/token, chuyển vị trí C thành chưa xác minh/hai đầu cạnh, ngắt pending, roundtrip restore lần2, backup và từ chối thay graph/obstacle ngoài phạm vi. Chỉ tạo file thử trong `.qa/runtime-migration-*`, không ghi dữ liệu đầu vào.
+
+`AGV_CORE_BIN=.qa/runtime-map-recovery/agv_core.exe node tests/runtime-map-migration.integration.js <checkpoint-v3>` PASS với bản sao checkpoint thực tế,764task. Chạy/start lại scope active01/active02/active-both bằng broker/cổng/map/counter/runtime/shift riêng, nhận22node/35cạnh/4geometry qua WS, giữ nguyên owner/grant và đủ task, backup nguyên byte chỉ một bản mỗi scope, không phát command/grant cho robot. Artifacts `.qa/runtime-migration-integration-8TN0cG`.
+
+Triển khai theo xác nhận người dùng: sao lưu binary/map/runtime/shift/counter trong `.qa/runtime-map-recovery/deployment`, đóng đúng GDB7944 giữ Core lỗi23748 rồi thay `build/agv_core.exe`. SHA256 mới `5E46628B663A348AF0B1CF76A1C34DAB668285D77D8875F9F4FAF1C7EC499BB8`. Core mới PID12908 chạy nền `--mode active-both`, cwd gốc workspace. API3000 báo agv_connected/core_ready/protocol_supported/mqtt_connected/storage_healthy=true, mapv4 22node/35cạnh/4geometry. Cả hai xe OFFLINE/vị trí chưa xác minh, ca CLOSING/can_start=false. Giữ M1/02/token79263, M5/02/79292, M6/01/79261 và764task; không xác minh vùng hay mở ca thay người vận hành. Backup `data/runtime_state.json.before-rounded-map-v4-0.json` khớp SHA256 file cũ `50D7ACC02F0A80C34F34327971E641AFD864319BFD49DA4BCB6D73F191CA7B69`. Counter tiếp nối qua startup, không rewind. Chưa nạp firmware hoặc chạy xe thật.
+
+## 17/10/2026 — Map bo góc v4, bỏ C1–C4
+
+REQ-MAP-03 / [ADR-064](../docs/decisions/ADR-064-rounded-map-without-corner-tags.md). Graph vận hành/fallback/bảng MCU cùng 22 node, 35 cạnh có hướng, 6 mutex. Bốn cạnh ngoài 135 cm theo giả định cộng nhãn 85+50; tọa độ là sơ đồ, chưa đo bán kính/chiều dài dọc line thật.
+
+- `scripts/build-core.ps1 -Tests -OutputDirectory .qa/rounded-map-v4`: Core build và toàn bộ unit PASS; kiểm map mặc định khớp JSON, loại bốn ID cũ, cost, chiều cạnh, mọi kho đi/về hai home, mutex/shift/checkpoint.
+- Source hoàn chỉnh build/unit lại **PASS** tại `.qa/rounded-map-v4-final/agv_core.exe` và `core_tests.exe`, gồm validation geometry hai chiều và không mất geometry khi sửa cạnh.
+- `scripts/test-rounded-map.ps1`: PASS cả 01/02, mỗi profile đối chiếu 60 tổ hợp hướng Core/MCU, 4 cạnh bo/tiếp tuyến vào-ra, bám line liên tục không có thẻ góc, dừng ở đích, geometry lỗi giữ map cũ, serialize giữ geometry.
+- PlatformIO native_robot01_bench + native_robot02_bench: **85/85 PASS**, gồm RFID, NODE_ORDER, đi xuyên/grant, lùi S1/S2, line search/capture, STOP/mạng/sonar. Fixture cũ C4→…→C3 chuyển thành G6→…→G1; hướng đầu tại G6=S và tới M4=W.
+- ESP32 bench01/02 build **PASS**, RAM 57940 byte mỗi ảnh; flash 01=962593 / 02=962605 byte. BuildID `20261017-robot01-rounded-map-v4` / `20261017-robot02-rounded-map-v4`.
+- `tests/encoder_core_tests.cpp`: PASS cả hai xe và hai stream cùng boot/session/seq; cạnh bo dùng weight135, x/y theo hai đoạn, giữ saturation/stale/task/mutex. Binary `.qa/rounded-map-v4/encoder_core.exe`.
+- MQTT/Core menu scope01/02/cảhai: PASS tại `.qa/core-mode-test-O685q4`, kiểm 22 node/4 geometry, từ chối C1–C4, hồi quy pin/scope/mutex/counter restart.
+- `tests/map.integration.js`: PASS tại `.qa/map-test-1w7tR5`; save file và snapshot/apply giữ bốn geometry, hai xe tranh/quyền mutex, task hoàn tất đúng RFID.
+- `tests/straight-through.integration.js`: PASS tại `.qa/straight-through-test-Ep5mCz`; đi xuyên M4/GS2/M3, vùng bận/offline giữ token, đúng hướng tới sau bo góc. `tests/node-order.integration.js`: PASS tại `.qa/node-order-test-9EQZ97`, gồm lùi kho rồi rẽ G1→M1 và đỗ trạm.
+- `tests/browser.integration.js`: PASS Edge desktop/mobile + snapshot preview tại `.qa/browser-test-GH3IJX`, bốn SVG path bo và 22 node, không tràn ngang. Tên ảnh trong lượt này còn `warehouse-map-v3.png`, nhưng nội dung/title là mapv4; runner hiện đã đổi tên ảnh v4.
+- `tests/encoder.integration.js --browser`: PASS tại `.qa/encoder-test-zifqVL`; marker di chuyển dọc cạnh bo, cảnh báo đỏ đúng SVG path, stale/saturation và desktop/mobile. Web/orders/warehouse unit **24/24 PASS**.
+- Bảng route `generate-firmware-route.js --check`, JS syntax và whitespace PASS. `scripts/check_contracts.py` chưa chạy được vì cả Python mặc định và bundled runtime thiếu `jsonschema`; không cài thêm dependency trong yêu cầu đổi map.
+
+Tất cả fixture dùng broker/cổng/map/DB/counter riêng. Lượt sandbox đầu của PlatformIO/Edge bị chặn cache/profile/loopback; chạy lại với quyền phù hợp PASS. **Chưa upload firmware, chưa restart Core hoặc thử robot thật.** Build vào `build/agv_core.exe` bị script chặn vì Core vận hành PID6284 đang chạy; cần dừng đúng phiên và F5/build lại trước dùng map mới. Không xóa/rewind counter hoặc chuyển snapshot/checkpoint vận hành.
+
 16/10/2026 — REQ-ROBOT02-REVERSE-BALANCE-01: chỉ chạy kiểm tra cơ bản motor-host profile02 PASS (lùi215/195, chỉnh lùi225/205, trim lùi trong pha cap, tiến/xoay/STOP/còi), không chạy bộ native/integration. Build `esp32dev_two_robot_bench_02` PASS, RAM57940byte/flash962661byte, buildID `20261016-robot02-reverse-left215`. Chưa upload/thử phần cứng. Giữ các tuning mới người dùng đã chỉnh: reverse210/correction220/capture230.
 
 ## 16/10/2026 — Xe02 tách bắt line và căn giữa

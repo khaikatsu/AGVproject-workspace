@@ -19,7 +19,7 @@ int main() {
         assert(std::strlen(mapping.uid) == 8);
         assert(nodes.insert(mapping.node).second && uids.insert(mapping.uid).second);
     }
-    assert(nodes.size() == 26);
+    assert(nodes.size() == 22);
     for (const auto& mapNode : RouteMap::NODES) assert(AGVMath::validNode(mapNode.id));
     for (const auto& from : RouteMap::NODES)
         for (const auto& via : RouteMap::NODES)
@@ -68,8 +68,8 @@ int main() {
 
     assert(RoutePlanner::directedEdge("M1", "G2"));
     assert(!RoutePlanner::directedEdge("M5", "G2"));
-    assert(RoutePlanner::turn("C1", "M1", "G2") == RouteTurn::Right);
-    assert(RoutePlanner::turn("C1", "M1", "GS1") == RouteTurn::Straight);
+    assert(RoutePlanner::turn("G1", "M1", "G2") == RouteTurn::Right);
+    assert(RoutePlanner::turn("G1", "M1", "GS1") == RouteTurn::Straight);
     assert(RoutePlanner::turn("G2", "M5", "M6") == RouteTurn::Left);
     assert(RoutePlanner::turn("G5", "M6", "G6") == RouteTurn::Right);
     assert(RoutePlanner::turn("G2", "K2", "G2") == RouteTurn::Reverse);

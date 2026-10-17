@@ -9,6 +9,7 @@ public:
     void context(const char* from, const char* to, int32_t route, uint8_t index,
                  uint32_t session, bool tracking, bool translating, bool reverse);
     OdometrySnapshot snapshot() { return tracker_.snapshot(++seq_); }
+    OdometryTracker::TranslationTicks translationTicks() const { return tracker_.translationTicks(); }
 private:
     static void IRAM_ATTR leftInterrupt(void* self);
     static void IRAM_ATTR rightInterrupt(void* self);

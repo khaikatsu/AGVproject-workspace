@@ -11,18 +11,28 @@ void MovementModule::moveBackward() {
     buzzer_.setReverse(AGVMath::reverseBuzzerRequired(action_, motor_.leftDuty(), motor_.rightDuty()));
 }
 void MovementModule::correctBackwardLeft() {
-    // One-sided correction while reversing, separate from a pivot turn.
-    motor_.setLeftSpeed(0);
-    motor_.setRightSpeed(Config::REVERSE_CORRECTION_SPEED + Config::REVERSE_RIGHT_SPEED_TRIM);
-    motor_.motorBackward();
-    action_ = MotorAction::ReverseCorrectLeft;
-    buzzer_.setReverse(AGVMath::reverseBuzzerRequired(action_, motor_.leftDuty(), motor_.rightDuty()));
+    applyReverseCorrection(MotorAction::ReverseCorrectLeft);
 }
 void MovementModule::correctBackwardRight() {
-    motor_.setLeftSpeed(Config::REVERSE_CORRECTION_SPEED + Config::REVERSE_LEFT_SPEED_TRIM);
-    motor_.setRightSpeed(0);
+    applyReverseCorrection(MotorAction::ReverseCorrectRight);
+}
+void MovementModule::applyReverseCorrection(MotorAction action, int pwmCap) {
+    const bool slowLeft = action == MotorAction::ReverseCorrectLeft;
+    int left = Config::REVERSE_CORRECTION_SPEED + Config::REVERSE_LEFT_SPEED_TRIM;
+    int right = Config::REVERSE_CORRECTION_SPEED + Config::REVERSE_RIGHT_SPEED_TRIM;
+    if (Config::REVERSE_GENTLE_CORRECTION) {
+        // Preserve the existing steering direction and reverse wheel balance;
+        // reduce one side slightly instead of stopping it completely.
+        if (slowLeft) left -= Config::REVERSE_CORRECTION_DELTA;
+        else right -= Config::REVERSE_CORRECTION_DELTA;
+    } else {
+        if (slowLeft) left = 0;
+        else right = 0;
+    }
+    motor_.setLeftSpeed(std::min(left, pwmCap));
+    motor_.setRightSpeed(std::min(right, pwmCap));
     motor_.motorBackward();
-    action_ = MotorAction::ReverseCorrectRight;
+    action_ = action;
     buzzer_.setReverse(AGVMath::reverseBuzzerRequired(action_, motor_.leftDuty(), motor_.rightDuty()));
 }
 void MovementModule::turnLeft() {
@@ -38,6 +48,11 @@ void MovementModule::turnRight() {
 void MovementModule::stop() { motor_.motorStop(); buzzer_.off(); action_ = MotorAction::Stop; }
 void MovementModule::followLine() { apply(AGVMath::lineAction(line_.readSensors().pattern)); }
 void MovementModule::apply(MotorAction action, bool lineRecovery, int precisionPwm, bool settling) {
+    if (settling && Config::REVERSE_GENTLE_CORRECTION &&
+        (action == MotorAction::ReverseCorrectLeft || action == MotorAction::ReverseCorrectRight)) {
+        applyReverseCorrection(action, Config::LEFT_TURN_CAPTURE_PWM);
+        return;
+    }
     if (settling && action != MotorAction::Stop && action != MotorAction::PivotLeft && action != MotorAction::PivotRight) {
         const bool reverse = action == MotorAction::Backward || action == MotorAction::ReverseCorrectLeft ||
             action == MotorAction::ReverseCorrectRight;

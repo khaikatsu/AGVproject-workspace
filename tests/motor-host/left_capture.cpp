@@ -16,7 +16,7 @@ int main() {
         CoreCommand c; c.type=CoreCommandType::Goto; c.cmdId=601; c.pathLength=1;
         AGVMath::copyText(c.path[0],sizeof(c.path[0]),"K1");
         AGVMath::copyText(c.target,sizeof(c.target),"K1");
-        RoutePlan route; CHECK(RoutePlanner::plan("C3","G1",c,route));
+        RoutePlan route; CHECK(RoutePlanner::plan("M3","G1",c,route));
         CoreNavigator nav; CHECK(nav.start("G1",c,route,0));
         ControlInput in; in.wifi=in.mqtt=in.distanceValid=in.motionConfigured=in.lineConfigured=true;
         in.now=Config::RFID_STOP_DWELL_MS; in.linePattern=2;

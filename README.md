@@ -1,5 +1,7 @@
 # Workspace nghiên cứu hệ thống AGV trong kho
 
+Ngày17/10/2026: [mapv4 bo góc](docs/decisions/ADR-064-rounded-map-without-corner-tags.md) còn22node, bỏ C1–C4 cho Core scope01/02/cảhai. Bốn cạnh ngoài135cm theo nhãn85+50; các góc không còn RFID/pivot. Core/web/bảng tuyến firmware phải dùng cùng mapv4; cần nạp lại firmware01/02 trước chạy thực tế. Tọa độ là sơ đồ, bán kính và chiều dài dọc line cần đo lại; kiểm thử phần mềm tại tests/README.md.
+
 Ngày16/10/2026: xe02 dùng chung cấu hình phần cứng/thông số/capability xe01, giữ PWM02 tiến/lùi/chỉnh230 và xoay230. Core/web nhận encoder, hai sonar, servo và kiện02; scope02 có nút Lấy/Hạ, lùi vềS2 tương tự01 vềS1. Xem [ADR-059](docs/decisions/ADR-059-robot02-firmware-parity.md), env `esp32dev_two_robot_bench_02`. Đã chuẩn bị build/test; chưa upload xe thật.
 
 Ngày 16/10/2026: Core được thống nhất theo [ADR-058](docs/decisions/ADR-058-unified-core-active-robot-scope.md). Menu 1/2/3 giờ chọn phạm vi vận hành xe 01, xe 02 hoặc cả hai trên cùng source/binary và cùng chốt pin, RFID, MQTT, ACK, mutex như Core thật. Capability firmware đi theo diagnostic, không đi theo tên bản test. Bản mới chỉ build/test riêng trong `.qa`, chưa thay Core vận hành hoặc chạy xe thật.

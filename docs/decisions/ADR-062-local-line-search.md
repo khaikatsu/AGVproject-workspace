@@ -1,5 +1,15 @@
 # ADR-062 — Tìm lại line tại chỗ, giữ chặng đang chạy
 
+## Cập nhật17/10/2026 — REQ-ROBOT02-LINE-GRACE-7S-01
+
+SOURCE: người dùng muốn giữ lệnh khoảng7s khi mất line ngắn, để xe tự bám tiếp mà không bị server khóa ngay. Áp riêng xe02 theo phạm vi firmware đang chỉnh;01 giữ giới hạn cũ.
+
+IMPLEMENTED: `AGV_LINE_LOSS_GRACE_MS=7000` là hạn xác nhận lỗi trong pha Following tiến/lùi, dù có hoặc không có hướng tìm.000 đầu tiên vẫn STOP, quét cục bộ chỉ được600ms tính từ lúc mất line như trước; sau600ms dừng và giữ route/index/mutex để chờ.010 liên tục100ms/≥3 mẫu vẫn cần để phục hồi; nếu đạt trước7s thì tiếp tục task cũ ngay, không đợi hết7s hoặc gửi lạiNODE_ORDER. Hết7s còn chưa xác nhậnline thì faultLINE_LOST. Cửa sổ được tính riêng mỗi lần mất; lượt quét vẫn chỉ một lần/chặng. Không reset timeout chặng15s, vì vậy MotionTimeout hoặc lỗi an toàn vẫn có thể kết thúc sớm hơn. Vật cản giữ pause đồng hồ như cơ chế cũ.
+
+Không tăng timeout quét/xoay/TurnCapture lên7s. Không đổi Core để bỏ qua lỗi: diagnostic SAFE_STOP/ERROR hoặc error event vẫn được xử lý ngay khi firmware thật sự chốt lỗi. Trong grace firmware giữ taskActive/errorNONE; không dùng offline/ACK làm bằng chứng an toàn vùng. MQTT/schema/ACK không đổi. Giữ nguyên tuning PWM người dùng đang chỉnh, gồm correction lùi240 trong profile02 tại thời điểm sửa. BuildID02 `20261017-robot02-line-grace7s-v4`.
+
+VERIFIED kiểm tra host cơ bản `tests/motor-host/line_grace.cpp` PASS: tiến/lùi, có/không hướng tìm, dừng sau600ms và giữ task ở5–6,5s, bắt lại ở6,6s và tiếp tục đúngroute/index sau xác nhận, lỗi ở7s lần mất tiếp, mạng/STOP ưu tiên. Không chạy toàn bộ native/integration theo yêu cầu tiết kiệm kiểm thử; chưa upload/thử xe thật. Các giới hạn600ms/5s bên dưới là lịch sử trước bổ sung này đối với02.
+
 Ngày: 16/10/2026. Trạng thái: IMPLEMENTED; kiểm chứng phần mềm trong hồ sơ test, nghiệm thu xe thật OPEN.
 
 ## SOURCE

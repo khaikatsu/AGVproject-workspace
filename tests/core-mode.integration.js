@@ -85,6 +85,9 @@ async function main() {
         return state?.mqtt_connected;
       });
       assert.equal(state.shift.test_mode,'normal');assert.equal(state.shift.trial_robot_id,'');
+      assert.equal(state.map.nodes.length,22);
+      assert.equal(state.map.nodes.some(n=>/^C[1-4]$/.test(n.id)),false);
+      assert.equal(state.map.edges.filter(e=>e.geometry && e.weight===135).length,4);
       assert.equal(state.shift.operation_profile,'scoped');assert.deepEqual(state.shift.active_robot_ids,active);
       assert.equal(state.shift.supervised_trial,false);assert.equal(state.shift.single_robot_trial,false);
       assert.equal(state.shift.two_robot_trial,false);assert.equal(state.shift.can_start,false);
@@ -94,6 +97,8 @@ async function main() {
         const request_id=randomUUID();peer.send(JSON.stringify({...body,request_id}));
         await until(()=>results.has(request_id));return results.get(request_id);
       }
+      for(const target of ['C1','C2','C3','C4'])
+        assert.equal((await command({cmd:'add_task',target})).ok,false);
       const commands=[];mqtt=new MqttFixture(mqttPort);mqtt.on('error',()=>{});
       await until(()=>mqtt.connected);mqtt.subscribe('agv/#');await until(()=>mqtt.subscribed);
       mqtt.on('publish',(topic,payload)=>{

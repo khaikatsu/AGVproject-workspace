@@ -1,5 +1,9 @@
 # Thuật toán tìm đường và điều phối
 
+17/10/2026, REQ-MUTEX-ENCODER-01: firmware hai xe có thể trả M1–M6 trước RFID kế tiếp sau khi có bằng chứng đuôi đã qua biên: mỗi bánh đủ30 xung tịnh tiến từ lần đầu đọc thẻ M, thẻ mất ổn định100ms và route/phiên/vị trí còn khỏe. Pivot/STOP/tìm line không cộng; offline/lỗi không nhả. Core vẫn cấp một owner/FIFO và kiểm tra đúng `grant_id`; thay đổi này giảm thời gian giữ khóa, không giải quyết deadlock nhiều khóa hoặc xung đột cạnh. [ADR-068](decisions/ADR-068-encoder-mutex-tail-clearance.md).
+
+17/10/2026: mapv4 bỏC1–C4; cạnh bo có weight135cm (nhãn85+50) và hướng rời/tới tách riêng. Dijkstra dùng weight, NodeManeuver đi xuyên/rẽ dùng tiếp tuyến ở đúng đầu cạnh. Via không là node hoặc điểm pivot. Giữ6mutex, trả M2 tạiG6/M3 tạiG1 theo RFID đúng tuyến/token; [ADR-064](decisions/ADR-064-rounded-map-without-corner-tags.md).
+
 16/10/2026, phục hồi bắt line sau LEFT/RIGHT là máy trạng thái cục bộ của firmware, không phải replan: giữ nguyên chặng, task và mutex; retry cùng hướng đúng một lần rồi mới phát `LINE_LOST`. Server không cấp lại `NODE_ORDER`; mất liên lạc vẫn dừng và quyền vùng không tự nhả. [ADR-061](decisions/ADR-061-single-turn-line-retry.md).
 
 ## Bài toán nền

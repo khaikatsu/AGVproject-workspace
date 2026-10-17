@@ -1,5 +1,7 @@
 # Chẩn đoán khởi động gateway và core — 29/09/2026
 
+17/10/2026: dừng tại kiểm tra checkpoint không luôn là breakpoint vô hại. Khi đổi map26node sang22node, Core cũ từ chối runtime_state.json v3 dù mapv4 trên đĩa còn nguyên. Bản sửa [ADR-065](decisions/ADR-065-rounded-map-checkpoint-recovery.md) nhận diện riêng phép chuyển này, backup checkpoint và giữ owner/token/lịch sử trước khi phục vụ mapv4. Xe phải có RFID mới và đối soát vùng như trước; không xóa runtime/counter để gỡ lỗi. Cần build lại binary và dừng đúng phiên cũ trước khi F5 bản mới.
+
 CURRENT 16/10/2026: menu F5 1/2/3 chọn scope `active01`, `active02`, `active-both` của cùng Core thống nhất; không còn chọn luật trial bỏ qua pin. Tự động hóa có thể dùng `build/agv_core.exe --mode active01` (tương tự `active02`, `active-both`, `normal`). Các tham số `robot01|robot02|both` bên dưới được giữ tạm cho hồi quy lịch sử. Chọn scope không tự mở ca hoặc phát GOTO/CHARGE_START. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).
 
 ### Telemetry treo, lỗi/phục hồi lặp khi F5 — 14/10/2026

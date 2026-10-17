@@ -28,8 +28,8 @@ constexpr bool straight35(const char* a, const char* b, const char* c) {
     const int vx = z->x - y->x, vy = z->y - y->y;
     return ux * vy == uy * vx && ux * vx + uy * vy > 0;
 }
-static_assert(squared("M1", "GS1") >= 50 * 50 && squared("M2", "C2") >= 50 * 50 &&
-              squared("M3", "C3") >= 50 * 50 && squared("M4", "GS2") >= 50 * 50 &&
+static_assert(squared("M1", "GS1") >= 50 * 50 && squared("M2", "G6") >= 50 * 50 &&
+              squared("M3", "G1") >= 50 * 50 && squared("M4", "GS2") >= 50 * 50 &&
               squared("M5", "M6") >= 50 * 50 && squared("M6", "G6") >= 50 * 50,
               "Measured direct mutex exits changed in generated map");
 static_assert(straight35("M1", "G2", "M5") && straight35("M4", "G5", "M6") &&
@@ -37,13 +37,18 @@ static_assert(straight35("M1", "G2", "M5") && straight35("M4", "G5", "M6") &&
               "Measured 35+35 cm mutex exits changed in generated map");
 }
 
-// Physical measurements confirmed 09/10/2026: M boundary 10 cm, reader to
-// rear 10 cm, RC522 read-ahead at most 8 cm. A 35 cm next tag leaves only
-// 7 cm nominal clearance, so only the measured 50/100 cm exits or a verified
-// straight 35+35 cm chain may release. No timeout or absent RFID is evidence.
+// The primary release proof for the two robot profiles is measured translation
+// after the first read of the mutex tag. Both wheels must reach the configured
+// threshold and the tag must remain absent for a short confirmation window.
+// RFID-only exits remain a conservative fallback if encoder proof is missing.
 class MutexClearance {
 public:
-    struct Release { char zone[NODE_TEXT_SIZE]{}; int32_t grantId = 0; };
+    struct Release {
+        char zone[NODE_TEXT_SIZE]{};
+        int32_t grantId = 0;
+        uint32_t leftPulses = 0, rightPulses = 0;
+        bool encoderProof = false;
+    };
 
     void reset() { for (auto& held : held_) held = Held{}; }
 
@@ -63,8 +68,17 @@ public:
         if (localized && current && std::strcmp(current, zone) == 0) held.entered = true;
     }
 
-    // Call only for a fresh, expected RFID in the active Core route.
-    void reached(const char* from, const char* to) {
+    // Record every successful read of a held mutex tag. Repeated reads postpone
+    // the tag-lost confirmation; one missed RC522 poll cannot release a zone.
+    void seen(const char* node, uint32_t now) {
+        const int index = zoneIndex(node);
+        if (index >= 0 && held_[index].id > 0) held_[index].lastTagSeenMs = now;
+    }
+
+    // Call only for a fresh, expected RFID in the active Core route. Translation
+    // totals are lifetime counters which exclude STOP and pivot movement.
+    void reached(const char* from, const char* to, uint32_t leftTranslation = 0,
+                 uint32_t rightTranslation = 0, uint32_t now = 0) {
         if (!from || !to) return;
         for (int i = 0; i < 6; ++i) {
             Held& held = held_[i];
@@ -73,15 +87,44 @@ public:
             if (std::strcmp(to, zone) == 0) {
                 held.entered = true;
                 held.stage = 0;
+                held.encoderCleared = false;
+                held.encoderArmed = Config::MUTEX_ENCODER_RELEASE_ENABLED;
+                held.leftAtTag = leftTranslation;
+                held.rightAtTag = rightTranslation;
+                held.lastTagSeenMs = now;
                 continue;
             }
             if (!held.entered) continue;
             if (std::strcmp(from, zone) == 0) {
                 held.stage = exitStage(i, to);
+                held.encoderCleared = false;
             } else if (held.stage == 1 && secondTag(i, from, to)) {
                 held.stage = 2;
+                held.encoderCleared = false;
             } else if (held.stage != 2) {
                 held.stage = 0;
+                held.encoderCleared = false;
+            }
+        }
+    }
+
+    // `safeToRelease` is true only while the same route is healthy, localized,
+    // connected and following its outbound line. uint32 subtraction tolerates
+    // counter wrap. Requiring both wheels prevents a one-wheel correction from
+    // being mistaken for full-body forward clearance.
+    void progress(uint32_t leftTranslation, uint32_t rightTranslation,
+                  uint32_t now, bool safeToRelease) {
+        if (!Config::MUTEX_ENCODER_RELEASE_ENABLED || !safeToRelease) return;
+        for (auto& held : held_) {
+            if (held.id <= 0 || !held.entered || !held.encoderArmed || held.stage == 2) continue;
+            if (static_cast<uint32_t>(now - held.lastTagSeenMs) < Config::MUTEX_TAG_LOST_CONFIRM_MS)
+                continue;
+            if (static_cast<uint32_t>(leftTranslation - held.leftAtTag) >= Config::MUTEX_RELEASE_MIN_PULSES &&
+                static_cast<uint32_t>(rightTranslation - held.rightAtTag) >= Config::MUTEX_RELEASE_MIN_PULSES) {
+                held.stage = 2;
+                held.encoderCleared = true;
+                held.leftAtRelease = leftTranslation;
+                held.rightAtRelease = rightTranslation;
             }
         }
     }
@@ -92,6 +135,11 @@ public:
             if (held.id > 0 && held.entered && held.stage == 2) {
                 out.zone[0] = 'M'; out.zone[1] = static_cast<char>('1' + i);
                 out.zone[2] = '\0'; out.grantId = held.id;
+                out.encoderProof = held.encoderCleared;
+                out.leftPulses = held.encoderCleared
+                    ? static_cast<uint32_t>(held.leftAtRelease - held.leftAtTag) : 0;
+                out.rightPulses = held.encoderCleared
+                    ? static_cast<uint32_t>(held.rightAtRelease - held.rightAtTag) : 0;
                 return true;
             }
         }
@@ -107,17 +155,23 @@ public:
     }
 
 private:
-    struct Held { int32_t id = 0; uint8_t stage = 0; bool entered = false; };
+    struct Held {
+        int32_t id = 0;
+        uint32_t leftAtTag = 0, rightAtTag = 0, lastTagSeenMs = 0;
+        uint32_t leftAtRelease = 0, rightAtRelease = 0;
+        uint8_t stage = 0;
+        bool entered = false, encoderArmed = false, encoderCleared = false;
+    };
     Held held_[6]{};
     int32_t released_[6]{};
     static int zoneIndex(const char* zone) {
         return zone && zone[0] == 'M' && zone[1] >= '1' && zone[1] <= '6' && !zone[2]
             ? zone[1] - '1' : -1;
     }
-    // 2 = measured direct exit >=50 cm; 1 = first 35 cm tag, still occupied.
+    // RFID fallback: 2 = measured direct exit >=50 cm; 1 = first 35 cm tag.
     static uint8_t exitStage(int zone, const char* to) {
         static constexpr const char* direct[6][2] = {
-            {"GS1", nullptr}, {"C2", nullptr}, {"C3", nullptr},
+            {"GS1", nullptr}, {"G6", nullptr}, {"G1", nullptr},
             {"GS2", nullptr}, {"M6", nullptr}, {"G6", nullptr}
         };
         static constexpr const char* shortExit[6] = {"G2", nullptr, nullptr, "G5", "G3", "G4"};

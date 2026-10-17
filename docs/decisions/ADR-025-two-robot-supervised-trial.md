@@ -1,5 +1,7 @@
 # ADR-025 — Core thử điều phối hai xe với mutex
 
+Cập nhật17/10/2026: [ADR-068](ADR-068-encoder-mutex-tail-clearance.md) thay điều kiện nhả chỉ tại RFID rời vùng bằng ngưỡng encoder30 xung mỗi bánh cho profile01/02, sau khi có số đo hình học mới. Token/Core owner và fallback RFID của ADR này vẫn giữ.
+
 Ngày 09/10/2026. Trạng thái: triển khai và kiểm thử phần mềm; chưa mở chuyển động hai xe thật.
 
 ## Nguồn và hiện trạng

@@ -148,7 +148,11 @@ public:
         seqCounter_ = state.at("queue_sequence").get<long>();
         for (auto record : state.at("tasks")) {
             const auto id = record.at("task_id").get<std::string>();
-            if (!validIdentifier(id) || !map_.nodeExists(record.at("target").get<std::string>())) throw std::invalid_argument("Checkpoint task sai");
+            const auto status = record.at("status").get<std::string>();
+            const bool retiredHistory = record.value("target_retired",false) &&
+                (status == "completed" || status == "cancelled" || status == "interrupted");
+            if (!validIdentifier(id) || (!map_.nodeExists(record.at("target").get<std::string>()) && !retiredHistory))
+                throw std::invalid_argument("Checkpoint task sai");
             if (record.at("status") == "dispatched") {
                 record["status"] = "interrupted";record["reason"] = "Core khoi dong lai; can xac minh robot";
             }
@@ -560,19 +564,19 @@ public:
         json estimate = nullptr;
         if (s.tracking) {
             const auto layout = map_.toJson();
-            bool edge = false;
+            json edge = nullptr;
             for (const auto& e : layout["edges"]) if ((e["from"] == s.from && e["to"] == s.to) ||
-                (e.value("two_way",false) && e["to"] == s.from && e["from"] == s.to)) {edge = true;break;}
+                (e.value("two_way",false) && e["to"] == s.from && e["from"] == s.to)) {edge = e;break;}
             json from, to;
             for (const auto& n : layout["nodes"]) {if (n["id"] == s.from) from = n;if (n["id"] == s.to) to = n;}
-            if (!edge || from.is_null() || to.is_null()) return false;
-            const double ax = from["x"], ay = from["y"], bx = to["x"], by = to["y"];
-            const double length = std::hypot(bx-ax,by-ay);
+            if (edge.is_null() || from.is_null() || to.is_null()) return false;
+            const double length = edge.at("weight").get<double>();
             if (!std::isfinite(length) || length <= 0) return false;
             // Map test 01 dùng cm. Giữ marker trước đích cho tới khi có RFID thật.
             const double progress = std::clamp(s.distance / length,0.0,0.98);
+            const auto point=EdgeGeometry::point(layout,edge,s.from,progress*length);
             estimate = {{"source","encoder"},{"from",s.from},{"to",s.to},{"progress",progress},
-                {"x",ax+(bx-ax)*progress},{"y",ay+(by-ay)*progress},{"distance_cm",s.distance},
+                {"x",point.at("x")},{"y",point.at("y")},{"distance_cm",s.distance},
                 {"edge_length_cm",length},{"route_cmd_id",s.route},{"path_index",s.index},{"reverse",s.reverse}};
         }
         if (!a.encoder.accept(s)) return false;
@@ -1151,7 +1155,6 @@ public:
                 const double length = p.value("edge_length_cm",0.0);
                 if (length > 0 && sample.from == p.value("from",std::string{}) && sample.to == p.value("to",std::string{})) {
                     const double projected = std::clamp(sample.distance+a.sonarDistanceCm,0.0,length);
-                    const double ratio = projected/length;
                     const auto layout = map_.toJson();
                     for (const auto& e : layout["edges"]) {
                         if (!((e["from"] == sample.from && e["to"] == sample.to) ||
@@ -1161,10 +1164,12 @@ public:
                             if (n["id"] == sample.from) from=n;
                             if (n["id"] == sample.to) to=n;
                         }
-                        if (!from.is_null() && !to.is_null())
-                            detected = {{"from",sample.from},{"to",sample.to},{"x",from["x"].get<double>()+(to["x"].get<double>()-from["x"].get<double>())*ratio},
-                                {"y",from["y"].get<double>()+(to["y"].get<double>()-from["y"].get<double>())*ratio},
+                        if (!from.is_null() && !to.is_null()) {
+                            const auto point=EdgeGeometry::point(layout,e,sample.from,projected);
+                            detected = {{"from",sample.from},{"to",sample.to},{"x",point.at("x")},
+                                {"y",point.at("y")},
                                 {"range_cm",a.sonarDistanceCm},{"direction",a.sonarDirection},{"source","sonar_encoder_estimate"}};
+                        }
                         break;
                     }
                 }

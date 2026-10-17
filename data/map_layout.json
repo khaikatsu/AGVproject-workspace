@@ -5,12 +5,13 @@
   ],
   "edges": [
     {
-      "from": "C1",
-      "path_class": "boulevard",
+      "from": "G1",
+      "path_class": "outer",
       "to": "M1",
       "two_way": false,
       "type": "main",
-      "weight": 50
+      "weight": 135,
+      "geometry": {"via": {"x": 0, "y": 0}, "segment_lengths_cm": [85, 50]}
     },
     {
       "from": "M1",
@@ -30,19 +31,21 @@
     },
     {
       "from": "M2",
-      "path_class": "boulevard",
-      "to": "C2",
+      "path_class": "outer",
+      "to": "G6",
       "two_way": false,
       "type": "main",
-      "weight": 50
+      "weight": 135,
+      "geometry": {"via": {"x": 200, "y": 0}, "segment_lengths_cm": [50, 85]}
     },
     {
-      "from": "C4",
-      "path_class": "boulevard",
+      "from": "G6",
+      "path_class": "outer",
       "to": "M4",
       "two_way": false,
       "type": "main",
-      "weight": 50
+      "weight": 135,
+      "geometry": {"via": {"x": 200, "y": 140}, "segment_lengths_cm": [85, 50]}
     },
     {
       "from": "M4",
@@ -62,43 +65,12 @@
     },
     {
       "from": "M3",
-      "path_class": "boulevard",
-      "to": "C3",
-      "two_way": false,
-      "type": "main",
-      "weight": 50
-    },
-    {
-      "from": "G1",
-      "path_class": "outer",
-      "to": "C1",
-      "two_way": false,
-      "type": "main",
-      "weight": 70
-    },
-    {
-      "from": "C3",
       "path_class": "outer",
       "to": "G1",
       "two_way": false,
       "type": "main",
-      "weight": 70
-    },
-    {
-      "from": "C2",
-      "path_class": "outer",
-      "to": "G6",
-      "two_way": false,
-      "type": "main",
-      "weight": 70
-    },
-    {
-      "from": "G6",
-      "path_class": "outer",
-      "to": "C4",
-      "two_way": false,
-      "type": "main",
-      "weight": 70
+      "weight": 135,
+      "geometry": {"via": {"x": 0, "y": 140}, "segment_lengths_cm": [50, 85]}
     },
     {
       "from": "M1",
@@ -317,7 +289,7 @@
       "weight": 20
     }
   ],
-  "map_name": "Kho AGV v3 (cm)",
+  "map_name": "Kho AGV v4 - bo goc (cm)",
   "mutex_zones": [
     "M1",
     "M2",
@@ -332,12 +304,6 @@
       "type": "charging",
       "x": 100.0,
       "y": -20.0
-    },
-    {
-      "id": "C1",
-      "type": "waypoint",
-      "x": 0.0,
-      "y": 0.0
     },
     {
       "id": "M1",
@@ -355,12 +321,6 @@
       "id": "M2",
       "type": "mutex",
       "x": 150.0,
-      "y": 0.0
-    },
-    {
-      "id": "C2",
-      "type": "waypoint",
-      "x": 200.0,
       "y": 0.0
     },
     {
@@ -448,12 +408,6 @@
       "y": 105
     },
     {
-      "id": "C3",
-      "type": "waypoint",
-      "x": 0.0,
-      "y": 140.0
-    },
-    {
       "id": "M3",
       "type": "mutex",
       "x": 50.0,
@@ -472,12 +426,6 @@
       "y": 140.0
     },
     {
-      "id": "C4",
-      "type": "waypoint",
-      "x": 200.0,
-      "y": 140.0
-    },
-    {
       "id": "S2",
       "type": "charging",
       "x": 100.0,
@@ -485,5 +433,5 @@
     }
   ],
   "obstacles": [],
-  "revision": 3
+  "revision": 4
 }

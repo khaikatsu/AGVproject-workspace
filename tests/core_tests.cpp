@@ -72,24 +72,24 @@ int main() {
         }
         {
             MapGraph map;map.loadDefaultDemoMap();const auto layout=map.toJson();
-            CHECK(NodeManeuver::straightThrough(layout,"C4","M4","GS2"));
+            CHECK(NodeManeuver::straightThrough(layout,"G6","M4","GS2"));
             CHECK(NodeManeuver::straightThrough(layout,"M4","GS2","M3"));
-            CHECK(NodeManeuver::straightThrough(layout,"GS2","M3","C3"));
-            CHECK(!NodeManeuver::straightThrough(layout,"C4","M4","G5"));
+            CHECK(NodeManeuver::straightThrough(layout,"GS2","M3","G1"));
+            CHECK(!NodeManeuver::straightThrough(layout,"G6","M4","G5"));
             CHECK(!NodeManeuver::straightThrough(layout,"K1","G1","M5")); // Backing out requires a gate pivot.
             CHECK(!NodeManeuver::straightThrough(layout,"GS1","S1","GS1"));
             MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
             fleet.setTrialRobot("01");std::vector<json> sent;
             fleet.setPublishCallback([&](const std::string&,const std::string& p){sent.push_back(json::parse(p));});
-            CHECK(fleet.updateTelemetry("01","C4",80,false));
-            CHECK(!fleet.updateTelemetry("01","C4",80,false)); // Heartbeat is not a new RFID observation.
-            CHECK(fleet.directGoto("01","C3","legacy-through").empty());
+            CHECK(fleet.updateTelemetry("01","G6",80,false));
+            CHECK(!fleet.updateTelemetry("01","G6",80,false)); // Heartbeat is not a new RFID observation.
+            CHECK(fleet.directGoto("01","G1","legacy-through").empty());
             CHECK(!sent.back().contains("pass_through"));fleet.cancelTask("","legacy-through");
-            MotionDiagnostic d{"C4","AGV_IDLE","NONE","STOP",false,true,true,0,0,0};
-            d.headingSupported=true;d.heading="W";d.headingNode="C4";d.headingSource="route";
+            MotionDiagnostic d{"G6","AGV_IDLE","NONE","STOP",false,true,true,0,0,0};
+            d.headingSupported=true;d.heading="S";d.headingNode="G6";d.headingSource="route";
             d.nodeOrdersSupported=d.straightThroughSupported=true;fleet.observeMotionDiagnostic("01",d);
-            CHECK(fleet.directGoto("01","C3","continuous-trip").empty());
-            CHECK(sent.back()["path"]==json::array({"M4","GS2","M3","C3"}));
+            CHECK(fleet.directGoto("01","G1","continuous-trip").empty());
+            CHECK(sent.back()["path"]==json::array({"M4","GS2","M3","G1"}));
             CHECK(sent.back()["pass_through"]==json::array({0,1,2}));
             fleet.reportAck("01",sent.back()["cmd_id"].get<long>());
             for (const auto* node : {"M4","GS2","M3"}) {
@@ -97,13 +97,13 @@ int main() {
                 CHECK(record(fleet,"continuous-trip")["status"]=="dispatched");
                 CHECK(fleet.toJson()["agvs"][0]["node"]==node);
             }
-            fleet.updateTelemetry("01","C3",80,false);CHECK(record(fleet,"continuous-trip")["status"]=="completed");
-            fleet.updateTelemetry("01","C4",80,false);fleet.observeMotionDiagnostic("01",d);
+            fleet.updateTelemetry("01","G1",80,false);CHECK(record(fleet,"continuous-trip")["status"]=="completed");
+            fleet.updateTelemetry("01","G6",80,false);fleet.observeMotionDiagnostic("01",d);
             CHECK(fleet.directGoto("01","K5","turn-trip").empty());
             const auto through=sent.back()["pass_through"];
             CHECK(std::find(through.begin(),through.end(),json(0))==through.end());
             fleet.cancelTask("","turn-trip");d.straightThroughSupported=false;fleet.observeMotionDiagnostic("01",d);
-            CHECK(fleet.directGoto("01","C3","old-firmware").empty());CHECK(!sent.back().contains("pass_through"));
+            CHECK(fleet.directGoto("01","G1","old-firmware").empty());CHECK(!sent.back().contains("pass_through"));
             fleet.cancelTask("","old-firmware");fleet.updateTelemetry("01","K1",80,false);
             d.node=d.headingNode="K1";d.heading="W";d.headingSource="bay_default";d.straightThroughSupported=true;
             fleet.observeMotionDiagnostic("01",d);CHECK(fleet.directGoto("01","M5","warehouse-exit-through").empty());
@@ -238,7 +238,7 @@ int main() {
             try {fleet.addTask("M2");} catch (const std::invalid_argument&) {automaticRejected = true;}
             CHECK(automaticRejected);
             CHECK(fleet.directGoto("01","M2","trial-s1-m2").empty());
-            CHECK(!fleet.directGoto("01","C3","trial-busy").empty());
+            CHECK(!fleet.directGoto("01","G1","trial-busy").empty());
             fleet.updateTelemetry("01","GS1",-1,false);
             fleet.updateTelemetry("01","M2",-1,false);
             CHECK(record(fleet,"trial-s1-m2")["status"] == "completed");
@@ -254,11 +254,11 @@ int main() {
             fleet.updateTelemetry("01","M2",10,false);
             CHECK(fleet.toJson()["agvs"][0]["battery"] == 10);
             CHECK(fleet.toJson()["agvs"][0]["battery_control_source"] == "telemetry");
-            CHECK(fleet.directGoto("01","C3","trial-m2-c3").empty());
+            CHECK(fleet.directGoto("01","G1","trial-m2-c3").empty());
             fleet.updateTelemetry("02","S2",80,false);
             CHECK(record(fleet,"trial-m2-c3")["status"] == "interrupted");
             CHECK(fleet.toJson()["agvs"].size() == 2);
-            CHECK(!fleet.directGoto("01","C3","trial-other-present").empty());
+            CHECK(!fleet.directGoto("01","G1","trial-other-present").empty());
         }
         {
             MapGraph map;map.loadFromJson(graph());MutexArbiter arbiter;FleetManager fleet(map,arbiter);
@@ -309,7 +309,8 @@ int main() {
         }
         {
             MapGraph map;map.loadDefaultDemoMap();
-            CHECK(map.toJson()["nodes"].size() == 26);CHECK(map.mutexZones().size() == 6);
+            CHECK(map.toJson()["nodes"].size() == 22);CHECK(map.mutexZones().size() == 6);
+            for (auto removed : {"C1","C2","C3","C4"}) CHECK(!map.nodeExists(removed));
             auto horizontal = map.findShortestPath("G1","G6");
             CHECK((horizontal == std::vector<std::string>{"G1","M5","M6","G6"}));
             CHECK(map.pathCost(horizontal) == 200);
@@ -317,7 +318,8 @@ int main() {
             CHECK((map.findShortestPath("M4","M2") == std::vector<std::string>{"M4","G5","M6","G4","M2"}));
             CHECK(map.findShortestPath("M1","K3",{"M5"}).empty());
             CHECK(!map.findShortestPath("M5","G1").empty()); // vòng ngoài nay đã khép
-            CHECK((map.findShortestPath("C3","C1") == std::vector<std::string>{"C3","G1","C1"}));
+            CHECK((map.findShortestPath("M3","M1") == std::vector<std::string>{"M3","G1","M1"}));
+            CHECK(map.pathCost({"M3","G1","M1"})==270);
             for (auto home : {"S1","S2"}) for (auto warehouse : {"K1","K2","K3","K4","K5","K6"}) {
                 CHECK(!map.findShortestPath(home,warehouse).empty());
                 CHECK(!map.findShortestPath(warehouse,home).empty());
@@ -327,7 +329,8 @@ int main() {
             for (auto& n : expected["nodes"]) nodes[n["id"].get<std::string>()] = n;
             for (auto& e : expected["edges"]) {
                 auto a = nodes.at(e["from"].get<std::string>()),b = nodes.at(e["to"].get<std::string>());
-                CHECK(e["weight"].get<int>() == std::lround(std::hypot(a["x"].get<double>()-b["x"].get<double>(),a["y"].get<double>()-b["y"].get<double>())));
+                if (e.contains("geometry")) CHECK(e["weight"]==135);
+                else CHECK(e["weight"].get<int>() == std::lround(std::hypot(a["x"].get<double>()-b["x"].get<double>(),a["y"].get<double>()-b["y"].get<double>())));
             }
             for (auto station : {"K2","K4"}) CHECK(nodes[station]["y"] == 35);
             for (auto station : {"K3","K5"}) CHECK(nodes[station]["y"] == 105);
@@ -853,7 +856,7 @@ int main() {
             CHECK(commands.back()["maneuver"]=="LEFT");CHECK(commands.back()["node"]=="GS1");
             CHECK(commands.back()["path_index"]==1);CHECK(commands.back()["route_cmd_id"]==routeId);
             const auto turnCommandCount=commands.size();
-            CHECK(!fleet.directGoto("01","C1","override-turn").empty());CHECK(commands.size()==turnCommandCount);
+            CHECK(!fleet.directGoto("01","G1","override-turn").empty());CHECK(commands.size()==turnCommandCount);
             fleet.reportAck("01",commands.back()["cmd_id"].get<long>());
             CHECK(record(fleet,"node-orders")["status"]=="dispatched"); // Receipt does not prove the turn or arrival.
             fleet.updateTelemetry("01","M2",-1,false);CHECK(record(fleet,"node-orders")["status"]=="completed");

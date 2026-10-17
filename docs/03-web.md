@@ -1,5 +1,7 @@
 # Phát triển web giám sát AGV
 
+17/10/2026: mapv4 vẽ bốn cạnh bo theo geometry, gồm cả tuyến dự kiến và xem trước snapshot; không dựng nodeC hoặc đường chéo nối thẳng. Nhãn hai đoạn85/50, các node/kho/trạm giữ tên và mũi tên theo ảnh. Vị trí encoder/sonar do Core nội suy trên sơ đồ, chưa là tọa độ đo thật. [ADR-064](decisions/ADR-064-rounded-map-without-corner-tags.md).
+
 16/10/2026, test tạm: dashboard đọc `fleet.battery_gate_enabled=false` để hiện rõ bỏ chốt pin/sạc thủ công, không còn báo ngưỡng20/40 đang có hiệu lực. Bộ chọn xe vẫn giữ scope; thiếu cờ tương thích Core cũ. Số đo và cảnh báo pin vẫn hiển thị, không tự chặn nút theo %. [ADR-060](decisions/ADR-060-temporary-battery-bypass-manual-charge.md).
 
 16/10/2026, REQ-ROBOT02-PARITY-01: tốc độ/marker encoder, sonar và kiện ảo hiển thị cho cả01/02; scope riêng02 hiện cùng nút Lấy/Hạ, phát API tới02. Nhãn vị trí chi tiết theo xe scope/chọn; thanh tốc độ liệt kê cả hai. [ADR-059](decisions/ADR-059-robot02-firmware-parity.md).

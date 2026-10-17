@@ -49,9 +49,14 @@ async function main() {
       return {status:response.status,data:await response.json()};
     }
     await until(async ()=>{const s=await state();return s.core_ready && s.mqtt_connected;});
-    const initial = await state();assert.equal(initial.map.nodes.length,26);
+    const initial = await state();assert.equal(initial.map.nodes.length,22);
+    assert.equal(initial.map.edges.filter(e=>e.geometry).length,4);
     assert.deepEqual(Object.keys(initial.mutex).sort(),['M1','M2','M3','M4','M5','M6']);
     assert.equal((await api('/api/map/save',{})).status,200);
+    assert.equal(JSON.parse(fs.readFileSync(mapPath,'utf8')).edges.filter(e=>e.geometry).length,4);
+    const snapshots=await (await fetch(base+'/api/map/snapshots')).json();
+    assert.equal((await api(`/api/map/snapshots/${snapshots[0].id}/apply`,{})).status,200);
+    assert.equal((await state()).map.edges.filter(e=>e.geometry).length,4);
     assert.equal((await api('/api/tasks',{target:'KHO_4'})).status,404);
     const commands = [];
     mqtt = new MqttFixture(mqttPort);mqtt.on('error',error=>output+=error.message);await once(mqtt,'connected');

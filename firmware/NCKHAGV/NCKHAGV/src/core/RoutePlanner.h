@@ -50,13 +50,19 @@ inline bool directedEdge(const char* from, const char* to) {
     return false;
 }
 
-inline RobotHeading edgeHeading(const char* from, const char* to, bool reverse = false) {
+inline RobotHeading edgeHeading(const char* from, const char* to, bool reverse = false, bool arrival = false) {
     const auto* a = node(from); const auto* b = node(to);
     if (!a || !b || !directedEdge(from, to)) return RobotHeading::Unknown;
-    const int dx = (b->x - a->x) * (reverse ? -1 : 1);
-    const int dy = (b->y - a->y) * (reverse ? -1 : 1);
-    if (dx == 0 && dy != 0) return dy < 0 ? RobotHeading::North : RobotHeading::South;
-    if (dy == 0 && dx != 0) return dx < 0 ? RobotHeading::West : RobotHeading::East;
+    for (const auto& edge : RouteMap::EDGES) {
+        int heading=0;
+        if (std::strcmp(edge.from,from)==0 && std::strcmp(edge.to,to)==0)
+            heading=arrival ? edge.arrival : edge.departure;
+        else if (edge.twoWay && std::strcmp(edge.to,from)==0 && std::strcmp(edge.from,to)==0) {
+            heading=arrival ? edge.departure : edge.arrival;
+            if (heading) heading=(heading-1+2)%4+1;
+        }
+        if (heading) return static_cast<RobotHeading>(reverse ? (heading-1+2)%4+1 : heading);
+    }
     return RobotHeading::Unknown;
 }
 inline RouteTurn turnFromHeading(RobotHeading incoming, RobotHeading outgoing) {
@@ -99,13 +105,13 @@ inline bool reverseHome(const char* from, const char* to) {
 }
 inline bool straightThrough(const char* from, const char* current, const char* next) {
     if (!current || station(current) || bayGate(current) || dockingReverse(from,current)) return false;
-    const auto incoming = edgeHeading(from,current), outgoing = edgeHeading(current,next);
+    const auto incoming = edgeHeading(from,current,false,true), outgoing = edgeHeading(current,next);
     return incoming != RobotHeading::Unknown && incoming == outgoing;
 }
 inline bool physicalBranch(const char* current, RobotHeading heading) {
     for (const auto& edge : RouteMap::EDGES) {
         if (std::strcmp(edge.from,current) == 0 && edgeHeading(edge.from,edge.to) == heading) return true;
-        if (std::strcmp(edge.to,current) == 0 && edgeHeading(edge.from,edge.to,true) == heading) return true;
+        if (std::strcmp(edge.to,current) == 0 && edgeHeading(edge.from,edge.to,true,true) == heading) return true;
     }
     return false;
 }
@@ -147,14 +153,7 @@ inline RouteTurn turn(const char* previous, const char* current, const char* nex
     if (!a || !b || !c || !directedEdge(previous, current) || !directedEdge(current, next))
         return RouteTurn::Unknown;
     if (std::strcmp(previous, next) == 0) return RouteTurn::Reverse;
-    const int64_t inX = b->x - a->x, inY = b->y - a->y;
-    const int64_t outX = c->x - b->x, outY = c->y - b->y;
-    const int64_t cross = inX * outY - inY * outX;
-    const int64_t dot = inX * outX + inY * outY;
-    // Map y increases downwards, so positive cross is a physical right turn.
-    if (cross > 0) return RouteTurn::Right;
-    if (cross < 0) return RouteTurn::Left;
-    return dot > 0 ? RouteTurn::Straight : RouteTurn::Unknown;
+    return turnFromHeading(edgeHeading(previous,current,false,true),edgeHeading(current,next));
 }
 
 inline bool plan(const char* previous, const char* current, const CoreCommand& command,
@@ -187,7 +186,7 @@ inline bool plan(const char* previous, const char* current, const CoreCommand& c
             // Face away from S1 on the user-confirmed GS1 line extension.
             // Turn is physical rotation; translation is independently backward.
             const auto front = explicitHeading ? (docking != RobotHeading::Unknown ? docking : confirmedHeading) :
-                edgeHeading(incoming,from,previousWasReverse);
+                edgeHeading(incoming,from,previousWasReverse,true);
             decision = turnFromHeading(front,edgeHeading(from,to,true));
         }
         if (decision == RouteTurn::Reverse && !dockingReverse(from,to)) {

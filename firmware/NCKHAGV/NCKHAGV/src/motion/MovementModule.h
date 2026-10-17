@@ -19,6 +19,7 @@ public:
                int precisionPwm = Config::LINE_RECOVERY_PWM, bool settling = false);
     MotorAction action() const { return action_; }
 private:
+    void applyReverseCorrection(MotorAction action, int pwmCap = 255);
     MotorModule& motor_;
     LineFollowModule& line_;
     BuzzerModule& buzzer_;

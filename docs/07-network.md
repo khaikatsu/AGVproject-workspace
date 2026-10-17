@@ -1,5 +1,9 @@
 # Giao thức mạng và hợp đồng MCU với server
 
+17/10/2026, REQ-MUTEX-ENCODER-01 không đổi topic/payload: firmware01/02 vẫn publish `agv/{id}/mutex_release` JSON `{zone,grant_id}`. Bằng chứng local mới là mỗi bánh≥30 xung tịnh tiến từ lần đầu đọc thẻ M, không đọc lại thẻ≥100ms và trạng thái route/phiên/vị trí khỏe. Serial `proof=encoder` chỉ để chẩn đoán, không thêm vào payload. Core vẫn xác thực owner/token rồi mới cấp xe chờ; ACK command/telemetry/odometry không tự nhả vùng. [ADR-068](decisions/ADR-068-encoder-mutex-tail-clearance.md).
+
+17/10/2026, REQ-MAP-03: MQTT giữ payload/topic hiện tại, nhưng path/target/node dùng mapv4/22node, không còn C1–C4. Bốn cạnh bo nối G1→M1/M2→G6/G6→M4/M3→G1 không có RFID hoặc NODE_ORDER giữa cạnh; hướng đầu khi tới là tiếp tuyến cuối. Core và bảng route firmware01/02 phải đồng bộ. Map trong HTTP/WS/snapshot thêm geometry tùy chọn cho cạnh; [ADR-064](decisions/ADR-064-rounded-map-without-corner-tags.md).
+
 16/10/2026, REQ-ROBOT02-LEFT-CAPTURE-01: LEFT xe02 thêm pha STOP/xác nhận line và chỉnh ngược ngắn tại MCU; vẫn giữ route_cmd_id/path_index/task và translating=false trong pha này. Không phát lại NODE_ORDER, không đổi payload hoặc ACK; thất bại mới phátLINE_LOST. Quy tắc retry trái dài xe02 trong mục REQ-TURN-LINE-RETRY-01 bên dưới đã được thay thế. BuildID02 `20261016-robot02-left-capture`. [ADR-063](decisions/ADR-063-robot02-left-turn-capture.md).
 
 16/10/2026, REQ-LINE-SEARCH-01: tìm lại line tiến/lùi cục bộ giữ route_cmd_id/path_index và grant, không phát error trước khi hết giới hạn. Motor tìm dùng action LEFT/RIGHT và PWM180; odometry tracking giữ chặng nhưng translating=false trong lúc tìm/xác nhận line nên không cộng pivot. Mắt giữa ổn định mới tiếp tục, thất bại phát `LINE_LOST` theo contract hiện có. Không đổi topic/schema/ACK hoặc gửi lại GOTO/NODE_ORDER. [ADR-062](decisions/ADR-062-local-line-search.md).

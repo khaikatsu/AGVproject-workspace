@@ -91,8 +91,8 @@ void test_bench_voltage_interlock() {
 void test_mutex_clearance_requires_measured_next_tag() {
     MutexClearance clearance;
     MutexClearance::Release release;
-    clearance.grant("M1", 91, "C1", true);
-    clearance.reached("C1", "M1");
+    clearance.grant("M1", 91, "G1", true);
+    clearance.reached("G1", "M1");
     TEST_ASSERT_FALSE(clearance.pending(release));
     clearance.reached("M1", "G2"); // 35 cm; earliest read leaves only 7 cm.
     TEST_ASSERT_FALSE(clearance.pending(release));
@@ -133,11 +133,136 @@ void test_mutex_clearance_rejects_unvisited_or_wrong_route() {
     TEST_ASSERT_EQUAL_INT(93, release.grantId);
 }
 
+void test_mutex_encoder_release_requires_both_wheels_tag_loss_and_safe_route() {
+    if (!Config::MUTEX_ENCODER_RELEASE_ENABLED) return;
+    TEST_ASSERT_EQUAL_FLOAT(17.0f, Config::ROBOT_LENGTH_CM);
+    TEST_ASSERT_EQUAL_FLOAT(18.5f, Config::MUTEX_RELEASE_FROM_FIRST_READ_CM);
+    TEST_ASSERT_EQUAL_UINT32(30, Config::MUTEX_RELEASE_MIN_PULSES);
+
+    MutexClearance clearance;
+    MutexClearance::Release release;
+    clearance.grant("M2", 501, "G1", true);
+    clearance.reached("G1", "M2", 100, 200, 1000);
+    clearance.seen("M2", 1050); // A repeated read restarts tag-loss confirmation.
+    clearance.progress(130, 230, 1149, true);
+    TEST_ASSERT_FALSE(clearance.pending(release));
+    clearance.progress(130, 229, 1150, true); // Right wheel is still one pulse short.
+    TEST_ASSERT_FALSE(clearance.pending(release));
+    clearance.progress(130, 230, 1150, false); // STOP/fault/turn cannot release.
+    TEST_ASSERT_FALSE(clearance.pending(release));
+    clearance.progress(130, 230, 1150, true);
+    TEST_ASSERT_TRUE(clearance.pending(release));
+    TEST_ASSERT_EQUAL_STRING("M2", release.zone);
+    TEST_ASSERT_EQUAL_INT(501, release.grantId);
+    TEST_ASSERT_TRUE(release.encoderProof);
+    TEST_ASSERT_EQUAL_UINT32(30, release.leftPulses);
+    TEST_ASSERT_EQUAL_UINT32(30, release.rightPulses);
+    clearance.queued(release);
+
+    // Lifetime translation counters and subtraction remain correct at wrap.
+    clearance.grant("M3", 502, "M5", true);
+    clearance.reached("M5", "M3", UINT32_MAX - 9, UINT32_MAX - 9, 2000);
+    clearance.progress(20, 20, 2100, true);
+    TEST_ASSERT_TRUE(clearance.pending(release));
+    TEST_ASSERT_EQUAL_STRING("M3", release.zone);
+    TEST_ASSERT_EQUAL_INT(502, release.grantId);
+}
+
+void test_mutex_exit_release_continues_without_reacquiring_current_zone() {
+    if (!Config::MUTEX_ENCODER_RELEASE_ENABLED) return;
+    const char* trips[][3] = {
+        {"G1", "M1", "GS1"}, {"GS1", "M2", "G6"},
+        {"GS2", "M3", "G1"}, {"G6", "M4", "GS2"},
+        {"G1", "M5", "M6"}, {"M5", "M6", "G6"}
+    };
+    for (const auto& trip : trips) {
+        CoreCommand c; c.type=CoreCommandType::Goto; c.cmdId=610;
+        c.pathLength=2; c.passThrough[0]=true;
+        std::strcpy(c.path[0],trip[1]); std::strcpy(c.path[1],trip[2]); std::strcpy(c.target,trip[2]);
+        RoutePlan plan;
+        TEST_ASSERT_TRUE(RoutePlanner::plan(nullptr,trip[0],c,plan,false,
+                                           RoutePlanner::edgeHeading(trip[0],trip[1])));
+        CoreNavigator nav; TEST_ASSERT_TRUE(nav.start(trip[0],c,plan,0));
+        nav.grant(trip[0],600); TEST_ASSERT_TRUE(nav.grant(trip[1],601));
+        ControlInput in; in.wifi=in.mqtt=in.motionConfigured=in.lineConfigured=in.distanceValid=true;
+        in.linePattern=2; in.now=Config::RFID_STOP_DWELL_MS+1;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
+        if (trip[2][0]=='M') TEST_ASSERT_TRUE(nav.grant(trip[2],602));
+        TEST_ASSERT_TRUE(nav.canPassThrough(trip[1],in)); nav.reachedNode(trip[1],++in.now,&in);
+        MutexClearance clearance; clearance.grant(trip[1],601,trip[0],true);
+        clearance.reached(trip[0],trip[1],100,100,in.now);
+        in.now+=Config::MUTEX_TAG_LOST_CONFIRM_MS;
+        clearance.progress(130,130,in.now,true); MutexClearance::Release release;
+        TEST_ASSERT_TRUE(clearance.pending(release));
+        TEST_ASSERT_FALSE(nav.completeZoneExit(release.zone,600)); // Wrong token cannot record clearance.
+        TEST_ASSERT_TRUE(nav.completeZoneExit(release.zone,release.grantId));
+        clearance.queued(release);
+        TEST_ASSERT_FALSE(clearance.canAcceptGrant(release.zone,release.grantId));
+        TEST_ASSERT_FALSE(nav.completeZoneExit(release.zone,release.grantId));
+        TEST_ASSERT_FALSE(nav.grant(release.zone,603)); // Late grant must not reclaim the cleared zone.
+        TEST_ASSERT_NULL(nav.missingZone()); TEST_ASSERT_NULL(nav.requestedZone());
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
+        MotorAction early=MotorAction::Stop;
+        TEST_ASSERT_TRUE(nav.refreshFollowing(in,early));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(early));
+        TEST_ASSERT_EQUAL_UINT8(1,nav.pathIndex()); TEST_ASSERT_EQUAL_INT(610,nav.routeCommandId());
+    }
+}
+
+void test_mutex_exit_clearance_keeps_next_zone_and_pass_through_checks() {
+    CoreCommand c; c.type=CoreCommandType::Goto; c.cmdId=620; c.pathLength=3;
+    std::strcpy(c.path[0],"M5"); std::strcpy(c.path[1],"M6"); std::strcpy(c.path[2],"G6");
+    std::strcpy(c.target,"G6"); c.passThrough[0]=c.passThrough[1]=true;
+    RoutePlan plan; TEST_ASSERT_TRUE(RoutePlanner::plan(nullptr,"G1",c,plan,false,RobotHeading::East));
+    CoreNavigator nav; TEST_ASSERT_TRUE(nav.start("G1",c,plan,0)); TEST_ASSERT_TRUE(nav.grant("M5",621));
+    ControlInput in; in.wifi=in.mqtt=in.motionConfigured=in.lineConfigured=in.distanceValid=true;
+    in.linePattern=2; in.now=Config::RFID_STOP_DWELL_MS+1; nav.update(in);
+    TEST_ASSERT_TRUE(nav.grant("M6",622));
+    TEST_ASSERT_TRUE(nav.canPassThrough("M5",in)); nav.reachedNode("M5",++in.now,&in);
+    TEST_ASSERT_TRUE(nav.completeZoneExit("M5",621));
+    nav.revokeGrant("M6",622);
+    TEST_ASSERT_EQUAL_STRING("M6",nav.missingZone()); TEST_ASSERT_EQUAL_STRING("M6",nav.requestedZone());
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_FALSE(nav.canPassThrough("M6",in));
+    TEST_ASSERT_TRUE(nav.grant("M6",623));
+    TEST_ASSERT_TRUE(nav.canPassThrough("M6",in)); // Cleared M5 does not force a dwell at M6.
+    nav.reachedNode("M6",++in.now,&in);
+    nav.revokeGrant("M6",623); // Clearance for M5 must not apply to M6.
+    TEST_ASSERT_EQUAL_STRING("M6",nav.missingZone());
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+}
+
+void test_mutex_exit_clearance_resets_on_new_route_fault_and_session() {
+    for (unsigned transition=0;transition<3;++transition) {
+        CoreCommand c; c.type=CoreCommandType::Goto; c.cmdId=630; c.pathLength=2;
+        std::strcpy(c.path[0],"M3"); std::strcpy(c.path[1],"G1"); std::strcpy(c.target,"G1");
+        c.passThrough[0]=true; RoutePlan plan;
+        TEST_ASSERT_TRUE(RoutePlanner::plan("M4","GS2",c,plan));
+        CoreNavigator nav; TEST_ASSERT_TRUE(nav.start("GS2",c,plan,0)); TEST_ASSERT_TRUE(nav.grant("M3",631));
+        ControlInput in; in.wifi=in.mqtt=in.motionConfigured=in.lineConfigured=in.distanceValid=true;
+        in.linePattern=2; in.now=Config::RFID_STOP_DWELL_MS+1; nav.update(in);
+        nav.reachedNode("M3",++in.now,&in); TEST_ASSERT_TRUE(nav.completeZoneExit("M3",631));
+        in.obstacle=true;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        in.obstacle=false; ++in.now;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
+        if(transition==0) nav.stop();
+        if(transition==1) { in.mqtt=false; nav.update(in); TEST_ASSERT_TRUE(nav.clearFault()); }
+        if(transition==2) { nav.resetGrants(); TEST_ASSERT_TRUE(nav.clearFault()); }
+        c.cmdId=632; c.pathLength=1; c.passThrough[0]=false;
+        std::strcpy(c.path[0],"G1"); std::strcpy(c.target,"G1");
+        TEST_ASSERT_TRUE(RoutePlanner::plan("GS2","M3",c,plan));
+        TEST_ASSERT_TRUE(nav.start("M3",c,plan,in.now));
+        TEST_ASSERT_EQUAL_STRING("M3",nav.missingZone()); TEST_ASSERT_EQUAL_STRING("M3",nav.requestedZone());
+        TEST_ASSERT_TRUE(nav.grant("M3",633));
+    }
+}
+
 void test_directed_route_turns() {
     TEST_ASSERT_TRUE(RoutePlanner::directedEdge("M1", "G2"));
     TEST_ASSERT_FALSE(RoutePlanner::directedEdge("M5", "G2"));
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Right), static_cast<int>(RoutePlanner::turn("C1", "M1", "G2")));
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Straight), static_cast<int>(RoutePlanner::turn("C1", "M1", "GS1")));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Right), static_cast<int>(RoutePlanner::turn("G1", "M1", "G2")));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Straight), static_cast<int>(RoutePlanner::turn("G1", "M1", "GS1")));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Left), static_cast<int>(RoutePlanner::turn("G2", "M5", "M6")));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Right), static_cast<int>(RoutePlanner::turn("G5", "M6", "G6")));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Reverse), static_cast<int>(RoutePlanner::turn("G2", "K2", "G2")));
@@ -166,7 +291,7 @@ void test_directed_route_turns() {
     TEST_ASSERT_TRUE(RoutePlanner::plan("S1", "GS1", command, plan, true));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Right), static_cast<int>(plan.departure[0]));
     TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":55,"path":["GS1"],"target":"GS1"})", command));
-    TEST_ASSERT_TRUE(RoutePlanner::plan("C1", "M1", command, plan, true));
+    TEST_ASSERT_TRUE(RoutePlanner::plan("G1", "M1", command, plan, true));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::TurnAround), static_cast<int>(plan.departure[0]));
 }
 
@@ -287,7 +412,7 @@ void test_bay_exit_turnaround_counts_map_branches() {
     in.linePattern=0;++in.now;nav.update(in);in.linePattern=2;++in.now;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
     TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":72,"path":["GS1"],"target":"GS1"})",command));
-    TEST_ASSERT_TRUE(RoutePlanner::plan("C1","M1",command,route,true));
+    TEST_ASSERT_TRUE(RoutePlanner::plan("G1","M1",command,route,true));
     TEST_ASSERT_EQUAL_INT(1,route.turnCrossings[0]); // No north branch at M1; the next line is the opposite line.
     CoreNavigator single;TEST_ASSERT_TRUE(single.start("M1",command,route,0));TEST_ASSERT_TRUE(single.grant("M1",127));
     in.now=Config::RFID_STOP_DWELL_MS;in.linePattern=2;single.update(in);
@@ -412,7 +537,7 @@ void test_turn_does_not_reacquire_junction_before_blank() {
 void test_robot02_gs2_turn_waits_for_grant_and_stops_on_network_loss() {
     CoreCommand command;
     RoutePlan route;
-    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":64,"path":["GS2","M3","C3"],"target":"C3"})",command));
+    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":64,"path":["GS2","M3","G1"],"target":"G1"})",command));
     TEST_ASSERT_TRUE(RoutePlanner::plan(nullptr,"S2",command,route));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Straight),static_cast<int>(route.departure[0]));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Left),static_cast<int>(route.departure[1]));
@@ -441,7 +566,7 @@ void test_robot02_gs2_turn_waits_for_grant_and_stops_on_network_loss() {
     TEST_ASSERT_FALSE(nav.active());
     // Reconnect/reset at GS2 does not establish heading without a prior RFID.
     TEST_ASSERT_TRUE(nav.clearFault());
-    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":65,"path":["M3","C3"],"target":"C3"})",command));
+    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":65,"path":["M3","G1"],"target":"G1"})",command));
     TEST_ASSERT_TRUE(RoutePlanner::plan(nullptr,"GS2",command,route));
     TEST_ASSERT_FALSE(nav.start("GS2",command,route,input.now,false));
 }
@@ -450,7 +575,7 @@ void test_trial_gently_recovers_from_small_line_offset() {
     CoreCommand command;
     RoutePlan route;
     TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":57,"path":["GS1"],"target":"GS1"})", command));
-    TEST_ASSERT_TRUE(RoutePlanner::plan("C1", "M1", command, route));
+    TEST_ASSERT_TRUE(RoutePlanner::plan("G1", "M1", command, route));
     CoreNavigator nav;
     TEST_ASSERT_TRUE(nav.start("M1", command, route, 0, true));
     ControlInput input;
@@ -489,7 +614,7 @@ static CoreCommand orderFor(const char* node,const char* next,const char* turn,u
     c.pathIndex=step;c.turnCrossings=crossings;return c;
 }
 
-#if defined(AGV_PROFILE_ID)
+#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
 void test_robot01_blank_line_waits_for_rfid_without_moving() {
     static_assert(Config::LINE_LOSS_CONFIRM_MS == 5000u, "Robot 01 blank-line hold must be five seconds");
     CoreCommand command; RoutePlan route;
@@ -550,7 +675,7 @@ void test_robot01_blank_line_waits_for_rfid_without_moving() {
 
 #if defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
 void test_robot02_blank_line_holds_before_fault() {
-    static_assert(Config::LINE_LOSS_CONFIRM_MS == 5000u, "Robot 02 shares robot01 line-loss hold");
+    static_assert(Config::LINE_LOSS_GRACE_MS == 7000u, "Robot02 keeps the task for seven seconds on line loss");
     CoreCommand command; RoutePlan route;
     TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":161,"path":["GS2"],"target":"GS2"})", command));
     TEST_ASSERT_TRUE(RoutePlanner::plan(nullptr, "S2", command, route));
@@ -564,7 +689,7 @@ void test_robot02_blank_line_holds_before_fault() {
     in.linePattern = 0; ++in.now;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None), static_cast<int>(nav.error()));
-    in.now += Config::LINE_LOSS_CONFIRM_MS;
+    in.now += Config::LINE_LOSS_GRACE_MS;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost), static_cast<int>(nav.error()));
 }
@@ -683,7 +808,7 @@ void test_reverse_home_turn_translation_and_safety() {
         if (hazard==0) in.distanceValid=false;
         if (hazard==1) in.mqtt=false;
         if (hazard==2) nav.stop();
-        if (hazard==3) {in.linePattern=0;nav.update(in);in.now+=Config::LINE_LOSS_CONFIRM_MS+1;}
+        if (hazard==3) {in.linePattern=0;nav.update(in);in.now+=(Config::LINE_LOSS_GRACE_MS ? Config::LINE_LOSS_GRACE_MS : Config::LINE_LOSS_CONFIRM_MS)+1;}
         if (hazard==4) in.now+=Config::SEGMENT_TIMEOUT_MS;
         TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
         TEST_ASSERT_FALSE(nav.active());TEST_ASSERT_FALSE(nav.stationOriented());
@@ -804,25 +929,25 @@ static ControlInput straightInput() {
 }
 static bool startStraightTrip(CoreNavigator& nav, ControlInput& in, bool through = true) {
     CoreCommand c;
-    if (!decode(through ? R"({"cmd":"GOTO","cmd_id":42,"path":["M4","GS2","M3","C3"],"target":"C3","pass_through":[0,1,2]})"
-                       : R"({"cmd":"GOTO","cmd_id":42,"path":["M4","GS2","M3","C3"],"target":"C3"})",c)) return false;
+    if (!decode(through ? R"({"cmd":"GOTO","cmd_id":42,"path":["M4","GS2","M3","G1"],"target":"G1","pass_through":[0,1,2]})"
+                       : R"({"cmd":"GOTO","cmd_id":42,"path":["M4","GS2","M3","G1"],"target":"G1"})",c)) return false;
     RoutePlan plan;
-    if (!RoutePlanner::plan("","C4",c,plan,false,RobotHeading::West) ||
-        !nav.start("C4",c,plan,0,false,true) || !nav.grant("M4",101)) return false;
+    if (!RoutePlanner::plan("","G6",c,plan,false,RobotHeading::South) ||
+        !nav.start("G6",c,plan,0,false,true) || !nav.grant("M4",101)) return false;
     CoreCommand order;
-    if (!decode(R"({"cmd":"NODE_ORDER","cmd_id":43,"route_cmd_id":42,"node":"C4","next_node":"M4","path_index":0,"maneuver":"STRAIGHT","turn_crossings":0})",order) ||
+    if (!decode(R"({"cmd":"NODE_ORDER","cmd_id":43,"route_cmd_id":42,"node":"G6","next_node":"M4","path_index":0,"maneuver":"STRAIGHT","turn_crossings":0})",order) ||
         !nav.authorizeNodeOrder(order)) return false;
     return nav.update(in) == MotorAction::Forward;
 }
 void test_pass_through_parser_dedup_and_bounds() {
     CoreCommand c, old;
-    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":42,"path":["M4","GS2","M3","C3"],"target":"C3","pass_through":[0,1,2]})",c));
+    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":42,"path":["M4","GS2","M3","G1"],"target":"G1","pass_through":[0,1,2]})",c));
     TEST_ASSERT_TRUE(c.passThrough[0] && c.passThrough[1] && c.passThrough[2]);
     TEST_ASSERT_FALSE(c.passThrough[3]);old=c;
-    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":42,"path":["M4","GS2","M3","C3"],"target":"C3"})",c));
+    TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":42,"path":["M4","GS2","M3","G1"],"target":"G1"})",c));
     TEST_ASSERT_FALSE(CoreProtocol::sameCommand(old,c));
     for (const auto* list : {"[0,0]","[3]","[-1]","[true]","[1.5]","[\"0\"]","{}","null","[32]","[4294967295]"}) {
-        const std::string wire=std::string(R"({"cmd":"GOTO","cmd_id":42,"path":["M4","GS2","M3","C3"],"target":"C3","pass_through":)")+list+"}";
+        const std::string wire=std::string(R"({"cmd":"GOTO","cmd_id":42,"path":["M4","GS2","M3","G1"],"target":"G1","pass_through":)")+list+"}";
         TEST_ASSERT_FALSE(decode(wire.c_str(),c));
     }
     std::string wire=R"({"cmd":"GOTO","cmd_id":50,"target":"GS2","path":[)";
@@ -840,7 +965,7 @@ void test_straight_trip_reports_each_rfid_without_dwell() {
     TEST_ASSERT_TRUE(nav.following());TEST_ASSERT_FALSE(nav.needsNodeOrder());TEST_ASSERT_EQUAL_INT(1,nav.pathIndex());
     TEST_ASSERT_EQUAL_STRING("M3",nav.requestedZone());TEST_ASSERT_TRUE(nav.grant("M3",202));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
-    MutexClearance clearance;clearance.grant("M4",101,"C4",true);clearance.reached("C4","M4");
+    MutexClearance clearance;clearance.grant("M4",101,"G6",true);clearance.reached("G6","M4");
     MutexClearance::Release release;TEST_ASSERT_FALSE(clearance.pending(release));
     TEST_ASSERT_TRUE(nav.canPassThrough("GS2",in));nav.reachedNode("GS2",++in.now,&in);
     clearance.reached("M4","GS2");TEST_ASSERT_TRUE(clearance.pending(release));
@@ -851,7 +976,7 @@ void test_straight_trip_reports_each_rfid_without_dwell() {
     TEST_ASSERT_TRUE(nav.canPassThrough("M3",in));nav.reachedNode("M3",++in.now,&in);
     TEST_ASSERT_EQUAL_INT(3,nav.pathIndex());TEST_ASSERT_FALSE(nav.needsNodeOrder());
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
-    TEST_ASSERT_FALSE(nav.canPassThrough("C3",in));nav.reachedNode("C3",++in.now,&in);
+    TEST_ASSERT_FALSE(nav.canPassThrough("G1",in));nav.reachedNode("G1",++in.now,&in);
     TEST_ASSERT_FALSE(nav.active());TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
 }
 void test_through_waits_at_gate_without_lookahead_grant() {
@@ -893,9 +1018,9 @@ void test_through_never_overrides_hazards_or_stop() {
 void test_through_rejects_turns_and_keeps_legacy_dwell() {
     CoreCommand c;RoutePlan plan;
     TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":42,"path":["M4","G5","K5"],"target":"K5","pass_through":[0]})",c));
-    TEST_ASSERT_TRUE(RoutePlanner::plan("","C4",c,plan,false,RobotHeading::West));
-    CoreNavigator turn;TEST_ASSERT_FALSE(turn.start("C4",c,plan,0,false,true));
-    TEST_ASSERT_FALSE(RoutePlanner::straightThrough("C4","M4","G5"));
+    TEST_ASSERT_TRUE(RoutePlanner::plan("","G6",c,plan,false,RobotHeading::South));
+    CoreNavigator turn;TEST_ASSERT_FALSE(turn.start("G6",c,plan,0,false,true));
+    TEST_ASSERT_FALSE(RoutePlanner::straightThrough("G6","M4","G5"));
     TEST_ASSERT_FALSE(RoutePlanner::straightThrough("GS1","S1","GS1"));
     TEST_ASSERT_FALSE(RoutePlanner::straightThrough("G5","K5","G5"));
     TEST_ASSERT_FALSE(RoutePlanner::straightThrough("K1","G1","M5"));
@@ -974,6 +1099,12 @@ void test_line_search_direction_pulses_and_reverse() {
         TEST_ASSERT_TRUE(nav.recoveringLine()); TEST_ASSERT_FALSE(nav.following());
         in.now = lostAt + Config::LINE_RECOVERY_TIMEOUT_MS;
         TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
+        if (Config::LINE_LOSS_GRACE_MS) {
+            TEST_ASSERT_TRUE(nav.active());
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None),static_cast<int>(nav.error()));
+            in.now = lostAt + Config::LINE_LOSS_GRACE_MS;
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        }
         TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost), static_cast<int>(nav.error()));
         in.linePattern = 2; ++in.now;
         TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
@@ -1015,7 +1146,7 @@ void test_line_search_requires_stable_center_and_keeps_task() {
         const auto secondLoss = loseLine(nav, in, 1);
         in.now = secondLoss + Config::LINE_RECOVERY_STOP_MS;
         TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
-        in.now = secondLoss + Config::LINE_LOSS_CONFIRM_MS;
+        in.now = secondLoss + (Config::LINE_LOSS_GRACE_MS ? Config::LINE_LOSS_GRACE_MS : Config::LINE_LOSS_CONFIRM_MS);
         TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(nav.update(in)));
         TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost), static_cast<int>(nav.error()));
     }
@@ -1098,7 +1229,7 @@ void test_line_search_clock_wrap_and_segment_deadline() {
 static void startG1Left(CoreNavigator& nav, ControlInput& in) {
     CoreCommand c; RoutePlan route;
     TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":510,"path":["K1"],"target":"K1"})",c));
-    TEST_ASSERT_TRUE(RoutePlanner::plan("C3","G1",c,route));
+    TEST_ASSERT_TRUE(RoutePlanner::plan("M3","G1",c,route));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(RouteTurn::Left),static_cast<int>(route.departure[0]));
     TEST_ASSERT_TRUE(nav.start("G1",c,route,0,false,true));
     TEST_ASSERT_TRUE(nav.authorizeNodeOrder(orderFor("G1","K1","LEFT",0,510,1)));
@@ -1297,7 +1428,7 @@ int main() {
     RUN_TEST(test_reverse_home_turn_translation_and_safety);
     RUN_TEST(test_left_turn_retries_same_direction_once);
     RUN_TEST(test_reverse_home_s2_uses_matching_route_and_order);
-#if defined(AGV_PROFILE_ID)
+#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
     RUN_TEST(test_robot01_blank_line_waits_for_rfid_without_moving);
 #endif
 #if defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
@@ -1308,6 +1439,10 @@ int main() {
     RUN_TEST(test_bench_voltage_interlock);
     RUN_TEST(test_mutex_clearance_requires_measured_next_tag);
     RUN_TEST(test_mutex_clearance_rejects_unvisited_or_wrong_route);
+    RUN_TEST(test_mutex_encoder_release_requires_both_wheels_tag_loss_and_safe_route);
+    RUN_TEST(test_mutex_exit_release_continues_without_reacquiring_current_zone);
+    RUN_TEST(test_mutex_exit_clearance_keeps_next_zone_and_pass_through_checks);
+    RUN_TEST(test_mutex_exit_clearance_resets_on_new_route_fault_and_session);
     RUN_TEST(test_directed_route_turns);
     RUN_TEST(test_fixed_bay_heading_and_reverse_exit);
     RUN_TEST(test_station_arrival_turns_at_station_before_ready);

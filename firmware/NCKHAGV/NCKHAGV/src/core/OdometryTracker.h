@@ -6,15 +6,19 @@
 // Chỉ cộng quãng đường khi bám line tiến/lùi; quay tại chỗ không làm tiến marker.
 class OdometryTracker {
 public:
+    struct TranslationTicks { uint32_t left = 0, right = 0; };
     explicit OdometryTracker(float pulsesPer100Cm = Config::ENCODER_PULSES_PER_100CM)
         : cmPerTick_(100.0f / pulsesPer100Cm) {}
     void begin(uint32_t left, uint32_t right, uint32_t now) {
         left_ = left; right_ = right; now_ = windowAt_ = now;
+        translationLeft_ = translationRight_ = 0;
     }
     void update(uint32_t left, uint32_t right, uint32_t now) {
         const uint32_t dl = left - left_, dr = right - right_; // chịu wrap bộ đếm
         left_ = left; right_ = right; now_ = now;
         if (sample_.tracking && sample_.translating) {
+            translationLeft_ += dl;
+            translationRight_ += dr;
             const float cm = (static_cast<double>(dl) + dr) * 0.5 * cmPerTick_;
             sample_.distanceCm += cm;
             windowCm_ += cm;
@@ -47,8 +51,10 @@ public:
         result.seq = seq; result.uptimeMs = now_; result.leftTicks = left_; result.rightTicks = right_;
         return result;
     }
+    TranslationTicks translationTicks() const { return {translationLeft_, translationRight_}; }
 private:
     float cmPerTick_, windowCm_ = 0;
     uint32_t left_ = 0, right_ = 0, now_ = 0, windowAt_ = 0;
+    uint32_t translationLeft_ = 0, translationRight_ = 0;
     OdometrySnapshot sample_{};
 };

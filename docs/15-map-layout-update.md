@@ -1,5 +1,7 @@
 # Bản đồ kho v3 — RFID giữa map và tên node ngắn
 
+CURRENT17/10/2026: map vận hành đã chuyển sang [v4 bo góc/22node](decisions/ADR-064-rounded-map-without-corner-tags.md), bỏC1–C4. Nội dung26node và đường dẫn src bên dưới là hồ sơ lịch sử29/09, không phải map hiện tại. Nguồn hiện tại data/map_layout.json và fallback include/map/MapGraph.hpp.
+
 Cập nhật cùng ngày cho tự về sạc: hai cạnh ngoài trái đã đổi thành **C3 → G1 → C1**, khép vòng có hướng. Đã kiểm tra mọi S1/S2 ↔ K1…K6. Xem [quản lý ca và trạm riêng](17-shifts-and-home-charging.md). Hình/snapshot trước cập nhật có thể vẫn chứa hướng cũ.
 
 Ngày: 29/09/2026. Nguồn `SOURCE`: người dùng yêu cầu thêm hai RFID tại hai ngã tư giữa map, rút gọn tên node, sửa trong `src` và giao diện, đưa các kho phía trong về giữa đoạn đường tới ngã tư.

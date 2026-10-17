@@ -81,7 +81,7 @@ async function main(){
     mqtt.publish('agv/01/ack',String(left.cmd_id));
     set({awaitingNodeOrder:false,state:'AGV_MOVING',motor:'PIVOT_LEFT',heading:'UNKNOWN',leftDuty:245,rightDuty:245});await pause(250);
     assert.equal((await state()).fleet.tasks.find(t=>t.task_id===trip.data.task_id).status,'dispatched');
-    assert.equal((await post('/api/agvs/01/goto',{target:'C1'})).status,409);
+    assert.equal((await post('/api/agvs/01/goto',{target:'M1'})).status,409);
     set({heading:'E',motor:'FORWARD',leftDuty:205});await until(async()=>(await robot()).heading==='E');
     set({node:'M2',pathIndex:2,nextNode:'',state:'AGV_IDLE',taskActive:false,motor:'STOP',leftDuty:0,rightDuty:0});
     await until(async()=>(await state()).fleet.tasks.find(t=>t.task_id===trip.data.task_id).status==='completed');
@@ -102,12 +102,12 @@ async function main(){
     // Simulated relocation between completed trials; no inference from that movement.
     mqtt.publish('agv/01/mutex_release',JSON.stringify(grants[0]));
     set({node:'K1',heading:'W',headingSource:'bay_default',rfidAgeMs:0});await until(async()=>(await robot()).node==='K1');
-    const rightTrip=await post('/api/agvs/01/goto',{target:'C1'});assert.equal(rightTrip.status,200);
+    const rightTrip=await post('/api/agvs/01/goto',{target:'M1'});assert.equal(rightTrip.status,200);
     await until(()=>orderAt(0));assert.equal(orderAt(0).maneuver,'REVERSE');
-    set({node:'G1',pathIndex:1,nextNode:'C1',heading:'W',headingSource:'route',awaitingNodeOrder:true,state:'AGV_WAITING'});
+    set({node:'G1',pathIndex:1,nextNode:'M1',heading:'W',headingSource:'route',awaitingNodeOrder:true,state:'AGV_WAITING'});
     await until(()=>orderAt(1));assert.equal(orderAt(1).maneuver,'RIGHT');
     set({awaitingNodeOrder:false,state:'AGV_MOVING',motor:'PIVOT_RIGHT',heading:'UNKNOWN',leftDuty:245,rightDuty:245});
-    await pause(200);set({node:'C1',pathIndex:2,nextNode:'',state:'AGV_IDLE',taskActive:false,motor:'STOP',leftDuty:0,rightDuty:0,heading:'N'});
+    await pause(200);set({node:'M1',pathIndex:2,nextNode:'',state:'AGV_IDLE',taskActive:false,motor:'STOP',leftDuty:0,rightDuty:0,heading:'E'});
     await until(async()=>(await state()).fleet.tasks.find(t=>t.task_id===rightTrip.data.task_id).status==='completed');
     set({node:'GS1',heading:'E',headingSource:'route'});await until(async()=>(await robot()).node==='GS1');
     const home=await post('/api/agvs/01/goto',{target:'S1'});assert.equal(home.status,200);

@@ -59,6 +59,16 @@ void MotorModule::writeSide(bool left, int duty) {
     if (inverted) duty = -duty;
     if (Config::MOTOR_DRIVER == Config::MotorDriver::L298N) {
         const int channel = Config::MOTOR_PWM_CHANNELS[left ? 0 : 1];
+        if (Config::FAST_LINE_RESPONSE) {
+            const int priorLogical = left ? appliedLeft_ : appliedRight_;
+            const int prior = inverted ? -priorLogical : priorLogical;
+            if (duty == prior) return;
+            if ((duty > 0 && prior > 0) || (duty < 0 && prior < 0)) {
+                // Same direction: update PWM directly, no zero-duty notch.
+                ledcWrite(channel, abs(duty));
+                return;
+            }
+        }
         ledcWrite(channel, 0);
         digitalWrite(a, duty > 0 ? HIGH : LOW);
         digitalWrite(b, duty < 0 ? HIGH : LOW);

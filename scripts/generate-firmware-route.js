@@ -23,18 +23,34 @@ for (const edge of map.edges) {
     }
 }
 
+function direction(a,b) {
+    const dx=b.x-a.x,dy=b.y-a.y;
+    return dx === 0 && dy !== 0 ? (dy < 0 ? 1 : 3) : dy === 0 && dx !== 0 ? (dx < 0 ? 4 : 2) : 0;
+}
+const byId = new Map(map.nodes.map(n=>[n.id,n]));
+for (const e of map.edges) {
+    if (!e.geometry) continue;
+    const {via,segment_lengths_cm:lengths}=e.geometry;
+    if (!via || !Number.isSafeInteger(via.x) || !Number.isSafeInteger(via.y))
+        throw new Error(`Invalid curve point: ${e.from} -> ${e.to}`);
+    const start=direction(byId.get(e.from),via),end=direction(via,byId.get(e.to));
+    if (!via || !Number.isSafeInteger(via.x) || !Number.isSafeInteger(via.y) ||
+        !Array.isArray(lengths) || lengths.length!==2 || !lengths.every(n=>Number.isFinite(n) && n>0) ||
+        lengths[0]+lengths[1]!==e.weight || !start || !end || (start+end)%2!==1)
+        throw new Error(`Invalid curved edge: ${e.from} -> ${e.to}`);
+}
 const lines = [
     '#pragma once',
     '#include <cstdint>',
     '// Generated from data/map_layout.json. Run node scripts/generate-firmware-route.js after map changes.',
     'namespace RouteMap {',
     'struct Node { const char* id; int16_t x, y; };',
-    'struct Edge { const char* from; const char* to; bool twoWay; };',
+    'struct Edge { const char* from; const char* to; bool twoWay; uint8_t departure, arrival; int lengthCm; };',
     `inline constexpr Node NODES[${map.nodes.length}] = {`,
     ...map.nodes.map(n => `    {"${n.id}", ${n.x}, ${n.y}},`),
     '};',
     `inline constexpr Edge EDGES[${map.edges.length}] = {`,
-    ...map.edges.map(e => `    {"${e.from}", "${e.to}", ${e.two_way ? 'true' : 'false'}},`),
+    ...map.edges.map(e => `    {"${e.from}", "${e.to}", ${e.two_way ? 'true' : 'false'}, ${direction(byId.get(e.from),e.geometry?.via || byId.get(e.to))}, ${direction(e.geometry?.via || byId.get(e.from),byId.get(e.to))}, ${e.weight}},`),
     '};',
     '}',
     ''

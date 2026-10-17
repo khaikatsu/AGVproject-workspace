@@ -1,5 +1,6 @@
 #pragma once
 #include "utils/json.hpp"
+#include "map/EdgeGeometry.hpp"
 #include <string>
 
 // Map y points down. Heading is the vehicle front, including during reverse.
@@ -9,23 +10,15 @@ inline int heading(const std::string& value) {
     return value == "N" ? 0 : value == "E" ? 1 : value == "S" ? 2 : value == "W" ? 3 : -1;
 }
 inline int direction(const json& map, const std::string& from, const std::string& to) {
-    const json *a = nullptr, *b = nullptr;
-    for (const auto& n : map.at("nodes")) {
-        if (n.at("id") == from) a = &n;
-        if (n.at("id") == to) b = &n;
-    }
-    if (!a || !b) return -1;
-    const double dx = b->at("x").get<double>() - a->at("x").get<double>();
-    const double dy = b->at("y").get<double>() - a->at("y").get<double>();
-    if (dx == 0 && dy != 0) return dy < 0 ? 0 : 2;
-    if (dy == 0 && dx != 0) return dx < 0 ? 3 : 1;
-    return -1;
+    return EdgeGeometry::heading(map,from,to);
 }
 inline bool branch(const json& map, const std::string& node, int dir, bool directed = false) {
     for (const auto& edge : map.at("edges")) {
         if (edge.at("from") == node && direction(map,node,edge.at("to")) == dir) return true;
-        if (edge.at("to") == node && (!directed || edge.value("two_way",false)) &&
-            direction(map,node,edge.at("from")) == dir) return true;
+        if (edge.at("to") == node && (!directed || edge.value("two_way",false))) {
+            const int incoming=EdgeGeometry::heading(map,edge.at("from"),node,true);
+            if (incoming>=0 && (incoming+2)%4==dir) return true;
+        }
     }
     return false;
 }
@@ -40,7 +33,7 @@ inline bool straightThrough(const json& map, const std::string& from,
             allowedType = type == "waypoint" || type == "mutex";
         }
     }
-    const int incoming = direction(map,from,node), outgoing = direction(map,node,next);
+    const int incoming = EdgeGeometry::heading(map,from,node,true), outgoing = direction(map,node,next);
     auto connected = [&](const std::string& a, const std::string& b) {
         for (const auto& e : map.at("edges"))
             if ((e.at("from") == a && e.at("to") == b) ||

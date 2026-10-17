@@ -22,6 +22,10 @@ Client mô phỏng 10/10/2026: GET `/sim-api/state` và POST heartbeat `/sim-api
 
 15/10/2026 — Trong Core test 01, mỗi robot có thêm `obstacle_alert: null | {direction,range_cm}` và `obstacle_detection: null | {from,to,x,y,range_cm,direction,source}` ở snapshot/delta và GET `/api/agvs`. Alert hiện khi diagnostic sonar mới ≤3 giây dù encoder chưa có; Core ghi log khi phát hiện/dời vật cản. `x/y` là cm trong hệ map, chiếu từ vị trí encoder cộng số cm sonar theo cạnh có hướng; web tô đỏ cạnh `from→to` và chấm tại `x/y`. Điểm chỉ hiện khi odometry hợp lệ ≤1 giây và cùng chặng; mất dữ liệu hoặc dời vật cản trả `null`. Các trường này chỉ để giám sát, không là API khóa cạnh, không xác nhận khoảng hở an toàn hay vị trí tuyệt đối. [ADR-055](../docs/decisions/ADR-055-robot01-dual-sonar-edge-warning.md).
 
+## Geometry map v4 — 17/10/2026
+
+`map.edges[]` có thể có `geometry:{via:{x:0,y:0},segment_lengths_cm:[85,50]}`; via là điểm dựng góc bo, không là node. Hai chiều dài dương có tổng bằng weight; hai đoạn vuông góc, không suy hướng bằng đường chéo từ from tới to. Save/snapshot/apply giữ geometry. Cạnh thiếu trường này vẫn thẳng như trước. POST `/api/map/edge` giữ geometry sẵn có khi weight/hướng không đổi; thay weight/hướng cạnh bo trả lỗi, cần apply graph có geometry đồng bộ. Các tọa độ là sơ đồ; chiều dài cost/encoder là weightcm. [ADR-064](../docs/decisions/ADR-064-rounded-map-without-corner-tags.md).
+
 ## Response HTTP
 
 13/10/2026: snapshot/delta có vị trí RFID mới được ưu tiên qua Core/gateway sau commit, không chờ timer broadcast thường. State thêm `core_snapshot_seq` tăng trong mỗi core_session_id, độc lập sequence delta trên từng socket. Gateway không apply snapshot có seq thấp hơn/bằng state mới nhất cùng phiên, kể cả snapshot trong command_result đến muộn; kết quả request vẫn được xử lý. Core mới reset seq ở phiên mới, Core cũ thiếu trường giữ tương thích. Thời gian nhận state vẫn là thời gian gateway nhận, không phải thời điểm phần cứng đọc RFID. Không nội suy node. [ADR-049](../docs/decisions/ADR-049-priority-rfid-snapshots.md).

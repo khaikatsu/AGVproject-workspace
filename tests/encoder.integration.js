@@ -59,14 +59,14 @@ async function main(){
     pump=setInterval(publish,250);publish();await until(async()=>(await robot())?.encoder_supported);
     await until(async()=>(await state()).shift.can_start);await post('/api/shift/start');
     const set=async(values)=>{Object.assign(r,values);publish();await until(async()=>(await robot())?.node===r.node);await pause(70);};
-    await set({node:'C4',heading:'W',headingSource:'route'});
+    await set({node:'G6',heading:'S',headingSource:'route'});
     if(process.argv.includes('--browser')){
       const pw=require(process.env.AGV_PLAYWRIGHT_MODULE||'playwright');
       browser=await pw.chromium.launch({headless:true,channel:process.env.AGV_BROWSER_CHANNEL||'msedge'});
       page=await browser.newPage({viewport:{width:1500,height:1000}});page.on('pageerror',e=>errors.push(e.message));
       await page.goto(base);await page.locator('[data-robot="01"]').waitFor();
     }
-    const task=await post('/api/agvs/01/goto',{target:'C3'});await until(()=>r.routeCommandId&&commands.some(c=>c.cmd==='NODE_ORDER'));
+    const task=await post('/api/agvs/01/goto',{target:'G1'});await until(()=>r.routeCommandId&&commands.some(c=>c.cmd==='NODE_ORDER'));
     mqtt.publish('agv/01/mutex_request','M4');await until(()=>grants.some(g=>g.zone==='M4'));
     const packet=(distance,speed,extra={})=>({schema_version:1,robot_id:'01',core_session_id:coreSession,boot_id:r.encoderBootId,
       connection_session:r.session,seq:++seq,uptime_ms:uptime(),left_ticks:Math.round(distance*1.61),right_ticks:Math.round(distance*1.61),
@@ -79,22 +79,22 @@ async function main(){
     const first=await send(10,20);let previousMarker=page?await marker():null;
     await send(20,20);
     if(page){await page.locator('#robot01Speed').filter({hasText:'20.0 cm/s'}).waitFor();await pause(240);
-      const moving=await marker();assert.equal(moving.source,'encoder');assert(moving.x<previousMarker.x);previousMarker=moving;
-      assert.match(await page.locator('#robot01Position').innerText(),/ước tính C4 → M4/);}
+      const moving=await marker();assert.equal(moving.source,'encoder');assert(moving.y>previousMarker.y);previousMarker=moving;
+      assert.match(await page.locator('#robot01Position').innerText(),/ước tính G6 → M4/);}
     Object.assign(r,{obstacle:true,ultrasonicCm:12,frontUltrasonicCm:12,rearUltrasonicCm:null,obstacleDirection:'front'});
     publish();await until(async()=>!!(await robot()).obstacle_detection);
     const detection=(await robot()).obstacle_detection;
-    assert.equal(detection.from,'C4');assert.equal(detection.to,'M4');assert.equal(detection.range_cm,12);
+    assert.equal(detection.from,'G6');assert.equal(detection.to,'M4');assert.equal(detection.range_cm,12);
     assert.equal((await robot()).obstacle_alert.direction,'front');
     if(page){await page.locator('[data-sonar-obstacle="01"]').waitFor();
-      await page.locator('[data-sonar-obstacle-edge="C4:M4"]').waitFor({state:'attached'});
-      assert.equal(await page.locator('[data-sonar-obstacle-edge="C4:M4"]').evaluate(el=>getComputedStyle(el).stroke),'rgb(239, 68, 68)');
+      await page.locator('[data-sonar-obstacle-edge="G6:M4"]').waitFor({state:'attached'});
+      assert.equal(await page.locator('[data-sonar-obstacle-edge="G6:M4"]').evaluate(el=>getComputedStyle(el).stroke),'rgb(239, 68, 68)');
       await page.screenshot({path:path.join(dir,'sonar-front.png'),fullPage:true});}
     Object.assign(r,{obstacle:false,ultrasonicCm:25,frontUltrasonicCm:25});
     publish();await until(async()=>{const a=await robot();return a.obstacle_detection===null&&a.obstacle_alert===null;});
     assert.equal((await robot()).obstacle_alert,null);
     if(page)await page.locator('[data-sonar-obstacle="01"]').waitFor({state:'detached'});
-    const saturated=await send(80,20);assert.equal((await robot()).estimated_position.progress,0.98);
+    const saturated=await send(150,20);assert.equal((await robot()).estimated_position.progress,0.98);
     assert.equal((await state()).fleet.tasks.find(t=>t.task_id===task.task_id).status,'dispatched');
     assert.equal((await state()).mutex.M4.owner,'01');
     for(const invalid of [{...first,seq:saturated.seq},{...saturated,seq:seq+1,route_cmd_id:r.routeCommandId+999},
@@ -106,7 +106,7 @@ async function main(){
     if(page){await page.locator('#robot01Speed').filter({hasText:'— cm/s'}).waitFor();const held=await marker();await pause(350);
       assert.deepEqual(await marker(),held);assert.equal(held.source,'encoder_stale');}
     // Stop/pivot does not advance a fresh estimate; intermediate RFID resets the anchor.
-    await send(80,0);await set({node:'M4',pathIndex:1,nextNode:'GS2',heading:'W'});
+    await send(150,0);await set({node:'M4',pathIndex:1,nextNode:'GS2',heading:'W'});
     if(page)await page.waitForFunction(()=>document.querySelectorAll('#toastContainer .toast.error').length===0);
     await send(5,15);
     assert.equal((await robot()).estimated_position.from,'M4');assert.equal((await robot()).estimated_position.progress,0.1);

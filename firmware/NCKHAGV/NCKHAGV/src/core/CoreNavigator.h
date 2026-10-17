@@ -4,7 +4,7 @@
 #include "ControlLogic.h"
 
 // A GOTO path is consumed one RFID at a time. The controller owns the measured
-// clearance check and only then revokes the local grant after queueing release.
+// clearance check and records completed exit after queueing the zone release.
 class CoreNavigator {
 public:
     bool start(const char* current, const CoreCommand& command, const RoutePlan& route, uint32_t now,
@@ -20,8 +20,14 @@ public:
     bool canPassThrough(const char* node, const ControlInput& input) const;
     bool grant(const char* zone, int32_t grantId);
     void revokeGrant(const char* zone, int32_t grantId);
+    // Call only after measured clearance and successful queueing of release.
+    // Allows finishing the outbound segment without retaining zone ownership.
+    bool completeZoneExit(const char* zone, int32_t grantId);
     void resetGrants();
     MotorAction update(const ControlInput& input);
+    // Refresh an already authorized following phase before blocking I/O.
+    // Cannot start a route, leave a waiting node or advance turn capture.
+    bool refreshFollowing(const ControlInput& input, MotorAction& action);
     // Observe before potentially slow RFID work; caller must STOP immediately
     // when a new center-line candidate is latched. Does not authorize motion.
     bool observeTurnLine(const ControlInput& input);
@@ -60,6 +66,7 @@ private:
     enum class Phase { Idle, WaitingGrant, Turning, TurnCapture, Following, StationDwell, StationTurning, Fault };
     static int zoneIndex(const char* node);
     bool hasGrant(const char* node) const;
+    bool currentZonePermitted() const;
     void resetLineTracking();
     void rememberLine(const ControlInput& input, MotorAction action);
     MotorAction recoverLine(const ControlInput& input);
@@ -76,6 +83,8 @@ private:
     uint8_t crossedLines_ = 0;
     uint32_t lastCrossingMs_ = 0;
     int32_t grantIds_[6]{};
+    // Scoped to the current outbound segment; never an entry grant.
+    bool currentZoneCleared_ = false;
     uint8_t index_ = 0, length_ = 0;
     uint32_t segmentStartedMs_ = 0, turnStartedMs_ = 0;
     uint32_t stoppedAtMs_ = 0;

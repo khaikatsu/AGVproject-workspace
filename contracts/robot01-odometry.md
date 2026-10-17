@@ -1,5 +1,7 @@
 # Hợp đồng odometry xe 01 và 02 — schema 1
 
+17/10/2026: mapv4 dùng weightcm làm edge_length_cm thay khoảng cách Euclid giữa hai RFID. Cạnh bo135cm có geometry hai đoạn; x/y là nội suy sơ đồ theo segment_lengths_cm, không phải đường chéo. Giữ clamp0,98 và chỉ RFID xác nhận đích; sonar chiếu theo cùng cạnh là ước tính, chưa xác nhận vị trí vật cản thực trên góc cong. [ADR-064](../docs/decisions/ADR-064-rounded-map-without-corner-tags.md).
+
 16/10/2026: REQ-ROBOT02-PARITY-01 mở cùng schema cho cả hai profile. Topic `agv/{id}/odometry`, `robot_id` là `01` hoặc `02` và phải trùng topic. Core lưu phiên/seq/route độc lập; cùng boot ID hoặc seq giữa hai xe không ghép dữ liệu. Ví dụ01 bên dưới vẫn hợp lệ; [ví dụ02](examples/robot02-odometry.json). [ADR-059](../docs/decisions/ADR-059-robot02-firmware-parity.md) thay các giới hạn chỉ xe01/mode test01 ở phần lịch sử dưới đây.
 
 Diagnostic01 bản `20261014-robot01-network-clock-fix` thêm `networkServiceAgeMs` (integer ms từ lần worker phục vụ), `coreHeartbeatAgeMs` (integer ms/null nếu chưa có heartbeat), `mqttClientState` (integer từ PubSubClient), `wifiRssi` (integer từ SDK). Đây là chẩn đoán, không đổi odometry/telemetry/command. Trong Core test01, session diagnostic encoder phải hợp lệ trước xử lý motion; SAFE_STOP/ERROR mới đúng phiên và node đưa Core ERROR qua luồng lỗi nếu Core còn khỏe, để không báo IDLE khi mất error event QoS0. [ADR-051](../docs/decisions/ADR-051-robot01-network-health-and-diagnostic-fault.md).

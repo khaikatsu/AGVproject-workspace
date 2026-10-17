@@ -774,6 +774,12 @@ function computeMapTransform(nodes) {
   const scale = Math.min(900/width,600/height);
   return {scale,ox:80+(900-width*scale)/2-minX*scale,oy:80+(600-height*scale)/2-minY*scale};
 }
+function roundedEdgePath(a,via,b,clearance = 0) {
+  const first=Math.hypot(via.x-a.x,via.y-a.y),last=Math.hypot(b.x-via.x,b.y-via.y);
+  const ux=(via.x-a.x)/first,uy=(via.y-a.y)/first,vx=(b.x-via.x)/last,vy=(b.y-via.y)/last;
+  const radius=Math.min(30,first/4,last/4);
+  return `M ${a.x} ${a.y} L ${via.x-ux*radius} ${via.y-uy*radius} Q ${via.x} ${via.y} ${via.x+vx*radius} ${via.y+vy*radius} L ${b.x-vx*clearance} ${b.y-vy*clearance}`;
+}
 function drawMap(map,agvs,prefix = '') {
   const nodesG = $(prefix ? 'previewNodesG' : 'nodesG'),edgesG = $(prefix ? 'previewEdgesG' : 'edgesG');
   nodesG.replaceChildren();edgesG.replaceChildren();
@@ -794,16 +800,22 @@ function drawMap(map,agvs,prefix = '') {
     });
     const lineAttrs = {x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:blockedBySonar ? 'edge sonar-obstacle-edge' : 'edge'};
     if (blockedBySonar) Object.assign(lineAttrs,{'data-sonar-obstacle-edge':`${e.from}:${e.to}`});
-    const line = svgElement('line',lineAttrs);
+    const via=e.geometry?.via ? {x:e.geometry.via.x*scale+ox,y:e.geometry.via.y*scale+oy} : null;
+    const line = via ? svgElement('path',{class:lineAttrs.class,fill:'none',d:roundedEdgePath(a,via,b,prefix ? 19 : 23),
+      'data-rounded-edge':`${e.from}:${e.to}`}) : svgElement('line',lineAttrs);
+    if (blockedBySonar) line.setAttribute('data-sonar-obstacle-edge',`${e.from}:${e.to}`);
     const length = Math.hypot(b.x-a.x,b.y-a.y) || 1,dx = (b.x-a.x)/length,dy = (b.y-a.y)/length;
     const clearance = prefix ? 19 : 23;
-    line.setAttribute('x2',b.x-dx*clearance);line.setAttribute('y2',b.y-dy*clearance);
+    if (!via) {line.setAttribute('x2',b.x-dx*clearance);line.setAttribute('y2',b.y-dy*clearance);}
     if (e.two_way) {line.setAttribute('x1',a.x+dx*clearance);line.setAttribute('y1',a.y+dy*clearance);}
     if (e.two_way) line.setAttribute('marker-start','url(#arrow)');
     line.append(svgElement('title',{},`${e.from} ${e.two_way ? '↔' : '→'} ${e.to}; trọng số ${e.weight}`));edgesG.append(line);
-    const horizontal = Math.abs(dx) > Math.abs(dy);
-    edgesG.append(svgElement('text',{x:(a.x+b.x)/2+(horizontal ? 0 : 10),
-      y:(a.y+b.y)/2+(horizontal ? -10 : 4),'text-anchor':horizontal ? 'middle' : 'start',class:'edge-label'},e.weight));
+    const parts=via ? [[a,via,e.geometry.segment_lengths_cm[0]],[via,b,e.geometry.segment_lengths_cm[1]]] : [[a,b,e.weight]];
+    parts.forEach(([start,end,label])=>{
+      const horizontal=Math.abs(end.x-start.x)>Math.abs(end.y-start.y);
+      edgesG.append(svgElement('text',{x:(start.x+end.x)/2+(horizontal ? 0 : 10),
+        y:(start.y+end.y)/2+(horizontal ? -10 : 4),'text-anchor':horizontal ? 'middle' : 'start',class:'edge-label'},label));
+    });
   });
   detections.forEach(robot=>{
     const d = robot.obstacle_detection,x=d.x*scale+ox,y=d.y*scale+oy;
@@ -842,7 +854,11 @@ function drawMap(map,agvs,prefix = '') {
     const path = [robot.node,...(robot.path || [])];
     for (let i = 1;i < path.length;i++) {
       const a = position.get(path[i-1]),b = position.get(path[i]);if (!a || !b) continue;
-      const segment = svgElement('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:color,'stroke-width':5,opacity:0.7,'stroke-dasharray':'8 4','data-robot-route':robot.id});
+      const edge=edges.find(e=>e.from===path[i-1] && e.to===path[i]);
+      const via=edge?.geometry?.via;
+      const attrs={stroke:color,'stroke-width':5,opacity:0.7,'stroke-dasharray':'8 4','data-robot-route':robot.id};
+      const segment = via ? svgElement('path',{...attrs,fill:'none',d:roundedEdgePath(a,{x:via.x*scale+ox,y:via.y*scale+oy},b)}) :
+        svgElement('line',{...attrs,x1:a.x,y1:a.y,x2:b.x,y2:b.y});
       segment.append(svgElement('title',{},`Kế hoạch ${robot.id}: ${path[i-1]} → ${path[i]}`));routesG.append(segment);
     }
     const p = position.get(robot.node);if (!p || robot.position_valid === false) {robotMarkerMotion.delete(robot.id);return;}

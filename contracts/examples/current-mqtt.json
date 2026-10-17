@@ -6,8 +6,8 @@
     {
       "direction":"core_to_robot",
       "topic":"agv/01/command",
-      "payload":{"cmd":"GOTO","cmd_id":100,"path":["M4","GS2","M3","C3"],"target":"C3","pass_through":[0,1,2]},
-      "note":"Start C4 facing west. Only sent after straightThroughSupported:true. RFID M4/GS2/M3 still reports progress; continue only with required mutex grants and safe line/sensors. C3 stops."
+      "payload":{"cmd":"GOTO","cmd_id":100,"path":["M4","GS2","M3","G1"],"target":"G1","pass_through":[0,1,2]},
+      "note":"Start G6 facing south. Only sent after straightThroughSupported:true. RFID M4/GS2/M3 still reports progress; continue only with required mutex grants and safe line/sensors. G1 stops."
     },
     {
       "direction":"robot_to_core",

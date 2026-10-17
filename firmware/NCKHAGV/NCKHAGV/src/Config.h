@@ -134,15 +134,18 @@ constexpr bool ENABLE_CORE_MOTION = ONE_ROBOT_TRIAL || TWO_ROBOT_BENCH_TRIAL;
 // Xe 01 kích chốt hai sonar; các profile motion khác giữ chính sách cũ.
 // Chốt phần mềm vẫn cần thử bàn và đo quãng phanh trước khi chạy trên sàn.
 constexpr bool ULTRASONIC_MOTION_GUARD = !ENABLE_CORE_MOTION || REAR_ULTRASONIC_ECHO_PIN >= 0;
-// Provisional ONE-ROBOT bench figure from the operator, 04/10/2026.
-// This is not a permission to release a mutex: the map scale and
-// swept rear corner have not been verified on the physical vehicle.
-constexpr float MUTEX_EXIT_TRIAL_CM = 28.0f;
-constexpr float ROBOT_LENGTH_ESTIMATE_CM = 18.0f;
+// Physical measurements confirmed by the operator on 17/10/2026 for both
+// robots. The release origin is the first successful read of the mutex tag,
+// which can occur 3 cm before its centre.
+constexpr float ROBOT_FRONT_TO_RFID_CM = 7.5f;
+constexpr float RFID_TO_REAR_CM = 9.5f;
+constexpr float ROBOT_LENGTH_CM = ROBOT_FRONT_TO_RFID_CM + RFID_TO_REAR_CM;
 constexpr float ROBOT_WIDTH_ESTIMATE_CM = 12.0f;
-// Operator measured reader-to-rear distance on 09/10/2026; still not used
-// to auto-release a zone without the RFID read-ahead/turning clearance check.
-constexpr float RFID_TO_REAR_ESTIMATE_CM = 10.0f;
+constexpr float RFID_READ_RADIUS_CM = 3.0f;
+constexpr float MUTEX_TAG_TO_EXIT_BOUNDARY_CM = 3.0f;
+constexpr float MUTEX_CLEARANCE_MARGIN_CM = 3.0f;
+constexpr float MUTEX_RELEASE_FROM_FIRST_READ_CM = RFID_READ_RADIUS_CM +
+    MUTEX_TAG_TO_EXIT_BOUNDARY_CM + RFID_TO_REAR_CM + MUTEX_CLEARANCE_MARGIN_CM;
 
 enum class MotorDriver { Unconfigured, L298N, BTS7960 };
 // Operator confirms ESP32 DevKit V1 38-pin and L298N wiring. Pivot polarity
@@ -181,6 +184,12 @@ constexpr int CORRECTION_SPEED = DEFAULT_MOTOR_SPEED;
 constexpr int GENTLE_CORRECTION_SPEED = ONE_ROBOT_TRIAL ? 140 : DEFAULT_MOTOR_SPEED;
 #endif
 constexpr int BASE_SPEED = DEFAULT_MOTOR_SPEED;
+#if defined(AGV_FAST_LINE_RESPONSE) && AGV_FAST_LINE_RESPONSE == 1
+constexpr bool FAST_LINE_RESPONSE = true;
+#else
+constexpr bool FAST_LINE_RESPONSE = false;
+#endif
+constexpr uint32_t MOTION_LOG_INTERVAL_MS = 200;
 #if defined(AGV_REVERSE_SPEED)
 constexpr int REVERSE_SPEED = AGV_REVERSE_SPEED;
 #else
@@ -208,6 +217,18 @@ static_assert(REVERSE_SPEED + REVERSE_LEFT_SPEED_TRIM > 0 && REVERSE_SPEED + REV
               REVERSE_CORRECTION_SPEED + REVERSE_LEFT_SPEED_TRIM > 0 && REVERSE_CORRECTION_SPEED + REVERSE_LEFT_SPEED_TRIM <= 255 &&
               REVERSE_CORRECTION_SPEED + REVERSE_RIGHT_SPEED_TRIM > 0 && REVERSE_CORRECTION_SPEED + REVERSE_RIGHT_SPEED_TRIM <= 255,
               "Invalid reverse wheel PWM");
+#if defined(AGV_REVERSE_GENTLE_CORRECTION) && AGV_REVERSE_GENTLE_CORRECTION == 1
+constexpr bool REVERSE_GENTLE_CORRECTION = true;
+constexpr int REVERSE_CORRECTION_DELTA = AGV_REVERSE_CORRECTION_DELTA;
+#else
+constexpr bool REVERSE_GENTLE_CORRECTION = false;
+constexpr int REVERSE_CORRECTION_DELTA = 0;
+#endif
+static_assert(!REVERSE_GENTLE_CORRECTION ||
+              (REVERSE_CORRECTION_DELTA > 0 &&
+               REVERSE_CORRECTION_SPEED + REVERSE_LEFT_SPEED_TRIM - REVERSE_CORRECTION_DELTA > 0 &&
+               REVERSE_CORRECTION_SPEED + REVERSE_RIGHT_SPEED_TRIM - REVERSE_CORRECTION_DELTA > 0),
+              "Gentle reverse correction must keep both wheels powered");
 constexpr uint32_t MOTOR_PWM_HZ = 5000;
 constexpr int MOTOR_PWM_BITS = 8;
 constexpr std::array<int, 4> MOTOR_PWM_CHANNELS = {0, 1, 2, 3};
@@ -234,6 +255,15 @@ constexpr uint32_t LINE_RECOVERY_PULSE_MS = 40;
 constexpr uint32_t LINE_RECOVERY_REST_MS = 60;
 constexpr uint32_t LINE_RECOVERY_CENTER_MS = 100;
 constexpr uint32_t LINE_RECOVERY_MEMORY_MS = 750;
+#if defined(AGV_LINE_LOSS_GRACE_MS)
+constexpr uint32_t LINE_LOSS_GRACE_MS = AGV_LINE_LOSS_GRACE_MS;
+#else
+constexpr uint32_t LINE_LOSS_GRACE_MS = 0; // Keep legacy per-phase limits.
+#endif
+static_assert(LINE_LOSS_GRACE_MS == 0 ||
+              (LINE_RECOVERY_ENABLED && LINE_LOSS_GRACE_MS >= LINE_RECOVERY_TIMEOUT_MS &&
+               LINE_LOSS_GRACE_MS > LINE_RECOVERY_CENTER_MS),
+              "Line-loss grace must include the bounded search and confirmation");
 static_assert(LINE_RECOVERY_PWM > 0 && LINE_RECOVERY_PWM <= 255 &&
               (!LINE_RECOVERY_ENABLED || LINE_RECOVERY_PWM <= TURN_SPEED) &&
               LINE_RECOVERY_TIMEOUT_MS > LINE_RECOVERY_STOP_MS + LINE_RECOVERY_CENTER_MS &&
@@ -260,8 +290,8 @@ static_assert(LEFT_TURN_CAPTURE_PWM > 0 && LEFT_TURN_CAPTURE_PWM <= 255 &&
               (!LEFT_TURN_CAPTURE_ENABLED || LEFT_TURN_CAPTURE_PWM <= TURN_SPEED),
               "Invalid left turn capture PWM");
 // Bench values: sampled evidence, then a short capped-speed departure.
-constexpr uint32_t LEFT_CAPTURE_SAMPLE_MS = 10;
-constexpr uint32_t LEFT_CAPTURE_MAX_GAP_MS = 40;
+constexpr uint32_t LEFT_CAPTURE_SAMPLE_MS = 05;
+constexpr uint32_t LEFT_CAPTURE_MAX_GAP_MS = 50;
 constexpr uint32_t LEFT_CAPTURE_SETTLE_MS = 200;
 #if defined(AGV_TURN_RETRY_ENABLED) && AGV_TURN_RETRY_ENABLED == 1
 constexpr bool TURN_RETRY_ENABLED = true;
@@ -291,7 +321,8 @@ constexpr uint32_t ULTRASONIC_STALE_MS = 300;
 constexpr uint32_t ULTRASONIC_TRIGGER_US = 10;
 constexpr float ULTRASONIC_SOUND_CM_PER_US = 0.0343f;
 
-// Encoder chỉ bật ở profile 01; cm/xung lấy từ phép thử, không từ đường kính bánh.
+// Encoder bật cho cả hai profile; cm/xung lấy từ phép đo 100 cm,
+// không suy ra từ đường kính bánh.
 #if defined(AGV_ENCODER_ENABLED) && AGV_ENCODER_ENABLED == 1
 constexpr bool ENCODER_ENABLED = true;
 constexpr int ENCODER_LEFT_PIN = AGV_ENCODER_LEFT_PIN;
@@ -304,6 +335,11 @@ constexpr float ENCODER_PULSES_PER_100CM = 161.0f;
 #endif
 constexpr uint32_t ENCODER_DEBOUNCE_US = 300;
 constexpr uint32_t ODOMETRY_INTERVAL_MS = 200;
+constexpr bool MUTEX_ENCODER_RELEASE_ENABLED = TWO_ROBOT_BENCH_TRIAL && ENCODER_ENABLED;
+// 18.5 cm * 161 pulse / 100 cm = 29.785; round upward, never downward.
+constexpr uint32_t MUTEX_RELEASE_MIN_PULSES = 30;
+// A single missed RC522 poll is not proof that the tag has been left.
+constexpr uint32_t MUTEX_TAG_LOST_CONFIRM_MS = 100;
 constexpr float WHEEL_DIAMETER_CM = 6.5f;
 constexpr float LINE_WIDTH_CM = 4.5f;
 constexpr float FRONT_LINE_SENSOR_TO_AXLE_CM = 5.0f;
@@ -311,11 +347,7 @@ constexpr float REAR_LINE_SENSOR_TO_AXLE_CM = 10.0f;
 
 struct NodeMapping { const char* node; const char* uid; };
 // TODO: USER CONFIGURATION: uppercase UID hex, no spaces/colons, never invent UIDs.
-constexpr std::array<NodeMapping, 26> RFID_NODES = {{
-    {"C1", "B7BC2A95"},
-    {"C2", "B771B795"},
-    {"C3", "A79A0695"},
-    {"C4", "575A1995"},
+constexpr std::array<NodeMapping, 22> RFID_NODES = {{
     {"M1", "579E8495"},
     {"M2", "072F2495"},
     {"M3", "27CE0C95"},
@@ -426,9 +458,9 @@ constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261016-robot01-line-search";
+constexpr const char* FIRMWARE_BUILD = "20261017-robot01-mutex30-exitfix-v4";
 #elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
-constexpr const char* FIRMWARE_BUILD = "20261016-robot02-reverse-left215";
+constexpr const char* FIRMWARE_BUILD = "20261017-robot02-mutex30-exitfix-v4";
 #else
 constexpr const char* FIRMWARE_BUILD = "20261015-battery-smoothing";
 #endif
@@ -454,6 +486,10 @@ constexpr bool pinsUnique() {
 }
 static_assert(pinsUnique(), "GPIO collision");
 static_assert(ENCODER_PULSES_PER_100CM > 0 && ODOMETRY_INTERVAL_MS >= 100, "Invalid encoder scale/rate");
+static_assert(!MUTEX_ENCODER_RELEASE_ENABLED ||
+              MUTEX_RELEASE_MIN_PULSES * 100.0f / ENCODER_PULSES_PER_100CM >=
+                  MUTEX_RELEASE_FROM_FIRST_READ_CM,
+              "Mutex release pulse threshold must round the measured clearance upward");
 static_assert(LINE_LEFT_PIN >= 34 && LINE_CENTER_PIN >= 34 && LINE_RIGHT_PIN >= 34, "Line inputs must remain input-only pins");
 static_assert(BATTERY_ADC_PIN == 36, "Battery must remain on ADC1 GPIO36");
 static_assert(BUZZER_ACTIVE_STATE == 0 && CARGO_IR_ACTIVE_STATE == 1, "Unexpected buzzer/IR polarity");

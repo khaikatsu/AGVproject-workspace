@@ -133,8 +133,10 @@ async function main() {
     model.mutex = Object.fromEntries(model.map.mutex_zones.map(id=>[id,{owner:'',waiting:[]}]));push();
     await page.locator('[data-view-target="map"]').click();
     await page.locator('#nodesG [data-node="M6"]').waitFor();
-    assert.equal(await page.locator('#nodesG circle').count(),26);
-    assert.equal(await page.locator('#mapNodeOptions option').count(),26);
+    assert.equal(await page.locator('#nodesG circle').count(),22);
+    assert.equal(await page.locator('#mapNodeOptions option').count(),22);
+    assert.equal(await page.locator('#edgesG path[data-rounded-edge]').count(),4);
+    assert.equal(await page.locator('#nodesG [data-node="C1"]').count(),0);
     assert.equal(await page.locator('#mutexTable tbody tr').count(),6);
     assert.match(await page.locator('#mapLegend').innerText(),/RFID/);
     await page.waitForFunction(()=>document.body.dataset.mapDocked === 'true');
@@ -165,21 +167,22 @@ async function main() {
       const a=geometry.labels[i];assert.ok(a.width <= 32,`${a.id} fits inside its circle`);
       for (const b of geometry.labels.slice(i+1)) assert.ok(a.x+a.width<=b.x || b.x+b.width<=a.x || a.y+a.height<=b.y || b.y+b.height<=a.y,`${a.id}/${b.id} labels overlap`);
     }
-    await page.locator('#center-panel').screenshot({path:path.join(directory,'warehouse-map-v3.png')});
-    db.saveMapSnapshot(model.map,'Kho AGV v3');
+    await page.locator('#center-panel').screenshot({path:path.join(directory,'warehouse-map-v4.png')});
+    db.saveMapSnapshot(model.map,'Kho AGV v4');
     await page.evaluate(()=>loadMapList());
-    await page.locator('#mapListBox .log-item').filter({hasText:'Kho AGV v3'}).locator('button').click();
+    await page.locator('#mapListBox .log-item').filter({hasText:'Kho AGV v4'}).locator('button').click();
     await page.locator('#previewNodesG [data-node="M5"]').waitFor();
-    assert.equal(await page.locator('#previewNodesG circle').count(),26);
+    assert.equal(await page.locator('#previewNodesG circle').count(),22);
+    assert.equal(await page.locator('#previewEdgesG path[data-rounded-edge]').count(),4);
     await page.evaluate(()=>closeMapPreview());
     await page.setViewportSize({width:390,height:844});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth),true);
-    await page.locator('#center-panel').screenshot({path:path.join(directory,'warehouse-map-v3-mobile.png')});
+    await page.locator('#center-panel').screenshot({path:path.join(directory,'warehouse-map-v4-mobile.png')});
     await page.locator('#mapZoomBtn').click();
     assert.equal(await page.locator('#mapZoomBtn').getAttribute('aria-pressed'),'true');
     assert.equal(await page.evaluate(()=>document.querySelector('#mapViewport').scrollWidth > document.querySelector('#mapViewport').clientWidth),true);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth),true);
-    await page.locator('#center-panel').screenshot({path:path.join(directory,'warehouse-map-v3-mobile-zoom.png')});
+    await page.locator('#center-panel').screenshot({path:path.join(directory,'warehouse-map-v4-mobile-zoom.png')});
     await page.locator('#mapZoomBtn').click();
     // Chính sách ca chỉ thay quyền giao task, vẫn cho quản lý vật cản và đọc lịch sử.
     await page.setViewportSize({width:1600,height:1050});
@@ -254,7 +257,7 @@ async function main() {
     assert.equal(await page.locator('#submitTaskBtn').isDisabled(),true);
     await page.screenshot({path:path.join(directory,'login-mobile.png'),fullPage:true});
     assert.deepEqual(errors,[]);
-    console.log('PASS browser: operator views, arrays/editor/robot routes/history/stale/reconnect; warehouse v3/mobile; shift/home/task gating/obstacle toggle/unverified robot hidden');
+    console.log('PASS browser: operator views, arrays/editor/robot routes/history/stale/reconnect; warehouse v4/mobile; shift/home/task gating/obstacle toggle/unverified robot hidden');
     console.log('Screenshots: '+directory);
   } finally {
     clearInterval(pump);await browser?.close();if(authGateway)await authGateway.close();if (gateway) await gateway.close();

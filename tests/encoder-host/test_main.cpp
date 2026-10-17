@@ -26,13 +26,16 @@ int main() {
             EncoderIo::fire(16,2000+i*1000);EncoderIo::fire(4,2400+i*1000);
         }
         sampleAt(202);auto forward = sensor.snapshot();near(forward.distanceCm,100);near(forward.speedCmS,500);
+        auto translated = sensor.translationTicks();CHECK(translated.left == 161 && translated.right == 161);
         sensor.context("C4","M4",42,0,1,true,false,false); // STOP/pivot: preserve edge, no progress.
         for(unsigned i=0;i<20;++i) {EncoderIo::fire(16,203000+i*1000);EncoderIo::fire(4,203400+i*1000);}
         sampleAt(402);auto pivot = sensor.snapshot();near(pivot.distanceCm,100);near(pivot.speedCmS,0);
+        translated = sensor.translationTicks();CHECK(translated.left == 161 && translated.right == 161);
         sensor.context("M4","GS2",42,1,1,true,true,false); // new RFID resets the segment exactly once.
         auto next = sensor.snapshot();near(next.distanceCm,0);
         for(unsigned i=0;i<16;++i) {EncoderIo::fire(16,403000+i*1000);EncoderIo::fire(4,403400+i*1000);}
         sampleAt(602);auto segment = sensor.snapshot();near(segment.distanceCm,1600.0/161);near(segment.speedCmS,8000.0/161);
+        translated = sensor.translationTicks();CHECK(translated.left == 177 && translated.right == 177);
         sensor.context("M4","GS2",42,1,1,true,true,false);near(sensor.snapshot().distanceCm,segment.distanceCm);
         sensor.context("K5","G5",43,0,1,true,true,true); // reverse progresses K5 -> G5, not backward along the prior edge.
         for(unsigned i=0;i<8;++i) {EncoderIo::fire(16,603000+i*1000);EncoderIo::fire(4,603400+i*1000);}
@@ -46,6 +49,6 @@ int main() {
         OdometryTracker wrap;wrap.begin(UINT32_MAX-2,UINT32_MAX-2,UINT32_MAX-100);
         wrap.context("C4","M4",42,0,1,true,true,false);wrap.update(2,2,100);
         near(wrap.snapshot(1).distanceCm,500.0/161);near(wrap.snapshot(1).speedCmS,500000.0/161/201);
-        std::cout << "PASS encoder01: GPIO16/4, 300us noise filter, 161 pulses/100cm, speed, pivot/STOP, RFID rebase, reverse, session/count/time wrap, wire codec\n";
+        std::cout << "PASS encoder profile: GPIO16/4, 300us noise filter, 161 pulses/100cm, translation-only lifetime ticks, speed, pivot/STOP, RFID rebase, reverse, session/count/time wrap, wire codec\n";
     } catch (const std::exception& e) {std::cerr << e.what() << '\n';return 1;}
 }

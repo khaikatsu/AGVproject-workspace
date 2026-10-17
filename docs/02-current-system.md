@@ -1,5 +1,9 @@
 # Hiện trạng mã và khoảng trống tích hợp
 
+CURRENT17/10/2026 sau lỗi checkpoint: [ADR-065](decisions/ADR-065-rounded-map-checkpoint-recovery.md) cho Core chuyển riêng mapv3→v4 có backup/giữ mutex/lịch sử và chờ xác minh xe. Bản sửa đã được cập nhật vào build/agv_core.exe và khởi động scope cảhai theo xác nhận người dùng; gateway nhận22node/35cạnh/4geometry, Core/MQTT/storage khỏe. Firmware vẫn cần nạp mapv4 trước chạy thật; chi tiết triển khai tại tests/README.md.
+
+CURRENT17/10/2026: source mapv4 có22node, bỏC1–C4 và bốn cạnh bo135cm theo ảnh; scope01/02/cảhai dùng cùng graph. Fallback include/map/MapGraph.hpp và bảng route firmware đã đồng bộ. Tọa độ là sơ đồ; xem [ADR-064](decisions/ADR-064-rounded-map-without-corner-tags.md) và tests/README.md về số đo/kiểm chứng/áp dụng. Core vận hành cần build/restart và firmware01/02 cần nạp bản tương ứng.
+
 CURRENT 16/10/2026: entrypoint hiện tại là `src/core/AGVserver.cpp`, header ở `include/`. Menu F5 dùng một Core thống nhất và chọn `active01`, `active02` hoặc `active-both`; scope lọc xe tham gia nhưng không đổi luật pin/RFID/MQTT/mutex. Các đường dẫn `src/AGVserver.cpp`/`src/FLeetmanager.hpp` trong khảo sát 28/09 bên dưới là lịch sử trước khi tổ chức lại source. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).
 
 Khảo sát tĩnh ngày 28/09/2026. Không chạy server, binary, migration hoặc thao tác với robot. Trong lúc khảo sát, các tệp C++ được chuyển từ gốc vào `src/`; tài liệu dùng vị trí cuối cùng đã quan sát.

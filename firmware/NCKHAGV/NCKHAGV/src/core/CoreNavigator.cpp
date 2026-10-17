@@ -46,8 +46,8 @@ MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
         return MotorAction::Stop;
     }
     const uint32_t elapsed = in.now-lineLossStartedMs_;
-    const uint32_t limit = searchDirection_ != MotorAction::Stop ?
-        Config::LINE_RECOVERY_TIMEOUT_MS : Config::LINE_LOSS_CONFIRM_MS;
+    const uint32_t limit = Config::LINE_LOSS_GRACE_MS ? Config::LINE_LOSS_GRACE_MS :
+        (searchDirection_ != MotorAction::Stop ? Config::LINE_RECOVERY_TIMEOUT_MS : Config::LINE_LOSS_CONFIRM_MS);
     if (elapsed >= limit) {
         fault(ErrorCode::LineLost);
         return MotorAction::Stop;
@@ -83,6 +83,13 @@ MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
         return MotorAction::Stop;
     }
     centerSamples_ = 0;
+    // The task grace is not permission to keep rotating. After the original
+    // search budget, remain stopped but keep accepting a confirmed line.
+    if (Config::LINE_LOSS_GRACE_MS && elapsed >= Config::LINE_RECOVERY_TIMEOUT_MS) {
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
+        return MotorAction::Stop;
+    }
     if (searchDirection_ == MotorAction::Stop || elapsed < Config::LINE_RECOVERY_STOP_MS)
         return MotorAction::Stop;
     // Advance from actual output transitions, not a modulo clock. A delayed
@@ -169,10 +176,13 @@ bool CoreNavigator::hasGrant(const char* node) const {
     const int index = zoneIndex(node);
     return index < 0 || grantIds_[index] > 0;
 }
+bool CoreNavigator::currentZonePermitted() const {
+    return currentZoneCleared_ || hasGrant(current_);
+}
 const char* CoreNavigator::missingZone() const {
     if (soloTrial_) return nullptr;
     if (!active() || index_ >= length_) return nullptr;
-    if (!hasGrant(current_)) return current_;
+    if (!currentZonePermitted()) return current_;
     if (!hasGrant(path_[index_])) return path_[index_];
     return nullptr;
 }
@@ -192,7 +202,7 @@ bool CoreNavigator::canPassThrough(const char* node, const ControlInput& in) con
         in.lineConfigured && in.distanceValid && !in.obstacle &&
         AGVMath::lineAction(in.linePattern) != MotorAction::Stop &&
         static_cast<uint32_t>(in.now-segmentStartedMs_) < Config::SEGMENT_TIMEOUT_MS &&
-        (soloTrial_ || (hasGrant(current_) && hasGrant(node) && hasGrant(path_[index_+1])));
+        (soloTrial_ || (currentZonePermitted() && hasGrant(node) && hasGrant(path_[index_+1])));
 }
 bool CoreNavigator::start(const char* current, const CoreCommand& command, const RoutePlan& route,
                           uint32_t now, bool soloTrial, bool requireNodeOrders) {
@@ -218,6 +228,7 @@ bool CoreNavigator::start(const char* current, const CoreCommand& command, const
         reverseAfterTurn_[i] = route.reverseAfterTurn[i];
     }
     index_ = 0;
+    currentZoneCleared_ = false;
     requireNodeOrders_ = requireNodeOrders;
     nodeOrderReceived_ = false;
     routeCmdId_ = command.cmdId;
@@ -235,6 +246,7 @@ bool CoreNavigator::start(const char* current, const CoreCommand& command, const
     return true;
 }
 void CoreNavigator::stop() {
+    currentZoneCleared_ = false;
     obstaclePaused_ = false;
     routeCmdId_ = 0; nodeOrderReceived_ = false;
     stationOriented_ = false;
@@ -248,6 +260,7 @@ void CoreNavigator::stop() {
 bool CoreNavigator::clearFault() {
     obstaclePaused_ = false;
     if (active()) return false;
+    currentZoneCleared_ = false;
     phase_ = Phase::Idle;
     stationOriented_ = false;
     error_ = ErrorCode::None;
@@ -259,6 +272,7 @@ bool CoreNavigator::clearFault() {
     return true;
 }
 void CoreNavigator::fault(ErrorCode reason) {
+    currentZoneCleared_ = false;
     obstaclePaused_ = false;
     stationOriented_ = false;
     phase_ = Phase::Fault;
@@ -279,6 +293,7 @@ void CoreNavigator::reachedNode(const char* node, uint32_t now, const ControlInp
     const bool parkedReverse = reverseAfterTurn_[index_];
     // A tag seen while rotating/waiting cannot prove the reverse leg happened.
     if (parkedReverse && phase_ != Phase::Following) { fault(ErrorCode::UnexpectedNode); return; }
+    currentZoneCleared_ = false;
     resetLineTracking();
     AGVMath::copyText(current_, sizeof(current_), node);
     ++index_;
@@ -315,6 +330,8 @@ void CoreNavigator::reachedNode(const char* node, uint32_t now, const ControlInp
 }
 bool CoreNavigator::grant(const char* zone, int32_t grantId) {
     const int index = zoneIndex(zone);
+    // Ignore an in-flight regrant for a zone already left on this segment.
+    if (currentZoneCleared_ && zone && std::strcmp(zone, current_) == 0) return false;
     const char* wanted = requestedZone();
     if (active() && index >= 0 && grantId > 0 &&
         ((std::strcmp(zone, current_) == 0) ||
@@ -329,7 +346,16 @@ void CoreNavigator::revokeGrant(const char* zone, int32_t grantId) {
     const int index = zoneIndex(zone);
     if (index >= 0 && grantIds_[index] == grantId) grantIds_[index] = 0;
 }
+bool CoreNavigator::completeZoneExit(const char* zone, int32_t grantId) {
+    const int index = zoneIndex(zone);
+    if (index < 0 || grantId <= 0 || grantIds_[index] != grantId) return false;
+    grantIds_[index] = 0;
+    if (following() && !segmentReverse() && std::strcmp(zone, current_) == 0)
+        currentZoneCleared_ = true;
+    return true;
+}
 void CoreNavigator::resetGrants() {
+    currentZoneCleared_ = false;
     for (auto& id : grantIds_) id = 0;
     if (active()) fault(ErrorCode::NotConnected);
 }
@@ -350,6 +376,13 @@ bool CoreNavigator::observeTurnLine(const ControlInput& in) {
     // If inertia carries the sensors past the captured stripe, search BACK
     // briefly, never continue a long left rotation to another branch.
     searchDirection_ = MotorAction::PivotRight;
+    return true;
+}
+bool CoreNavigator::refreshFollowing(const ControlInput& in, MotorAction& action) {
+    if (!Config::FAST_LINE_RESPONSE || phase_ != Phase::Following || turnSettling_ ||
+        lineLossPending_ || obstaclePaused_) return false;
+    // A revoked grant must stop immediately, never authorize an early step.
+    action = missingZone() ? MotorAction::Stop : update(in);
     return true;
 }
 MotorAction CoreNavigator::update(const ControlInput& in) {
@@ -413,7 +446,7 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
         return MotorAction::Stop;
     }
     if (phase_ == Phase::WaitingGrant) {
-        if (missingZone()) return MotorAction::Stop;
+    if (missingZone()) return MotorAction::Stop;
         if (static_cast<uint32_t>(in.now - stoppedAtMs_) < Config::RFID_STOP_DWELL_MS)
             return MotorAction::Stop;
         stationOriented_ = false;
@@ -491,6 +524,7 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
     if (static_cast<uint32_t>(in.now - segmentStartedMs_) >= Config::SEGMENT_TIMEOUT_MS) {
         fault(ErrorCode::MotionTimeout); return MotorAction::Stop;
     }
+    if (missingZone()) return MotorAction::Stop;
     const MotorAction action = segmentReverse()
         ? AGVMath::reverseLineAction(in.linePattern) : AGVMath::lineAction(in.linePattern);
     if (Config::LINE_RECOVERY_ENABLED && (lineLossPending_ || in.linePattern == 0))

@@ -1,5 +1,7 @@
 # ADR-050 — Vị trí và tốc độ encoder xe 01
 
+Cập nhật17/10/2026: [ADR-068](ADR-068-encoder-mutex-tail-clearance.md) thay giới hạn “encoder không nhả mutex” cho hai profile sau khi người dùng cung cấp kích thước/vùng đọc/biên mutex và xác nhận161xung/100cm. Các quyết định hiển thị odometry bên dưới vẫn giữ.
+
 Ngày: 14/10/2026. Quyết định theo yêu cầu người dùng; triển khai phần mềm, nghiệm thu vật lý còn mở.
 
 `SOURCE`: encoder ở hai bánh trước xe 01; sketch `C:/Users/DELL/Downloads/testencoder (1).ino` dùng trái GPIO16/phải GPIO4, INPUT_PULLUP/RISING, lọc cạnh >300 µs, hệ số thử 161 xung/100 cm. Người dùng yêu cầu tích hợp firmware01, vị trí liên tục Core test 01 và tốc độ trên web. Hệ số chưa được xác nhận là số đo hiệu chuẩn.

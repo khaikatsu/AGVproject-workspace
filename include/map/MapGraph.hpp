@@ -36,6 +36,7 @@
 #include <chrono>
 #include "utils/Identifiers.hpp"
 #include "utils/AtomicFile.hpp"
+#include "map/EdgeGeometry.hpp"
 #if defined(_WIN32)
   #ifndef NOMINMAX
     #define NOMINMAX
@@ -64,6 +65,7 @@ struct Edge {
     std::string type = "main";  // main | branch | loop
     std::string path_class;     // boulevard | shortcut | loop | branch ...
     bool twoWay = false;        // true = nhánh chữ T 2 chiều (yêu cầu nhường đường)
+    json geometry = nullptr;   // optional rounded bend: via + two measured segment lengths
 };
 
 class MapGraph {
@@ -106,6 +108,31 @@ public:
             Edge edge{e.at("from").get<std::string>(), e.at("to").get<std::string>(),
                       e.value("weight", 1), e.value("type", "main"),
                       e.value("path_class", ""), e.value("two_way", false)};
+            if (e.contains("geometry")) {
+                const auto& g=e.at("geometry");
+                if (!g.is_object() || !g.contains("via") || !g.at("via").is_object() ||
+                    !g.contains("segment_lengths_cm") || !g.at("segment_lengths_cm").is_array() ||
+                    g.at("segment_lengths_cm").size()!=2)
+                    throw std::invalid_argument("Geometry canh khong hop le");
+                for (const auto* axis : {"x","y"}) {
+                    if (!g.at("via").contains(axis) || !g.at("via").at(axis).is_number() ||
+                        !std::isfinite(g.at("via").at(axis).get<double>()) ||
+                        std::abs(g.at("via").at(axis).get<double>())>1000000)
+                        throw std::invalid_argument("Toa do goc bo khong hop le");
+                }
+                double total=0;
+                for (const auto& length : g.at("segment_lengths_cm")) {
+                    if (!length.is_number() || !std::isfinite(length.get<double>()) || length.get<double>()<=0)
+                        throw std::invalid_argument("Chieu dai goc bo khong hop le");
+                    total+=length.get<double>();
+                }
+                const auto a=EdgeGeometry::node(j,edge.from),b=EdgeGeometry::node(j,edge.to);
+                const int first=a ? EdgeGeometry::direction(*a,g.at("via")) : -1;
+                const int last=b ? EdgeGeometry::direction(g.at("via"),*b) : -1;
+                if (total!=edge.weight || first<0 || last<0 || (first+last)%2!=1)
+                    throw std::invalid_argument("Goc bo phai co hai doan vuong goc va tong bang weight");
+                edge.geometry=g;
+            }
             if (!nodes.count(edge.from) || !nodes.count(edge.to) || edge.from == edge.to ||
                 edge.weight < 0 || edge.weight > 1000000)
                 throw std::invalid_argument("Canh/node/trong so khong hop le");
@@ -119,9 +146,17 @@ public:
             auto reverse = std::find_if(edges.begin(), edges.end(), [&](const Edge& r) {
                 return r.from == e.to && r.to == e.from;
             });
-            if (reverse == edges.end()) edges.push_back({e.to, e.from, e.weight, e.type, e.path_class, true});
-            else if (!reverse->twoWay || reverse->weight != e.weight)
-                throw std::invalid_argument("Canh hai chieu khong nhat quan");
+            if (reverse == edges.end()) {
+                auto r=e;std::swap(r.from,r.to);
+                if (!r.geometry.is_null()) std::swap(r.geometry["segment_lengths_cm"][0],r.geometry["segment_lengths_cm"][1]);
+                edges.push_back(r);
+            }
+            else {
+                auto expected=e.geometry;
+                if (!expected.is_null()) std::swap(expected["segment_lengths_cm"][0],expected["segment_lengths_cm"][1]);
+                if (!reverse->twoWay || reverse->weight != e.weight || reverse->geometry!=expected)
+                    throw std::invalid_argument("Canh hai chieu khong nhat quan");
+            }
         }
         for (const auto& id : j.value("mutex_zones", std::vector<std::string>{})) {
             if (!nodes.count(id) || !nodes.at(id).isMutex()) throw std::invalid_argument("Mutex zone khong hop le");
@@ -221,12 +256,21 @@ public:
             edges_.erase(std::remove_if(edges_.begin(), edges_.end(), [&](const Edge& e){ return e.from == a && e.to == b; }), edges_.end());
         };
         bool wasPair = false;
+        json geometry=nullptr;
         for (const auto& e : edges_) if (e.from == from && e.to == to) wasPair = e.twoWay;
+        for (const auto& e : edges_) if (e.from==from && e.to==to && !e.geometry.is_null()) {
+            if (weight!=e.weight || twoWay!=e.twoWay)
+                throw std::invalid_argument("Sua chieu dai/huong goc bo bang snapshot co geometry dong bo");
+            geometry=e.geometry;
+        }
         eraseDirection(from, to);
         if (twoWay || wasPair) eraseDirection(to, from);
         ++revision_;
-        addEdgeInternal(Edge{from, to, weight, type, pathClass, twoWay});
-        if (twoWay) addEdgeInternal(Edge{to, from, weight, type, pathClass, twoWay});
+        addEdgeInternal(Edge{from, to, weight, type, pathClass, twoWay, geometry});
+        if (twoWay) {
+            if (!geometry.is_null()) std::swap(geometry["segment_lengths_cm"][0],geometry["segment_lengths_cm"][1]);
+            addEdgeInternal(Edge{to, from, weight, type, pathClass, twoWay, geometry});
+        }
     }
 
     void removeEdge(const std::string& from, const std::string& to) {
@@ -419,6 +463,7 @@ public:
         for (auto& e : edges_) {
             j["edges"].push_back({{"from", e.from}, {"to", e.to}, {"weight", e.weight},
                                    {"type", e.type}, {"path_class", e.path_class}, {"two_way", e.twoWay}});
+            if (!e.geometry.is_null()) j["edges"].back()["geometry"]=e.geometry;
         }
         j["obstacles"] = std::vector<std::string>(obstacles_.begin(), obstacles_.end());
         j["blocked_edges"] = json::array();
@@ -434,22 +479,19 @@ public:
         return j;
     }
 
-    // Map v3: 6 RFID/mutex M1..M6, cua kho G1..G6, kho K1..K6,
-    // cua sac GS1/GS2, tram sac S1/S2 va goc C1..C4.
-    // Toa do/trong so cung don vi cm theo mo hinh; can do lai tren kho that.
+    // Map v4: 22 RFID, four rounded outer bends without corner RFID nodes.
+    // Coordinates are schematic; measured edge weights are in cm.
     // M5/M6 chia duong ngang giua; cua kho trong nam giua moi nua cot doc.
     // Dung khi chua co map_layout.json de he thong chay duoc ngay.
     void loadDefaultDemoMap() {
         std::lock_guard<std::mutex> lk(mtx_);
         clearInternal();
-        mapName_ = "Kho AGV v3 (cm)";
+        mapName_ = "Kho AGV v4 - bo goc (cm)";
 
         // Toa do mo hinh, don vi cm.
-        addNodeNoLock("C1", 0, 0, "waypoint");
         addNodeNoLock("M1", 50, 0, "mutex");
         addNodeNoLock("GS1", 100, 0, "waypoint");
         addNodeNoLock("M2", 150, 0, "mutex");
-        addNodeNoLock("C2", 200, 0, "waypoint");
         addNodeNoLock("S1", 100, -20, "charging");
         addNodeNoLock("S2", 100, 160, "charging");
         addNodeNoLock("G2", 50, 35, "waypoint");
@@ -466,28 +508,22 @@ public:
         addNodeNoLock("G5", 150, 105, "waypoint");
         addNodeNoLock("K3", 30, 105, "station");
         addNodeNoLock("K5", 170, 105, "station");
-        addNodeNoLock("C3", 0, 140, "waypoint");
         addNodeNoLock("M3", 50, 140, "mutex");
         addNodeNoLock("GS2", 100, 140, "waypoint");
         addNodeNoLock("M4", 150, 140, "mutex");
-        addNodeNoLock("C4", 200, 140, "waypoint");
 
         // Duong chinh 1 chieu (weight = do dai canh trong mo hinh, cm)
         // Hang tren (trai -> phai)
-        addEdgeInternal({"C1", "M1", 50, "main", "boulevard", false});
         addEdgeInternal({"M1", "GS1", 50, "main", "boulevard", false});
         addEdgeInternal({"GS1", "M2", 50, "main", "boulevard", false});
-        addEdgeInternal({"M2", "C2", 50, "main", "boulevard", false});
         // Hang duoi (phai -> trai)
-        addEdgeInternal({"C4", "M4", 50, "main", "boulevard", false});
         addEdgeInternal({"M4", "GS2", 50, "main", "boulevard", false});
         addEdgeInternal({"GS2", "M3", 50, "main", "boulevard", false});
-        addEdgeInternal({"M3", "C3", 50, "main", "boulevard", false});
-        // Cot ngoai trai/phai (tren -> duoi)
-        addEdgeInternal({"G1", "C1", 70, "main", "outer", false});
-        addEdgeInternal({"C3", "G1", 70, "main", "outer", false});
-        addEdgeInternal({"C2", "G6", 70, "main", "outer", false});
-        addEdgeInternal({"G6", "C4", 70, "main", "outer", false});
+        // Continuous line-following bends; via points are not RFID stops.
+        addEdgeInternal({"G1","M1",135,"main","outer",false,{{"via",{{"x",0},{"y",0}}},{"segment_lengths_cm",{85,50}}}});
+        addEdgeInternal({"M2","G6",135,"main","outer",false,{{"via",{{"x",200},{"y",0}}},{"segment_lengths_cm",{50,85}}}});
+        addEdgeInternal({"G6","M4",135,"main","outer",false,{{"via",{{"x",200},{"y",140}}},{"segment_lengths_cm",{85,50}}}});
+        addEdgeInternal({"M3","G1",135,"main","outer",false,{{"via",{{"x",0},{"y",140}}},{"segment_lengths_cm",{50,85}}}});
         // Cot trong trai (tren -> duoi)
         addEdgeInternal({"M1", "G2", 35, "main", "inner", false});
         addEdgeInternal({"G2", "M5", 35, "main", "inner", false});

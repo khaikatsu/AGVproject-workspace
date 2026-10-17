@@ -879,8 +879,17 @@ int main(int argc, char** argv) {
     const auto runtimePath = std::getenv("AGV_RUNTIME_STATE_PATH") ? std::filesystem::path(std::getenv("AGV_RUNTIME_STATE_PATH"))
         : std::filesystem::path(MAP_SAVE_PATH).parent_path()/"runtime_state.json";
     g_runtime = std::make_unique<RuntimeStore>(runtimePath);
-    if (const auto saved = g_runtime->load()) {
-        if (!RuntimeStore::mapsCompatible(g_map.toJson(),saved->at("map"))) throw std::runtime_error("Runtime checkpoint khong khop map; can doi soat, khong tu xoa file");
+    if (auto saved = g_runtime->load()) {
+        if (!RuntimeStore::mapsCompatible(g_map.toJson(),saved->at("map"))) {
+            if (!RuntimeStore::migrateRoundedMap(g_map.toJson(),*saved)) {
+                cerr << "[RUNTIME] Checkpoint khong khop map: " << runtimePath << "\n"
+                     << "Can doi soat map/checkpoint; giu nguyen file va counter.\n";
+                closesocket(listenSock);return 1;
+            }
+            const auto backup = g_runtime->backupBeforeRoundedMigration();
+            const auto message = "Da chuyen checkpoint map v3 -> v4; giu mutex/lich su, cho RFID va doi soat. Backup: " + backup.string();
+            cout << "[RUNTIME] " << message << "\n";pushLog(message);
+        }
         g_map.loadFromJson(saved->at("map"));g_arbiter.restore(saved->at("mutex"));g_fleet.restore(saved->at("fleet"));
         pushLog("Da khoi phuc queue/mutex; robot cho RFID va xac minh");
     }
