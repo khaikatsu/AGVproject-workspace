@@ -184,10 +184,20 @@ constexpr int CORRECTION_SPEED = DEFAULT_MOTOR_SPEED;
 constexpr int GENTLE_CORRECTION_SPEED = ONE_ROBOT_TRIAL ? 140 : DEFAULT_MOTOR_SPEED;
 #endif
 constexpr int BASE_SPEED = DEFAULT_MOTOR_SPEED;
+#if defined(AGV_BENCH_GENTLE_OUTER_SPEED)
+constexpr int GENTLE_OUTER_SPEED = AGV_BENCH_GENTLE_OUTER_SPEED;
+#else
+constexpr int GENTLE_OUTER_SPEED = CORRECTION_SPEED;
+#endif
 #if defined(AGV_FAST_LINE_RESPONSE) && AGV_FAST_LINE_RESPONSE == 1
 constexpr bool FAST_LINE_RESPONSE = true;
 #else
 constexpr bool FAST_LINE_RESPONSE = false;
+#endif
+#if defined(AGV_GENTLE_FORWARD_CORRECTION) && AGV_GENTLE_FORWARD_CORRECTION == 1
+constexpr bool GENTLE_FORWARD_CORRECTION = true;
+#else
+constexpr bool GENTLE_FORWARD_CORRECTION = false;
 #endif
 constexpr uint32_t MOTION_LOG_INTERVAL_MS = 200;
 #if defined(AGV_REVERSE_SPEED)
@@ -255,6 +265,12 @@ constexpr uint32_t LINE_RECOVERY_PULSE_MS = 40;
 constexpr uint32_t LINE_RECOVERY_REST_MS = 60;
 constexpr uint32_t LINE_RECOVERY_CENTER_MS = 100;
 constexpr uint32_t LINE_RECOVERY_MEMORY_MS = 750;
+#if defined(AGV_LINE_RECOVERY_SIDE_CONFIRM) && AGV_LINE_RECOVERY_SIDE_CONFIRM == 1
+constexpr bool LINE_RECOVERY_SIDE_CONFIRM = true;
+#else
+constexpr bool LINE_RECOVERY_SIDE_CONFIRM = false;
+#endif
+constexpr uint32_t LINE_RECOVERY_SAMPLE_GAP_MS = 50;
 #if defined(AGV_LINE_LOSS_GRACE_MS)
 constexpr uint32_t LINE_LOSS_GRACE_MS = AGV_LINE_LOSS_GRACE_MS;
 #else
@@ -458,7 +474,7 @@ constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261017-robot01-mutex30-exitfix-v4";
+constexpr const char* FIRMWARE_BUILD = "20261019-robot01-side-recovery-v3";
 #elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
 constexpr const char* FIRMWARE_BUILD = "20261017-robot02-mutex30-exitfix-v4";
 #else
@@ -506,5 +522,12 @@ static_assert(BASE_SPEED >= 0 && BASE_SPEED <= 255 && TURN_SPEED >= 0 && TURN_SP
               GENTLE_CORRECTION_SPEED + LEFT_SPEED_TRIM <= 255 &&
               GENTLE_CORRECTION_SPEED + RIGHT_SPEED_TRIM > 0 &&
               GENTLE_CORRECTION_SPEED + RIGHT_SPEED_TRIM <= 255 &&
+              GENTLE_OUTER_SPEED + LEFT_SPEED_TRIM > 0 &&
+              GENTLE_OUTER_SPEED + LEFT_SPEED_TRIM <= BASE_SPEED + LEFT_SPEED_TRIM &&
+              GENTLE_OUTER_SPEED + RIGHT_SPEED_TRIM > 0 &&
+              GENTLE_OUTER_SPEED + RIGHT_SPEED_TRIM <= BASE_SPEED + RIGHT_SPEED_TRIM &&
+              (!GENTLE_FORWARD_CORRECTION ||
+               (GENTLE_OUTER_SPEED + LEFT_SPEED_TRIM > GENTLE_CORRECTION_SPEED + RIGHT_SPEED_TRIM &&
+                GENTLE_OUTER_SPEED + RIGHT_SPEED_TRIM > GENTLE_CORRECTION_SPEED + LEFT_SPEED_TRIM)) &&
               (!ONE_ROBOT_TRIAL || GENTLE_CORRECTION_SPEED < CORRECTION_SPEED), "Invalid PWM duty");
 }

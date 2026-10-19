@@ -3,6 +3,18 @@ const assert = require('node:assert/strict');
 const {planOrder,shortestRoute} = require('../AGVwebserver/order-planner');
 const {createOrderService,SERVICE_MS} = require('../AGVwebserver/orders');
 
+const liftCapable = robot=>({...robot,
+  lift:{supported:true,ready:true,fresh:true,observed_node:robot.node,active:false,state:'IDLE',command_id:0},
+  virtual_cargo_known:false,virtual_cargo:false});
+function setLiftAt(robot,node) {
+  robot.node=node;Object.assign(robot.lift,{supported:true,ready:true,fresh:true,observed_node:node,active:false,state:'IDLE'});
+}
+function completeLift(robot,commandId,up) {
+  robot.state='IDLE';robot.task_id=null;robot.virtual_cargo_known=true;robot.virtual_cargo=up;
+  Object.assign(robot.lift,{supported:true,ready:true,fresh:true,observed_node:robot.node,active:false,
+    state:up?'DONE_UP':'DONE_DOWN',command_id:commandId});
+}
+
 const map = {nodes:['K1','K2','K3','K4'].map(id=>({id,type:'station'})),obstacles:[],edges:[
   {from:'K1',to:'K3',weight:10},{from:'K1',to:'K4',weight:1},
   {from:'K2',to:'K3',weight:1},{from:'K2',to:'K4',weight:10},
@@ -25,8 +37,8 @@ for (const warehouse of selectionMap.nodes.filter(node=>node.id.startsWith('K'))
 
 test('nearest ready robot uses directed weight, not node count; previews both cargo legs',async()=>{
   const commands=[],state={map:selectionMap,fleet:{agvs:[
-    {id:'01',node:'S1',state:'IDLE',online:true,position_valid:true},
-    {id:'02',node:'S2',state:'IDLE',online:true,position_valid:true}
+    liftCapable({id:'01',node:'S1',state:'IDLE',online:true,position_valid:true}),
+    liftCapable({id:'02',node:'S2',state:'IDLE',online:true,position_valid:true})
   ],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
   const service=createOrderService({db:{getOrders:()=>[],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'nearest',
     send:async payload=>{commands.push(payload);return {task_id:'nearest-task'};},publish:()=>{}});
@@ -41,8 +53,8 @@ test('nearest ready robot uses directed weight, not node count; previews both ca
 
 test('trial selection defaults to 01 before dispatch, explains fault, and keeps nearest 02 inactive',async()=>{
   const commands=[],records=new Map(),state={map:selectionMap,fleet:{agvs:[
-    {id:'01',node:'S1',state:'ERROR',error:'LINE_LOST',online:true,position_valid:true},
-    {id:'02',node:'S2',state:'IDLE',online:true,position_valid:true}
+    liftCapable({id:'01',node:'S1',state:'ERROR',error:'LINE_LOST',online:true,position_valid:true}),
+    liftCapable({id:'02',node:'S2',state:'IDLE',online:true,position_valid:true})
   ],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING',trial_robot_id:'01'},mqtt_connected:true};
   const db={getOrders:()=>[...records.values()].map(order=>structuredClone(order)),saveOrder:order=>records.set(order.id,structuredClone(order))};
   const options={db,getState:()=>state,getSession:()=> 'fixed-session',
@@ -65,8 +77,8 @@ test('startup solo selection excludes the closer inactive robot from warehouse o
   for (const selected of ['01','02']) {
     const commands=[];
     const state={map,fleet:{agvs:[
-      {id:'01',node:'K1',state:'IDLE',online:true,position_valid:true,task_id:null},
-      {id:'02',node:'K2',state:'IDLE',online:true,position_valid:true,task_id:null}
+      liftCapable({id:'01',node:'K1',state:'IDLE',online:true,position_valid:true,task_id:null}),
+      liftCapable({id:'02',node:'K2',state:'IDLE',online:true,position_valid:true,task_id:null})
     ],tasks:[],accepting_tasks:true,trial_robot_id:selected},shift:{phase:'RUNNING',trial_robot_id:selected},mqtt_connected:true};
     const service=createOrderService({db:{getOrders:()=>[],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'selected-test',
       send:async payload=>{commands.push(payload);return {task_id:'selected-order-task'};},publish:()=>{}});
@@ -82,8 +94,8 @@ test('startup solo selection excludes the closer inactive robot from warehouse o
 
 test('unified scoped operation never selects a non-participating robot',async()=>{
   const commands=[],state={map:selectionMap,fleet:{agvs:[
-    {id:'01',node:'S1',state:'IDLE',online:true,position_valid:true,participating:true},
-    {id:'02',node:'S2',state:'IDLE',online:true,position_valid:true,participating:false}
+    liftCapable({id:'01',node:'S1',state:'IDLE',online:true,position_valid:true,participating:true}),
+    liftCapable({id:'02',node:'S2',state:'IDLE',online:true,position_valid:true,participating:false})
   ],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING',test_mode:'normal',operation_profile:'scoped',active_robot_ids:['01','02']},mqtt_connected:true};
   const service=createOrderService({db:{getOrders:()=>[],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'scoped',
     send:async payload=>{commands.push(payload);return {task_id:'scoped-task'};},publish:()=>{}});
@@ -91,6 +103,18 @@ test('unified scoped operation never selects a non-participating robot',async()=
     const order=service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]});await service.tick();
     assert.equal(order.items[0].robot,'01');assert.equal(commands[0].agv_id,'01');
   }finally{await service.close();}
+});
+
+test('automatic order does not dispatch a robot without live lift capability',async()=>{
+  const commands=[],robot={id:'01',node:'S1',state:'IDLE',online:true,position_valid:true,task_id:null};
+  const state={map:selectionMap,fleet:{agvs:[robot],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
+  const service=createOrderService({db:{getOrders:()=>[],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'no-lift',
+    send:async payload=>{commands.push(payload);return {task_id:'unexpected'};},publish:()=>{}});
+  try {
+    const order=service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]});
+    await service.tick();assert.equal(order.items[0].status,'queued');assert.equal(commands.length,0);
+    assert.match(order.items[0].waiting_reason,/capability nâng\/hạ servo/);
+  } finally {await service.close();}
 });
 
 test('multi-warehouse matching respects quantities, directed costs and validation',()=>{
@@ -112,13 +136,18 @@ test('matching can reroute an earlier pair to minimize the whole order',()=>{
   assert.deepEqual(plan.items.map(item=>[item.pickup,item.dropoff]),[['K1','K4'],['K2','K3']]);
 });
 
-test('order waits five seconds at each warehouse; Core task ID and robot location are required',async()=>{
+test('automatic order waits for matching lift completion; Core task ID and robot location are required',async()=>{
   const records = new Map(),commands = [];
   const db = {getOrders:()=>[...records.values()].map(value=>structuredClone(value)),saveOrder:order=>records.set(order.id,structuredClone(order))};
-  const robot = {id:'01',node:'K1',state:'IDLE',online:true,position_valid:true,task_id:null};
+  const robot = liftCapable({id:'01',node:'K1',state:'IDLE',online:true,position_valid:true,task_id:null});
   const state = {map,fleet:{agvs:[robot],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
   const send = async payload=>{
     commands.push(payload);
+    if(payload.cmd==='warehouse_lift') {
+      const commandId=100+commands.length;robot.state=payload.action==='pickup'?'LIFTING':'LOWERING';
+      Object.assign(robot.lift,{ready:false,active:true,state:payload.action==='pickup'?'LIFTING':'LOWERING',command_id:commandId});
+      return {command_id:commandId};
+    }
     const task = {task_id:`task-${commands.length}`,target:payload.target,status:'dispatched',assigned_agv:payload.agv_id};
     state.fleet.tasks.push(task);robot.state = 'WORKING';robot.task_id = task.task_id;
     return {task_id:task.task_id};
@@ -126,28 +155,35 @@ test('order waits five seconds at each warehouse; Core task ID and robot locatio
   const service = createOrderService({db,getState:()=>state,getSession:()=> 'session-1',send,publish:()=>{}});
   try {
     const order = service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K3',quantity:1}]});
-    await service.tick();
-    assert.equal(order.items[0].status,'pickup_service');
-    assert.equal(commands.length,0,'already at pickup, no GOTO needed');
-    assert.ok(Date.parse(order.items[0].service_until)-Date.now() <= SERVICE_MS);
+    await service.tick();await service.tick();
+    assert.equal(order.items[0].status,'pickup_lift');
+    assert.equal(commands.length,1,'already at pickup, first command is the lift');
+    assert.equal(commands[0].cmd,'warehouse_lift');assert.equal(commands[0].action,'pickup');
     assert.equal(SERVICE_MS,5000);
-    await service.tick();assert.equal(commands.length,0);
-    order.items[0].service_until = new Date(Date.now()-1).toISOString();
-    await service.tick();assert.equal(commands.length,1);
-    assert.equal(commands[0].target,'K3');assert.equal(order.items[0].task_id,'task-1');
+    await service.tick();assert.equal(commands.length,1,'ACK/state LIFTING never starts delivery');
+    completeLift(robot,order.items[0].lift_command_id+1,true);
+    await service.tick();assert.equal(commands.length,1,'DONE_UP của command khác không được làm xe chạy tiếp');
+    completeLift(robot,order.items[0].lift_command_id,true);
+    await service.tick();assert.equal(commands.length,2);
+    assert.equal(commands[1].target,'K3');assert.equal(order.items[0].task_id,'task-2');
     state.fleet.tasks[0].status = 'completed';robot.node = 'K2';robot.state = 'IDLE';robot.task_id = null;
     await service.tick();assert.equal(order.status,'needs_attention','wrong RFID must not count as delivered');
     assert.equal(order.items[0].status,'interrupted');
   } finally {await service.close();}
 });
 
-test('completed dropoff waits five seconds then exits the gate; restart keeps unfinished cargo for reconciliation',async()=>{
+test('completed pickup and dropoff lifts gate movement; restart keeps unfinished cargo for reconciliation',async()=>{
   const records = new Map();
   const db = {getOrders:()=>[...records.values()].map(value=>structuredClone(value)),saveOrder:order=>records.set(order.id,structuredClone(order))};
-  const robot = {id:'02',node:'K2',state:'IDLE',online:true,position_valid:true,task_id:null};
+  const robot = liftCapable({id:'02',node:'K2',state:'IDLE',online:true,position_valid:true,task_id:null});
   const state = {map,fleet:{agvs:[robot],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
   let seq = 0;
   const send = async payload=>{
+    if(payload.cmd==='warehouse_lift') {
+      const commandId=200+(++seq);robot.state=payload.action==='pickup'?'LIFTING':'LOWERING';
+      Object.assign(robot.lift,{ready:false,active:true,state:payload.action==='pickup'?'LIFTING':'LOWERING',command_id:commandId});
+      return {command_id:commandId};
+    }
     const task = {task_id:`task-${++seq}`,target:payload.target,status:'dispatched',assigned_agv:payload.agv_id};
     state.fleet.tasks.push(task);robot.state = 'WORKING';robot.task_id = task.task_id;return {task_id:task.task_id};
   };
@@ -156,16 +192,16 @@ test('completed dropoff waits five seconds then exits the gate; restart keeps un
   try {
     const order = service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K3',quantity:1}]});
     await service.tick();assert.equal(order.items[0].status,'to_pickup');
-    state.fleet.tasks[0].status = 'completed';robot.node = 'K1';robot.state = 'IDLE';robot.task_id = null;
-    await service.tick();assert.equal(order.items[0].status,'pickup_service');
-    order.items[0].service_until = new Date(Date.now()-1).toISOString();await service.tick();
+    state.fleet.tasks[0].status = 'completed';setLiftAt(robot,'K1');robot.state = 'IDLE';robot.task_id = null;
+    await service.tick();assert.equal(order.items[0].status,'pickup_lift');
+    completeLift(robot,order.items[0].lift_command_id,true);await service.tick();
     assert.equal(order.items[0].status,'to_dropoff');
-    state.fleet.tasks[1].status = 'completed';robot.node = 'K3';robot.state = 'IDLE';robot.task_id = null;
-    await service.tick();assert.equal(order.items[0].status,'dropoff_service');assert.equal(order.status,'active');
+    state.fleet.tasks[1].status = 'completed';setLiftAt(robot,'K3');robot.state = 'IDLE';robot.task_id = null;
+    await service.tick();assert.equal(order.items[0].status,'dropoff_lift');assert.equal(order.status,'active');
     const restarted = createOrderService(args);
     try {assert.equal(restarted.list()[0].status,'needs_attention');}
     finally {await restarted.close();}
-    order.items[0].service_until = new Date(Date.now()-1).toISOString();await service.tick();
+    completeLift(robot,order.items[0].lift_command_id,false);await service.tick();
     assert.equal(order.items[0].status,'to_exit');assert.equal(state.fleet.tasks[2].target,'G3');
     assert.equal(order.status,'active','delivery is not finalized while the vehicle is still inside the warehouse');
     state.fleet.tasks[2].status='completed';robot.node='G3';robot.state='IDLE';robot.task_id=null;
@@ -176,7 +212,7 @@ test('completed dropoff waits five seconds then exits the gate; restart keeps un
 
 test('only dispatched unresolved cargo reserves a robot; operator resolution releases the old hold',async()=>{
   const commands=[],state={map:selectionMap,mqtt_connected:true,shift:{phase:'RUNNING',trial_robot_id:'01'},
-    fleet:{accepting_tasks:true,tasks:[],agvs:[{id:'01',node:'S1',state:'IDLE',online:true,position_valid:true}]}};
+    fleet:{accepting_tasks:true,tasks:[],agvs:[liftCapable({id:'01',node:'S1',state:'IDLE',online:true,position_valid:true})]}};
   const retained=[{id:'never-started',status:'needs_attention',created:new Date(0).toISOString(),items:[{status:'queued',robot:'01',task_id:null}]},
     {id:'old-cargo',status:'needs_attention',created:new Date(1).toISOString(),items:[{status:'interrupted',robot:'01',task_id:'old-task'}]}];
   const service=createOrderService({db:{getOrders:()=>retained,saveOrder:()=>{}},getState:()=>state,getSession:()=> 'new-session',
@@ -204,30 +240,30 @@ test('two idle robots can receive different items in one order without double bo
   const records = new Map(),commands = [];
   const db = {getOrders:()=>[],saveOrder:order=>records.set(order.id,structuredClone(order))};
   const state = {map,fleet:{agvs:[
-    {id:'01',node:'K1',state:'IDLE',online:true,position_valid:true,task_id:null},
-    {id:'02',node:'K2',state:'IDLE',online:true,position_valid:true,task_id:null}
+    liftCapable({id:'01',node:'K1',state:'IDLE',online:true,position_valid:true,task_id:null}),
+    liftCapable({id:'02',node:'K2',state:'IDLE',online:true,position_valid:true,task_id:null})
   ],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
   const service = createOrderService({db,getState:()=>state,getSession:()=> 'session-1',
-    send:async payload=>{commands.push(payload);return {task_id:`task-${commands.length}`};},publish:()=>{}});
+    send:async payload=>{commands.push(payload);return payload.cmd==='warehouse_lift'?{command_id:commands.length}:{task_id:`task-${commands.length}`};},publish:()=>{}});
   try {
     const order = service.create({pickups:[{pickup:'K1',quantity:1},{pickup:'K2',quantity:1}],
       deliveries:[{dropoff:'K3',quantity:1},{dropoff:'K4',quantity:1}]});
-    await service.tick();
+    await service.tick();await service.tick();
     assert.deepEqual(order.items.map(item=>item.robot).sort(),['01','02']);
-    assert.equal(order.items.filter(item=>item.status === 'pickup_service').length,2);
-    assert.equal(commands.length,0);
+    assert.equal(order.items.filter(item=>item.status === 'pickup_lift').length,2);
+    assert.equal(commands.filter(command=>command.cmd==='warehouse_lift').length,2);
   } finally {await service.close();}
 });
 
-test('offline robot interrupts dwell and cannot mark cargo delivered',async()=>{
+test('offline robot interrupts lift and cannot mark cargo delivered',async()=>{
   const db = {getOrders:()=>[],saveOrder:()=>{}};
-  const robot = {id:'01',node:'K1',state:'IDLE',online:true,position_valid:true,task_id:null};
+  const robot = liftCapable({id:'01',node:'K1',state:'IDLE',online:true,position_valid:true,task_id:null});
   const state = {map,fleet:{agvs:[robot],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
-  const service = createOrderService({db,getState:()=>state,getSession:()=> 'session-1',send:async()=>{throw Error('unexpected');},publish:()=>{}});
+  const service = createOrderService({db,getState:()=>state,getSession:()=> 'session-1',send:async()=>({command_id:88}),publish:()=>{}});
   try {
     const order = service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K3',quantity:1}]});
-    await service.tick();assert.equal(order.items[0].status,'pickup_service');
-    robot.online = false;order.items[0].service_until = new Date(Date.now()-1).toISOString();
+    await service.tick();await service.tick();assert.equal(order.items[0].status,'pickup_lift');
+    robot.online = false;
     await service.tick();assert.equal(order.status,'needs_attention');assert.equal(order.items[0].status,'interrupted');
     assert.throws(()=>service.resolve(order.id,false),/Cần xác nhận/);
     assert.equal(service.resolve(order.id,true).status,'closed');

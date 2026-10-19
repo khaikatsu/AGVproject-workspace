@@ -42,6 +42,18 @@ public:
         if (next_ > reserved_) reserve();
         return static_cast<long>(next_++);
     }
+    // Firmware persists the greatest accepted command ID in NVS. If that
+    // value is ahead of this process' counter (for example after starting
+    // Core with an older/moved counter file), skip the unsafe range. Never
+    // rewind either side and never reuse an ID merely to recover an ACK.
+    void ensureAbove(long highwater) {
+        if (highwater < 0) throw std::invalid_argument("Command high-water khong hop le");
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (next_ > highwater) return;
+        if (highwater >= INT_MAX) throw std::runtime_error("Da het mien command ID; can doi hop dong truoc khi tiep tuc");
+        next_ = static_cast<long long>(highwater) + 1;
+        if (next_ > reserved_) reserve();
+    }
 private:
     void reserve() {
         if (next_ > INT_MAX) throw std::runtime_error("Da het mien command ID; can doi hop dong truoc khi tiep tuc");

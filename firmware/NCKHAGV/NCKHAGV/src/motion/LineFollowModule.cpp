@@ -36,13 +36,13 @@ void LineFollowModule::correctRight() {
     motor_.motorForward();
 }
 void LineFollowModule::gentleCorrectLeft() {
-    motor_.setLeftSpeed(Config::CORRECTION_SPEED + Config::LEFT_SPEED_TRIM);
+    motor_.setLeftSpeed(Config::GENTLE_OUTER_SPEED + Config::LEFT_SPEED_TRIM);
     motor_.setRightSpeed(Config::GENTLE_CORRECTION_SPEED + Config::RIGHT_SPEED_TRIM);
     motor_.motorForward();
 }
 void LineFollowModule::gentleCorrectRight() {
     motor_.setLeftSpeed(Config::GENTLE_CORRECTION_SPEED + Config::LEFT_SPEED_TRIM);
-    motor_.setRightSpeed(Config::CORRECTION_SPEED + Config::RIGHT_SPEED_TRIM);
+    motor_.setRightSpeed(Config::GENTLE_OUTER_SPEED + Config::RIGHT_SPEED_TRIM);
     motor_.motorForward();
 }
 void LineFollowModule::stop() { motor_.motorStop(); }

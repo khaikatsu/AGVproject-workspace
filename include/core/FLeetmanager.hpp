@@ -112,6 +112,7 @@ struct MotionDiagnostic {
     bool sonarPresent = false, sonarObstacle = false;
     double sonarDistanceCm = 0;
     std::string sonarDirection;
+    long lastCommandId = -1;
 };
 
 struct Task {
@@ -132,6 +133,9 @@ public:
     // Gán bởi Server: nhận thông báo sự kiện dạng text (offline, lỗi, trả task...) để log/cảnh báo
     void setEventCallback(std::function<void(const std::string&)> cb) { onEvent_ = std::move(cb); }
     void setCommandIdAllocator(std::function<long()> allocator) { commandIdAllocator_ = std::move(allocator); }
+    void setCommandIdHighwaterCallback(std::function<void(long)> callback) {
+        commandIdHighwaterCallback_ = std::move(callback);
+    }
     void setTaskIdAllocator(std::function<std::string()> allocator) { taskIdAllocator_ = std::move(allocator); }
     std::string createTaskId() { std::lock_guard<std::mutex> lk(mtx_);return nextTaskIdNoLock(); }
     json durableSnapshot() {
@@ -587,6 +591,8 @@ public:
     // Diagnostic khong retained duoc gui ngay sau telemetry. Chi phuc hoi ca
     // thu hai xe tai tram rieng; telemetry pipe mot minh khong noi len loi MCU.
     void observeMotionDiagnostic(const std::string& id, const MotionDiagnostic& diagnostic) {
+        if (diagnostic.lastCommandId >= 0 && commandIdHighwaterCallback_)
+            commandIdHighwaterCallback_(diagnostic.lastCommandId);
         observeLift(id,diagnostic);
         std::string sonarEvent;
         {
@@ -656,7 +662,13 @@ public:
                 if (!agv.uncertainPath.empty()) {agv.uncertainPath.clear();changed = true;}
 
                 const bool healthy = diagnostic.state == "AGV_IDLE" && diagnostic.error == "NONE";
-                if (agv.state == AGVState::AGV_ERROR && healthy) {
+                // STALE_COMMAND means Core and the MCU disagree about the
+                // persistent command counter. A healthy motor diagnostic must
+                // not immediately erase that protocol fault and dispatch more
+                // low IDs. After the operator requests clear_error,
+                // autoResetRequested allows the normal diagnostic gate again.
+                const bool staleCounterLatched = agv.lastError == "STALE_COMMAND" && !agv.autoResetRequested;
+                if (agv.state == AGVState::AGV_ERROR && healthy && !staleCounterLatched) {
                     agv.state = AGVState::IDLE;agv.lastError.clear();
                     agv.autoResetEligible = false;agv.autoResetRequested = false;agv.autoResetCandidateAt = {};
                     recovered = changed = true;
@@ -711,6 +723,7 @@ public:
     void reportError(const std::string& id, const std::string& msg) {
         std::vector<std::string> toReplan;
         bool requeued = false;
+        const bool staleCommand = msg == "STALE_COMMAND";
         {
             std::lock_guard<std::mutex> lk(mtx_);
             auto it = fleet_.find(id);
@@ -722,7 +735,13 @@ public:
             agv.autoResetEligible = msg == "NETWORK_UNAVAILABLE" || msg == "WIFI_TIMEOUT" || msg == "MQTT_TIMEOUT";
             agv.autoResetRequested = false;agv.autoResetCandidateAt = {};
             toReplan = agvsRoutedThroughNoLock(agv.currentNode, id); // xe lỗi đang chắn node này
-            sendCommand(agv, "STOP");
+            if (staleCommand) {
+                // The rejected command did not enter the MCU queue. Retrying it
+                // or issuing another still-low STOP creates an error storm.
+                // Latch ERROR, discard the pending retry and wait for a fresh
+                // diagnostic high-water plus explicit operator recovery.
+                pendingCmd_.erase(id);
+            } else sendCommand(agv, "STOP");
         }
         arbiter_.cancelWaiting(id);
         emit("AGV_" + id + " BAO LOI: " + msg + (requeued ? " -> task bi gian doan, can xac minh" : ""));
@@ -1812,6 +1831,7 @@ private:
     std::unordered_map<std::string, PendingCmd> pendingCmd_;         // agvId -> lệnh đang chờ ACK
     long cmdSeq_ = 0;
     std::function<long()> commandIdAllocator_;
+    std::function<void(long)> commandIdHighwaterCallback_;
     std::function<std::string()> taskIdAllocator_;
     int obstacleTtlSeconds_ = 30;
     std::chrono::milliseconds ackTimeout_{3000};

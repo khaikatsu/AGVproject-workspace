@@ -352,8 +352,39 @@ int main() {
             long first;
             {CommandIds ids(file);first = ids.next();CHECK(ids.next() > first);}
             {CommandIds ids(file);CHECK(ids.next() > first + 1);}
+            {CommandIds ids(file);ids.ensureAbove(5000);CHECK(ids.next() == 5001);}
+            {CommandIds ids(file);CHECK(ids.next() > 5001);}
             std::ofstream out(file);out << "invalid";out.close();
             bool rejected = false;try {CommandIds ids(file);} catch (...) {rejected = true;}CHECK(rejected);
+        }
+        {
+            // A stale ID must stop Core's resend loop without ACKing or
+            // replacing it with another low STOP. Healthy diagnostic alone
+            // cannot erase the counter mismatch.
+            MapGraph map;map.loadDefaultDemoMap();MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.setTrialRobot("01");fleet.setHomeStations({{"01","S1"}});
+            long nextId=10,observed=-1;
+            fleet.setCommandIdAllocator([&]{return ++nextId;});
+            fleet.setCommandIdHighwaterCallback([&](long value){observed=value;if(nextId<value) nextId=value;});
+            std::vector<json> commands;
+            fleet.setPublishCallback([&](const std::string&,const std::string& payload){commands.push_back(json::parse(payload));});
+            fleet.updateTelemetry("01","S1",80,false);
+            const auto beforeGoto=commands.size();
+            CHECK(fleet.directGoto("01","GS1","stale-command").empty());
+            CHECK(commands.size()==beforeGoto+1 && commands.back()["cmd"]=="GOTO");
+            fleet.reportError("01","STALE_COMMAND");
+            CHECK(commands.size()==beforeGoto+1); // no unsafe low-ID STOP
+            fleet.setAckTimeout(1);fleet.setMaxRetries(0);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));fleet.tick();
+            CHECK(commands.size()==beforeGoto+1); // pending retry was discarded
+            MotionDiagnostic healthy{"S1","AGV_IDLE","NONE","STOP",false,true,true,0,0,0};
+            healthy.lastCommandId=5000;fleet.observeMotionDiagnostic("01",healthy);
+            CHECK(observed==5000);CHECK(fleet.toJson()["agvs"][0]["state"]=="ERROR");
+            CHECK(fleet.clearError("01"));
+            CHECK(commands.back()["cmd"]=="RESET_FAULT" && commands.back()["cmd_id"].get<long>()>5000);
+            fleet.reportAck("01",commands.back()["cmd_id"].get<long>());
+            fleet.observeMotionDiagnostic("01",healthy);
+            CHECK(fleet.toJson()["agvs"][0]["state"]=="IDLE");
         }
         {
             MapGraph map;map.loadFromJson(graph());auto old = map.toJson();

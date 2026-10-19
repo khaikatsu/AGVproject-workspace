@@ -1,5 +1,11 @@
 # Workspace nghiên cứu hệ thống AGV trong kho
 
+Ngày 18/10/2026: giao diện theo dõi lấy/giao có bảng **Xe đang đi đâu · Kho đang có gì?** phía trên bản đồ: thẻ tuyến riêng từng xe, kệ trên xe và các ô kho đầu ca/hiện tại/giữ chỗ/đối soát. Form chuyển kệ hiện rõ nguồn→đích và kho khả dụng, bỏ ô quantity1. [ADR-071](docs/decisions/ADR-071-warehouse-operations-overview.md).
+
+Ngày 18/10/2026: thêm **Trạng thái kệ** để người vận hành tự nhập vị trí ban đầu khi ca đã đóng. Sổ kho/log cập nhật theo kết quả nâng/hạ đã xác nhận, hai xe có đặt chỗ kệ/ô; khu Báo cáo lưu ảnh đầu/cuối ca và nhật ký khi Core CLOSED, đọc lại hoặc tải JSON. Vị trí kho được giữ qua restart và ca mới; vẫn chưa có cảm biến tải. [ADR-070](docs/decisions/ADR-070-warehouse-racks-and-shift-reports.md).
+
+Ngày18/10/2026: đơn hàng tự động trong scope hai xe đã nối với chu kỳ servo hiện có. Xe chỉ rời kho lấy sau `DONE_UP` đúng lệnh/cargo ảo true và chỉ lùi khỏi kho giao sau `DONE_DOWN` đúng lệnh/cargo ảo false; thiếu capability, sai ID, timeout, mất mạng hoặc restart chuyển đơn sang đối soát. Chu kỳ vẫn5s; đề xuất3s và mô hình bốn kệ/hai vị trí trống còn chờ kiểm thử/cấu hình. Xem [ADR-069](docs/decisions/ADR-069-automatic-orders-use-servo-lift.md).
+
 Ngày17/10/2026: [mapv4 bo góc](docs/decisions/ADR-064-rounded-map-without-corner-tags.md) còn22node, bỏ C1–C4 cho Core scope01/02/cảhai. Bốn cạnh ngoài135cm theo nhãn85+50; các góc không còn RFID/pivot. Core/web/bảng tuyến firmware phải dùng cùng mapv4; cần nạp lại firmware01/02 trước chạy thực tế. Tọa độ là sơ đồ, bán kính và chiều dài dọc line cần đo lại; kiểm thử phần mềm tại tests/README.md.
 
 Ngày16/10/2026: xe02 dùng chung cấu hình phần cứng/thông số/capability xe01, giữ PWM02 tiến/lùi/chỉnh230 và xoay230. Core/web nhận encoder, hai sonar, servo và kiện02; scope02 có nút Lấy/Hạ, lùi vềS2 tương tự01 vềS1. Xem [ADR-059](docs/decisions/ADR-059-robot02-firmware-parity.md), env `esp32dev_two_robot_bench_02`. Đã chuẩn bị build/test; chưa upload xe thật.

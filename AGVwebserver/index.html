@@ -594,7 +594,8 @@
     @media(max-width:680px) {#main-container {display:flex;flex-direction:column;} #center-panel {min-height:480px;order:-1;} #topbar input {width:210px;} #mapPreviewSvg {height:350px;} #toastContainer {left:8px;right:8px;bottom:8px;max-width:none;} }
     #headingStatus {flex-basis:100%;}
   </style>
-  <link rel="stylesheet" href="/dashboard-layout.css?v=20261014-encoder">
+  <link rel="stylesheet" href="/dashboard-layout.css?v=20261018-warehouse-operations">
+  <link rel="stylesheet" href="/warehouse-operations.css?v=20261018-hide-resolved">
 </head>
 
 <body data-view="overview" data-map-expanded="true">
@@ -633,6 +634,13 @@
     <div class="stat-card"><span class="stat-label">Ca làm việc</span><strong id="summaryShift">Đang chờ</strong><small id="summaryShiftDetail">Chờ core xác nhận</small></div>
   </section>
   <div id="toastContainer" aria-live="polite"></div>
+  <section id="warehouseOperationsBoard" class="panel-card operations-board" data-views="overview tasks" aria-labelledby="operationsTitle">
+    <div class="operations-heading"><div><span class="eyebrow">THEO DÕI LẤY VÀ GIAO KỆ</span><h2 id="operationsTitle">Trạng thái kho hàng</h2></div><span id="operationsFreshness" class="operation-badge">Chờ dữ liệu</span></div>
+    <div class="operations-columns">
+      <div><div class="operations-section-heading"><h3>Tuyến của từng xe</h3><span id="operationsShiftLabel">Chờ ca</span></div><div id="robotTransferCards" class="robot-transfer-grid"></div></div>
+      <div><div class="operations-section-heading"><h3>Kho trong ca</h3><span id="warehouseShiftSummary">Chưa nhập kho</span></div><div id="warehouseSlotCards" class="warehouse-slot-grid"></div><p class="operations-footnote">Có kệ / trống theo lần nâng hạ đã xác nhận · “Đầu ca” là trạng thái lúc mở ca.</p></div>
+    </div>
+  </section>
   <main id="main-container">
     <aside id="left-panel" aria-label="Đội xe và nhật ký">
       <section class="card compact panel-card" data-views="overview tasks">
@@ -640,8 +648,24 @@
         <div class="table-wrap"><table id="fleetTable"><thead><tr><th>Xe</th><th>Vị trí</th><th>Pin</th><th>Trạng thái</th><th></th></tr></thead><tbody></tbody></table></div>
       </section>
       <section class="card compact panel-card" data-views="overview tasks">
-        <div class="card-header">Đơn hàng kho</div>
+        <div class="card-header">Các lượt lấy → giao <span class="card-caption">Theo đơn đã tạo</span></div>
+        <label id="orderResolvedFilter" class="check-label order-resolved-filter" hidden><input id="orderShowResolved" type="checkbox" onchange="renderOrders(lastState?.orders || [])"> <span id="orderResolvedFilterLabel">Hiện đơn đã đối soát</span></label>
         <div id="orderList" class="order-list" aria-live="polite">Chưa có đơn hàng</div>
+      </section>
+      <section class="card compact panel-card" data-views="overview tasks reports" id="warehousePanel">
+        <div class="card-header">Trạng thái kệ</div>
+        <p id="warehouseSummary" class="card-help" aria-live="polite">Chưa nhập trạng thái kho ban đầu.</p>
+        <div class="table-wrap"><table id="warehouseStateTable"><thead><tr><th>Vị trí</th><th>Kệ</th><th>Trạng thái</th></tr></thead><tbody></tbody></table></div>
+        <p class="card-help">Vị trí cập nhật sau chu kỳ servo đã xác nhận. Chưa có cảm biến nhận biết kệ thật.</p>
+        <details id="warehouseConfig" ontoggle="if(this.open) editWarehouseLayout()">
+          <summary>Nhập / đối soát vị trí kệ khi ca đã đóng</summary>
+          <p class="card-help">Nhập mã riêng cho từng kệ (ví dụ R01). Để trống ô không có kệ. Kiểm tra các xe đã hết kệ trước khi lưu.</p>
+          <form id="warehouseConfigForm" onsubmit="event.preventDefault();saveWarehouseLayout()">
+            <div id="warehouseConfigFields" class="form-grid"></div>
+            <label class="check-label"><input id="warehouseVerified" type="checkbox" required> Tôi đã kiểm tra vị trí kệ thực tế và các xe đều trống.</label>
+            <button id="saveWarehouseBtn" class="btn full-width" type="submit">Lưu trạng thái kho</button>
+          </form>
+        </details>
       </section>
       <section class="card compact panel-card" data-views="overview tasks">
         <div class="card-header">Hàng đợi <span class="card-caption">Ưu tiên · FIFO</span></div>
@@ -685,7 +709,7 @@
         <p class="card-help">Kết thúc ca: hoàn thành nhiệm vụ đang chạy rồi về trạm riêng. Vị trí chỉ được xác nhận qua RFID.</p>
       </section>
       <section class="card compact panel-card" data-views="overview tasks">
-        <div class="card-header">Giao nhiệm vụ</div>
+        <div class="card-header">Tạo lượt chuyển kệ</div>
         <div class="task-mode-switch" role="group" aria-label="Loại nhiệm vụ">
           <button id="warehouseModeBtn" type="button" aria-pressed="false" onclick="setTaskMode('warehouse')" hidden>Lấy / hạ hàng</button>
           <button id="orderModeBtn" type="button" aria-pressed="true" onclick="setTaskMode('order')">Đơn hàng kho</button>
@@ -703,21 +727,21 @@
           <p>Đến gate thì chờ lệnh tiếp theo. Core ra lệnh xoay theo hướng của tuyến mới.</p>
         </div>
         <div id="orderTaskForm">
-          <div class="order-progress" aria-live="polite">
-            <div class="order-progress-heading"><span>Tiến độ đơn hàng</span><strong id="orderProgressCount">0/0 kiện</strong></div>
-            <select id="orderProgressSelect" aria-label="Đơn hàng xem tiến độ" disabled><option value="">Chưa có đơn hàng</option></select>
-            <progress id="orderProgressBar" max="1" value="0" aria-label="Tiến độ giao kiện"></progress>
-          </div>
-          <label>Kho lấy · số kiện</label>
+          <div class="transfer-form-step"><span class="transfer-step-number">1</span><label>Chọn kho lấy có kệ</label></div>
           <div id="orderPickups" class="order-lines"></div>
-          <button type="button" class="btn-outline full-width" onclick="addOrderLine('pickup')">Thêm kho lấy</button>
-          <label>Kho giao · số kiện</label>
+          <button type="button" class="btn-outline full-width add-transfer-line" onclick="addOrderLine('pickup')">+ Thêm kho lấy</button>
+          <div class="transfer-form-step"><span class="transfer-step-number">2</span><label>Chọn kho giao còn trống</label></div>
           <div id="orderDeliveries" class="order-lines"></div>
-          <button type="button" class="btn-outline full-width" onclick="addOrderLine('dropoff')">Thêm kho giao</button>
+          <button type="button" class="btn-outline full-width add-transfer-line" onclick="addOrderLine('dropoff')">+ Thêm kho giao</button>
+          <div id="orderTransferPreview" class="transfer-preview" aria-live="polite">Chọn kho lấy và kho giao.</div>
           <div id="orderTotals" class="field-hint">Lấy 0 · giao 0 kiện</div>
+          <p id="orderFormHint" class="transfer-form-hint" role="status"></p>
           <button id="submitOrderBtn" type="button" data-control data-task-control class="btn full-width" onclick="submitOrder()">Tạo đơn hàng</button>
-          <p id="orderDispatchHint">Server chọn xe sẵn sàng gần kho lấy nhất theo đường có hướng.</p>
-          <p class="card-help">Mỗi chuyến một kiện: dừng 5 giây trong kho lấy/giao, lùi ra gate rồi xoay theo tuyến tiếp theo. Đứng chờ mô phỏng thao tác hàng; chưa xác nhận hàng vật lý.</p>
+          <p id="orderDispatchHint" class="card-help">Tự chọn xe sẵn sàng gần kho lấy nhất.</p>
+          <details class="order-progress"><summary>Tiến độ đơn đã tạo <strong id="orderProgressCount">0/0 kệ</strong></summary>
+            <select id="orderProgressSelect" aria-label="Đơn hàng xem tiến độ" disabled><option value="">Chưa có đơn hàng</option></select>
+            <progress id="orderProgressBar" max="1" value="0" aria-label="Tiến độ giao kệ"></progress>
+          </details>
         </div>
         <div id="nodeTaskForm" hidden>
           <label for="task_agv">Xe thực hiện</label>
@@ -759,6 +783,16 @@
         <div class="card-help">Chọn một ca để xem lại số liệu đã lưu.</div>
         <div id="kpiHistoryBox" class="log-list"></div>
       </section>
+      <section class="card compact panel-card" data-views="reports" id="warehouseReportsPanel">
+        <div class="card-header">Báo cáo kho cuối ca <button class="btn-outline" onclick="loadWarehouseReports()">Tải lại</button></div>
+        <p class="card-help">Tự lưu khi Core xác nhận ca đã đóng. Báo cáo giữ vị trí đầu/cuối ca, lượt nâng/hạ và mục cần đối soát.</p>
+        <div id="warehouseReportList" class="log-list">Chưa có báo cáo kho.</div>
+        <div id="warehouseReportDetail"></div>
+      </section>
+      <section class="card compact panel-card" data-views="reports">
+        <div class="card-header">Nhật ký chuyển kệ</div>
+        <div id="warehouseEventList" class="log-list">Chưa có thao tác kệ.</div>
+      </section>
     </aside>
   </main>
   <datalist id="mapNodeOptions"></datalist>
@@ -791,7 +825,9 @@
       <button class="btn full-width" type="submit">Đăng nhập</button>
     </form>
   </dialog>
-  <script src="/dashboard.js?v=20261014-encoder"></script>
+  <script src="/warehouse-ui.js?v=20261018-warehouse-operations"></script>
+  <script src="/warehouse-operations.js?v=20261018-warehouse-operations"></script>
+  <script src="/dashboard.js?v=20261018-hide-resolved"></script>
 </body>
 
 </html>

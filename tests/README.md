@@ -1,5 +1,75 @@
 # Hồ sơ kiểm thử AGV
 
+## 19/10/2026 — Recovery line bên xe01 sau khôi phục firmware
+
+REQ-ROBOT01-GENTLE-SIDE-RECOVERY-01 / [ADR-062](../docs/decisions/ADR-062-local-line-search.md): trước sửa ba ca native mới FAIL khi line bên vẫn dẫn tới pivot hoặc không kết thúc recovery. Sau sửa `platformio test -e native_robot01_bench -e native_robot02_bench` PASS98/98 (49 mỗi profile; ca riêng01 bỏ qua ở02). Kiểm cùng phía001/011,100/110 đủ100ms, millis rollover, giữroute/index, reverse centered-only, đổi phía/center/wide/blank/gap>50ms, đọc lặp cùng timestamp, thu hồi grant/vật cản xóa bằng chứng, deadline600ms và không tựclear lỗi đã chốt.
+
+`scripts/test-fast-line.ps1` PASS01/02: navigator→movement→GPIO/PWM sau000→line bên,STOP trong xác nhận rồi đúng duty/action;110=190/150,011=130/210,hard100/001 giữ một bánh. Không có xe thật/log tại thời điểm báo lỗi; đây là tái hiện logic bằng input giả lập, không khẳng định nguyên nhân duy nhất hoặc đã sửa hoàn toàn khả năng bám cua vật lý. BuildID01 `20261019-robot01-side-recovery-v3`; các hồ sơ PD trước khôi phục phía dưới không mô tả binary hiện tại.
+
+Build ESP32 `esp32dev_two_robot_bench_01` và `_02` PASS. RAM58076byte mỗi profile; flash01=963745byte,02=963921byte. Binary xe01 tại `firmware/NCKHAGV/NCKHAGV/.pio/build/esp32dev_two_robot_bench_01/firmware.bin` đã kiểm chuỗi buildIDv3; chưa upload hoặc tác động broker/Core vận hành.
+
+## 19/10/2026 — Trợ bám cua riêng xe01, bản v7
+
+REQ-ROBOT01-LINE-ASSIST-01 / [ADR-073 v7](../docs/decisions/ADR-073-forward-line-pd-two-robots.md): host `scripts/test-forward-pd.ps1` PASS5 cấu hình (profile01 assist bật/tắt, rollbackPD và profile02 bật/tắtPD). Đường GPIO→pattern→navigator→Movement→driver kiểm110=180/120,100=180/80,011=120/180,001=80/180,111/101=120/120,010=210/210; đổi phía cùng timestamp phản ứng ngay, wide/010 không giữ lệch/D cũ. Mọi duty assist đều tiến hai bánh; PivotLeft/PivotRight thường, pivot phục hồi180, capture210 và lùi giữ đầu ra cũ. ChặngM2→G6 vẫn cần grant, mất grant/STOP/mạng/sonar/config/servo/000 xuất0/0;000 ở600/1000ms dừng rồi001 đủ bằng chứng ở1300ms mới bám lại cùngroute/index.
+
+PlatformIO native profile01/02 PASS107/107 (54+53), gồm hồi quy node-order/rẽ/capture/RFID/mutex và ca assist chỉ hoạt động profile01. SHA256 trước/sau của `CoreNavigator.cpp`, `AGVController.cpp`, `MovementModule.cpp`, `MotorModule.cpp`, `Robot02Config.h` được đối chiếu không đổi trong lượt v7.
+
+BuildESP32 hai env01/02 PASS; RAM58108byte mỗi ảnh, flash01=964773/02=964845byte trên1310720. Binary chứa đúng buildID `20261019-robot01-curve-assist-v7` / `20261019-robot02-line-confirm-v6`; SHA25601 `57265F6D3B83DDCF57F6001A02B384B04FA30A54428BAFFDED7120EF38872F26`,02 `A8F455F71106D4E241C4F05BD35E2A16AC45C0A4EC1ACB350E22B3143BCCFD17`. `git diff --check` PASS. Chưa upload/chạy xe thật.
+
+## 19/10/2026 — Tách hạn quét và xác nhận mất line, bản v6
+
+REQ-LINE-CONFIRM-GRACE-01 / [ADR-073 v6](../docs/decisions/ADR-073-forward-line-pd-two-robots.md): PlatformIO native hai profile PASS105/105 (53+52). Hai ca mới/profile kiểm ứng viên ở550ms xác nhận650ms,1200ms xác nhận1300ms, cả millis rollover/tiến và010 khi lùi; giữ route301/index0. Quét dừng tại600ms,000/101/111 không phát motor trong phần chờ; hết deadline2s xe01/7s xe02 chốtLINE_LOST, ứng viên muộn không gia hạn và line trở lại không tựclear. Ca hazard mở rộng kiểm mấtWi-Fi/MQTT, sonar/config, STOP, grant và vật cản trong xác nhận sau600ms; các ca rẽ/capture/RFID/mutex/chặng cũ vẫnPASS.
+
+Host `scripts/test-forward-pd.ps1` PASS4 cấu hình (01/02 × PD bật/tắt); nối navigator→Movement→driver tạiM2→G6 kiểm duty0/0 lúc600/1000ms dù task còn active, sau001 ở1200ms đủ100ms thì xuất đúng dutyPD, giữroute700/index0. Không thay tuningPDbase01=210/02=160. Chưa upload, chưaclear_error/GOTO hoặc chạy xe thật.
+
+BuildESP32 `esp32dev_two_robot_bench_01` / `_02` đềuPASS; RAM58108byte mỗi ảnh, flash01=964609/02=964845byte trên1310720. Đã xác minh chuỗi buildID `20261019-robot01-line-confirm-v6` / `20261019-robot02-line-confirm-v6` trong binary. SHA25601 `1BBFEAEA0A7A17BFFA71396FB7F5D870BE2801414ADDE1BA1D599262245A1EAB`,02 `1DDAC1FDCC2F6D49D5A1A0A09C6A41BC84ED2DE7C88DE306D1DE7DFC212B05E7`. Artifact tại `firmware/NCKHAGV/NCKHAGV/.pio/build/<env>/firmware.bin`. `git diff --check` PASS.
+
+## 19/10/2026 — PD nhận lại001 sau000, bảnv5
+
+REQ-PD-SIDE-RECOVERY-01 / [ADR-073](../docs/decisions/ADR-073-forward-line-pd-two-robots.md): native hai profilePASS101/101 (51+50), gồm4 ca mới/profile:001/011/100/110 ởFollowing bình thường không lỗi;000→line bên cùng phía100ms/≥3 mẫu mới phục hồi đúngroute/index; nhiễu/đổi phía/wide/gap>50ms không cộng bằng chứng; deadline và lỗi đã chốt không tự mở; mất mạng/sonar/config/mutex/STOP luôn dừng; lùi vẫn yêu cầu010. Các ca rẽ/capture/settling/RFID/mutex cũPASS. Host `scripts/test-forward-pd.ps1` PASS4 cấu hình, gồm nối đoạnM2→G6 qua000→001 đến duty thật. Probe dùng base/trim hiện hành thay vì đóng đinh160, giữ tuning người dùng01=210/02=160.
+
+PlatformIO buildESP32 cả01/02PASS, RAM58108byte mỗi ảnh, flash01=964601/02=964845byte trên1310720. Binary có buildID `20261019-robot01-pd-side-recovery-v5` / `20261019-robot02-pd-side-recovery-v5`. SHA25601 `CC0FBCA23998778BA8B149C393CC82BD6057C119839669C8ECB57B6BC0EDFC58`,02 `1108218C538F8D20F93B33B6D94C9BE0DE1699108A8A5162A7472FF97C5A4811`. `git diff --check` PASS. Chưa upload/chạy sàn, chưa phátclear-error/GOTO hoặc sửaCore vận hành.
+
+## 19/10/2026 — PD đi tiến cho cảhai xe
+
+Bổ sung sau log `Config::FORWARD_PD_* is not a member`: khôi phục khối khai báoPD bị thiếu trong `Config.h`, giữ tuning profile hiện hành (fallback01=230,02=220; PD160). `scripts/test-forward-pd.ps1` PASS cả4 cấu hình; buildESP32 cả01/02PASS và binary chứa đúng buildIDforward-pd-v4. RAM58108byte mỗi ảnh, flash01=964309/02=964561byte. SHA256 ảnh build lại01 `89B20282AECDED66CB1E1C43374B26CDED5A669DE5262632F1DA71A77D38E475`,02 `B9DEA56428B8DB73CE94DA7C6B18123F69111E6408E19490E539213618BC98C2`. Chưa upload; `git diff --check` PASS.
+
+REQ-FORWARD-PD-01 / [ADR-073](../docs/decisions/ADR-073-forward-line-pd-two-robots.md): `scripts/test-forward-pd.ps1` PASS4 cấu hình (01/02 × bật/tắt). Probe nốiPD→Movement→driver thật với adapter GPIO, kiểm tín hiệuGPIO35 tương đương sketch (80/240 khi rời giữa,110/210 khi ổn định), dt10/20ms, duplicate/subinterval, gap>50ms, rollover, clip0…255, reset route/index/STOP/blank, trạng thái riêng, đầu ra lùi/pivot giữ cũ, không đi khi thiếu/thu hồi grantM2 trên đoạnM2→G6. Hazardwifi/MQTT/sonar/config/servo/STOP thắng cachePD ngay trong interval. Tắt cờ phục hồi bảngPWM ở cảhai profile. `scripts/test-fast-line.ps1` PASS01/02.
+
+PlatformIO `native_robot01_bench` / `native_robot02_bench` PASS93/93 (47+46), gồm RFID/node-order, capture/settling xe02, lùi/trạm, mutex/clearance, sonar/mạng và tìm line. Lần đầu assertion test cũ đòi5s không khớp SharedConfig7s; sửa assertion để kiểm timeout hữu hạn và nhỏ hơn deadline chặng, không đổi runtime. Binary trướcPD lưu `.qa/forward-pd-baseline/robot01-before-pd.bin` và `robot02-before-pd.bin`. Chưa nạp hoặc chạy robot thật trong lượt này; xe02 chưa được đo với hệ sốPD mới.
+
+BuildESP32 `esp32dev_two_robot_bench_01` / `_02` đềuPASS. Mỗi ảnh RAM58108/327680byte (17,7%); flash01=964309byte,02=964561byte trên1310720 (73,6%). Đã kiểm đúng chuỗi buildID `20261019-robot01-forward-pd-v4` / `20261019-robot02-forward-pd-v4` trong binary. SHA25601 `E8E8F6F601D06A82C3A7F7293350DBA21A74A9DB20B2B39633ADA64AE815308B`,02 `69CAF71FB08C412306B65E7375242E3D719C151DB02DEE90C6E4A5E317200682`. Artifact tại `firmware/NCKHAGV/NCKHAGV/.pio/build/<env>/firmware.bin`; chưa upload. `git diff --check` PASS.
+
+## 19/10/2026 — PWM cua xe01 M2 → G6
+
+Bổ sung REQ-ROBOT01-ROUNDED-LINE-01 / [ADR-066](../docs/decisions/ADR-066-fast-line-response.md): `scripts/test-fast-line.ps1` PASS cả01/02. Driver profile01 xuất110=205/150,011=155/200, mỗi kênh không vượt đi thẳng205/200, tổng duty giảm và chênh≥40PWM; STOP/000/grant/mạng/sonar vẫnPASS. PlatformIO build cảhaiPASS;01 RAM58076byte/flash963553byte,02 RAM58076byte/flash963801byte. Binary01 `.pio/build/esp32dev_two_robot_bench_01/firmware.bin` buildID `20261019-robot01-curve-pwm-v3`, SHA256 `8D5B7A296EF3BA770AAA766CF73CE2AA0348EACA1AD43AD61D7EF4885BAE896C`. Chưa upload hoặc đo khả năng ôm cua trên sàn; chỉ xác minh logic và đầu ra driver bằng host.
+
+## 19/10/2026 — Phục hồi STALE_COMMAND
+
+REQ-STALE-COMMAND-RECOVERY-01 / [ADR-072](../docs/decisions/ADR-072-stale-command-counter-recovery.md): `core_tests.exe` PASS, gồm `CommandIds::ensureAbove` qua restart, xóa pending retry, không phát STOP ID thấp, giữ ERROR qua diagnostic khỏe và `RESET_FAULT` sau clear có ID lớn hơn high-water. Core build riêng tại `.qa/stale-command-fix/agv_core.exe` PASS. PlatformIO `esp32dev_two_robot_bench_01` và `_02` PASS với diagnostic `lastCommandId`; RAM đều58076/327680 (17,7%), flash lần lượt963569/963801 trên1310720 (73,5%). Binary01 SHA256 `68DFD7C115EC3682F8F9852BA9E54E7FF18E1CEEB51F7E5C2EF282EF465FD303`, binary02 `DE0B32603971E563207894136F7ABE7B85814D7D14E1CD1B08D00B455B69361A`; chưa upload/restart Core vận hành hoặc thử robot thật.
+
+## 19/10/2026 — Xe01 bám line qua cung bo
+
+REQ-ROBOT01-ROUNDED-LINE-01 / [ADR-066](../docs/decisions/ADR-066-fast-line-response.md): `scripts/test-fast-line.ps1` PASS cả hai profile, gồm xác nhận profile01 giữ hai bánh có duty ở `110/011` và profile02 giữ hành vi cũ. `scripts/test-rounded-map.ps1` PASS cả hai profile với 22 node, 4 cung và 60 bộ ba Core/MCU. PlatformIO native `native_robot01_bench` + `native_robot02_bench` PASS93/93 (47+46), gồm hồi quy mất line, safety và gentle correction mới.
+
+Build `esp32dev_two_robot_bench_01` PASS: RAM58076/327680 byte (17,7%), flash963521/1310720 byte (73,5%). Binary `.pio/build/esp32dev_two_robot_bench_01/firmware.bin` chứa buildID `20261019-robot01-rounded-line-fix-v1`, SHA256 `671BEB9F1A73CC406043FD409A08CD0A4DEDC38BF1B67903DD53339AFD56ABFA`. Không sửa/build server vì rà soát xác nhận server chỉ phản ứng sau `LINE_LOST`; chưa upload hoặc kiểm thử phần cứng.
+
+18/10/2026, bổ sung REQ-WAREHOUSE-UI-01: `node tests/warehouse.browser.integration.js` PASS với Edge/DB/Core giả lập riêng tại `.qa/warehouse-browser-jMlObp`. Kiểm tiêu đề **Trạng thái kho hàng**; đơn needs_attention vẫn hiện, bấm đối soát làm đơn closed biến khỏi danh sách/tiến độ, checkbox xem lại đúng số lượng, reload trở về bộ lọc gọn mặc định. Đơn hoàn thành khác vẫn hiện; API còn nguyên bản ghi closed và báo cáo JSON đã lưu không đổi. Các ca hai xe/servo/kho/báo cáo/desktop/mobile trước đó cùng PASS. Không xóa DB hoặc restart gateway vận hành.
+
+## 18/10/2026 — Giao diện tuyến xe và kho trong ca
+
+REQ-WAREHOUSE-UI-01 / [ADR-071](../docs/decisions/ADR-071-warehouse-operations-overview.md): `npm test` PASS47/47 sau thêm `warehouse.shift.initial_slots`. `node tests/warehouse.browser.integration.js` PASS với Edge desktop1440/mobile390: tạo đơn bằng form mới không nhập quantity, xe01 đang giao K2→K1 và xe02 đang đi lấy K3 để giao K6, RFID/đích lệnh riêng, ô kho đầu ca/hiện tại/giữ chỗ, xe02 lỗi thì dừng chỉ báo bước chạy và hiện đối soát, mất MQTT ghi dữ liệu cũ/khóa form, DONE nâng/hạ và báo cáo CLOSED/tảiJSON giữ đúng. Ảnh tại `.qa/warehouse-browser-IBgCYs/desktop-operations.png`, `mobile-operations.png`, `transfer-form.png`; file báo cáo riêng cùng thư mục. `node tests/browser.integration.js` PASS các view, mapv4/dock hai cột, tuyến/heading/history, ca/scope, stale/reconnect và mobile tại `.qa/browser-test-UYTE6f`. Cấu hình Playwright đi kèm runtime/Edge như mục phía dưới. Syntax và `git diff --check` PASS; không restart gateway thật, không sửa DB vận hành hoặc nạp firmware.
+
+## 18/10/2026 — Trạng thái kệ và báo cáo kho cuối ca
+
+REQ-WAREHOUSE-STATE-01 / [ADR-070](../docs/decisions/ADR-070-warehouse-racks-and-shift-reports.md): `npm test` trong `AGVwebserver` PASS47/47 (gateway15, security4, orders13, warehouse-actions8, inventory7). Kiểm nhập vị trí tùy chọn/mã kệ trùng/revision/xác nhận thực tế/ca CLOSED; hai xe đặt chỗ nguồn–đích, xe đang có kệ không lấy thêm; DONE tương quan và chống lặp; lỗi ghi log rollback cả tồn vị trí; file DB riêng mở lại giữ trạng thái và yêu cầu đối soát; đổi Core session tạo báo cáo gián đoạn; ca CLOSING chưa tạo báo cáo, CLOSED tạo đúng một bản bất biến; tích hợp đơn tự động và Lấy/Hạ scope02.
+
+Trình duyệt `node tests/warehouse.browser.integration.js` PASS với Edge headless, desktop1440 và mobile390: tự nhập bốn kệ tại vị trí chọn, tải lại trang giữ dữ liệu, servo nâng/hạ cập nhật ô↔xe, báo cáo và tải JSON; ảnh/file tại `.qa/warehouse-browser-DAMxPp`. `node tests/browser.integration.js` hồi quy dashboard PASS, ảnh tại `.qa/browser-test-LmSOMn`. Dùng `AGV_PLAYWRIGHT_MODULE` trỏ Playwright đi kèm runtime và `AGV_BROWSER_CHANNEL=msedge`; npm script `test:warehouse:browser` chạy riêng bài mới. Syntax các JS sửa và `git diff --check` PASS. Tất cả dùng Core giả lập/DB riêng; chưa restart gateway thật, không sửa DB vận hành và chưa thử phần cứng.
+
+## 18/10/2026 — Đơn hàng tự động dùng servo hai xe
+
+REQ-ORDER-AUTO-LIFT-01 / [ADR-069](../docs/decisions/ADR-069-automatic-orders-use-servo-lift.md): `node --test tests/orders.test.js tests/warehouse-actions.test.js` PASS21/21. Ca mới kiểm capability bắt buộc, hai xe nhận hai lượt không trùng robot, `warehouse_lift` đúng ID/action, ACK/trạng thái đang chạy không cấp chặng giao, DONE sai command_id bị bỏ, DONE đúng cargo mới đi tiếp, hạ xong mới lùi gate, offline/restart giữ đối soát. `npm test` trong `AGVwebserver` PASS18/18 (gateway14 + security4) khi chạy với loopback; lần chạy sandbox đầu bị EACCES loopback, không tính là lỗi sản phẩm. `node --check` các tệp JS sửa và `git diff --check` PASS. Chưa restart gateway/Core vận hành, chưa nạp firmware hoặc thử servo/kệ thật. Chu kỳ vẫn5s; 3s còn OPEN.
+
 ## 17/10/2026 — Sửa dừng/xin lại mutex sau30 xung
 
 REQ-MUTEX-EXIT-CONTINUE-01 / [ADR-068](../docs/decisions/ADR-068-encoder-mutex-tail-clearance.md): native profile01/02 PASS92/92. Ba ca hồi quy mới nối clearance với navigator: sáu mutex trả đúng token rồi bám tiếp/fast-line không dừng hoặc xin lại; token sai/lặp/tới muộn bị từ chối; M5 đã trả không miễn grantM6 và vẫn đi xuyên khi đủ quyền; dấu clearance xóa khi đổi RFID, STOP/tuyến mới, lỗi mạng hoặc reset phiên. `scripts/test-fast-line.ps1` PASS cảhai, gồm thu hồi grant thường vẫn STOP và mạng/sonar/mất line giữ chốt.

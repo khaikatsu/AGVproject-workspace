@@ -625,6 +625,14 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                 motion.heading = diagnostic.value("heading",string{});
                 motion.headingNode = diagnostic.value("headingNode",string{});
                 motion.headingSource = diagnostic.value("headingSource",string{});
+                if (diagnostic.contains("lastCommandId")) {
+                    if (!diagnostic["lastCommandId"].is_number_integer())
+                        throw std::invalid_argument("Diagnostic lastCommandId sai");
+                    const auto highwater = diagnostic["lastCommandId"].get<int64_t>();
+                    if (highwater < 0 || highwater > INT_MAX)
+                        throw std::invalid_argument("Diagnostic lastCommandId ngoai gioi han");
+                    motion.lastCommandId = static_cast<long>(highwater);
+                }
                 if (encoderBound && diagnostic.contains("obstacle") && diagnostic["obstacle"].is_boolean() &&
                     diagnostic.contains("ultrasonicCm") &&
                     diagnostic.contains("obstacleDirection") && diagnostic["obstacleDirection"].is_string()) {
@@ -851,6 +859,7 @@ int main(int argc, char** argv) {
     g_fleet.setTaskIdAllocator([&taskIds] { return "task-"+to_string(taskIds.next()); });
     g_arbiter.setGrantIdAllocator([&commandIds] { return commandIds.next(); });
     g_fleet.setCommandIdAllocator([&commandIds] { return commandIds.next(); });
+    g_fleet.setCommandIdHighwaterCallback([&commandIds](long highwater) { commandIds.ensureAbove(highwater); });
     g_fleet.setPublishCallback(publishTo);
     g_fleet.setStateChangedCallback(requestWake);
     // g_fleet.setChargeThresholds(20, 40, 90); // Cau hinh goc: giu nguyen de bat lai sau test.

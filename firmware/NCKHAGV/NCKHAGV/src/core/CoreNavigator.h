@@ -92,7 +92,7 @@ private:
     bool turnRetryUsed_ = false;
     uint32_t lineLossStartedMs_ = 0;
     bool lineLossPending_ = false;
-    uint8_t lastLinePattern_ = 0, centerSamples_ = 0;
+    uint8_t lastLinePattern_ = 0, centerSamples_ = 0, recoveryCandidate_ = 0;
     MotorAction lastLineMotor_ = MotorAction::Stop;
     MotorAction lastCorrection_ = MotorAction::Stop, searchDirection_ = MotorAction::Stop;
     uint32_t lastCorrectionMs_ = 0, centerSinceMs_ = 0, centerSampleMs_ = 0;

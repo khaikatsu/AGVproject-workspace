@@ -1,5 +1,9 @@
 # Đồng bộ web và server — 29/09/2026
 
+Cập nhật 18/10/2026: thêm sổ vị trí kệ và log/báo cáo kho SQLite theo [ADR-070](decisions/ADR-070-warehouse-racks-and-shift-reports.md). Vị trí ban đầu do người dùng nhập; các lượt chuyển kệ đặt chỗ độc quyền nguồn/đích/xe và cập nhật theo DONE servo đúng lệnh. Báo cáo bất biến được lưu khi Core CLOSED, có cảnh báo gián đoạn/cần đối soát và tải JSON. Không tự reset kho ở đầu ca mới.
+
+Cập nhật18/10/2026: điều phối đơn hàng tự động scope hai xe đã thay timer bốc/dỡ bằng handshake servo hiện có. Gateway chỉ chọn xe báo lift sống, gửi `warehouse_lift`, chờ đúng `DONE_UP/DONE_DOWN` và cargo ảo trước khi phát chặng tiếp; UI hiện các pha chờ/nâng/hạ. Không thay Core/MQTT/firmware trong lần nối luồng này; xem [ADR-069](decisions/ADR-069-automatic-orders-use-servo-lift.md).
+
 Mốc này lưu khảo sát ngày 29/09. Các phần auth/TLS/mutex/restart/delta đã được cập nhật ngày 01/10; đọc [gia cố hiện tại](18-hardening.md). Các giới hạn phần cứng còn OPEN.
 
 Nguồn yêu cầu trực tiếp: người dùng đang chờ firmware và yêu cầu rà soát, sửa web/server, đặc biệt các phần hiển thị không khớp API. Các thay đổi dưới đây là `OBSERVED` trong mã mới; kết quả chạy ghi trong [hồ sơ kiểm thử](../tests/README.md). Phần firmware và nghiệm thu phần cứng vẫn `OPEN`.

@@ -9,8 +9,9 @@ const path = require('path');
 const {randomUUID} = require('crypto');
 const {createDatabase} = require('./db');
 const {createSecurity} = require('./security');
-const {createOrderService,SERVICE_MS} = require('./orders');
+const {createOrderService,SERVICE_MS,LIFT_READY_TIMEOUT_MS,LIFT_RESULT_TIMEOUT_MS} = require('./orders');
 const {createWarehouseActions}=require('./warehouse-actions');
+const {createWarehouseInventory}=require('./warehouse-inventory');
 const INCIDENT_RE = /^AGV_(\S+)\s+(BAO LOI|KHONG ACK lenh|MAT KET NOI)/;
 const emptyState = () => ({map:{nodes:[],edges:[],obstacles:[]},fleet:{agvs:[],pending_tasks:[],tasks:[]},mutex:{},logs:[]});
 function batteryForDisplay(agv) {
@@ -86,7 +87,7 @@ function createGateway(options = {}) {
         state_received_at:receivedAt ? new Date(receivedAt).toISOString() : null,stale_after_ms:staleMs,
         // Keep each broadcast immutable: the scheduler mutates order/item objects.
         task_history:db.getTaskHistory(50),orders:JSON.parse(JSON.stringify(orders.list().slice(0,50))),
-        warehouse_actions:JSON.parse(JSON.stringify(warehouseActions.list()))});
+        warehouse_actions:JSON.parse(JSON.stringify(warehouseActions.list())),warehouse:inventory.snapshot()});
     function broadcast(extra = {},positionChanged = false) {
         Object.assign(broadcastExtra,extra);
         if (broadcastTimer) {
@@ -129,11 +130,17 @@ function createGateway(options = {}) {
             mutex:state.mutex || {},logs:Array.isArray(state.logs) ? state.logs : []};
         receivedAt = Date.now();
         db.enqueueState(latestState,session,INCIDENT_RE);
-        if (latestState.mqtt_connected === false) orders.interruptAll('Mất MQTT; đối soát xe và kiện hàng');
-        if (latestState.storage_healthy === false) orders.interruptAll('Core lỗi ghi checkpoint; đối soát xe và kiện hàng');
+        if (latestState.mqtt_connected === false) {
+            orders.interruptAll('Mất MQTT; đối soát xe và kiện hàng');inventory.observationGap('Mất MQTT trong ca');
+        }
+        if (latestState.storage_healthy === false) {
+            orders.interruptAll('Core lỗi ghi checkpoint; đối soát xe và kiện hàng');inventory.observationGap('Core lỗi ghi checkpoint trong ca');
+        }
         broadcast({},positionChanged);
-        void orders.tick();
-        void warehouseActions.tick();
+        if(latestState.shift?.phase==='RUNNING')inventory.observeShift(latestState,session);
+        void Promise.all([orders.tick(),warehouseActions.tick()]).then(()=>{
+            inventory.observeShift(latestState,session,{orders:orders.list(),actions:warehouseActions.list()});
+        }).catch(error=>console.error('[WAREHOUSE]',error.message));
     }
     function failRequests(message) {
         for (const [key,request] of requests) {
@@ -170,6 +177,7 @@ function createGateway(options = {}) {
             const hadState = connected && receivedAt > 0;
             connected = false;failRequests('Mất kết nối core; kết quả lệnh chưa xác định, hãy đối chiếu trạng thái trước khi gửi lại');
             orders.interruptAll('Mất kết nối Core; đối soát xe và kiện hàng');
+            inventory.observationGap('Mất kết nối Core trong ca; dữ liệu kho cần kiểm tra');
             // UNKNOWN is an observation gap, not a claim that all robots stopped.
             for (const a of latestState.fleet.agvs) db.logAgvEventIfChanged(a.id,a.node,batteryForDisplay(a),'UNKNOWN');
             if (!stopped) {
@@ -198,10 +206,11 @@ function createGateway(options = {}) {
             });
         });
     }
+    const inventory=createWarehouseInventory({db,publish:()=>broadcast()});
     const orders = createOrderService({db,getState:()=>ready() && supported() ? latestState : null,
-        getSession:()=>session,send:command,publish:()=>broadcast()});
+        getSession:()=>session,send:command,publish:()=>broadcast(),inventory});
     const warehouseActions=createWarehouseActions({getState:()=>ready()&&supported()?latestState:null,
-      getSession:()=>session,send:command,publish:()=>broadcast()});
+      getSession:()=>session,send:command,publish:()=>broadcast(),inventory});
     const route = fn => (req,res,next) => Promise.resolve().then(()=>fn(req,res)).catch(next);
     function target(value) {
         const node = id(value,'target');
@@ -215,7 +224,9 @@ function createGateway(options = {}) {
         const data = await command({cmd:robot ? 'direct_goto' : 'add_task',target:destination,priority:prio,...(robot ? {agv_id:robot} : {})});
         res.json({ok:true,...data});
     }
-    app.get('/api/health',(req,res)=>res.json({ok:true,backend:'online',agv_connected:connected,core_ready:ready(),protocol_supported:supported(),mqtt_connected:latestState.mqtt_connected ?? null,storage_healthy:latestState.storage_healthy ?? null,warehouse_service_ms:SERVICE_MS,warehouse_test_actions:true,agv_ws_url:coreUrl,time:new Date().toISOString()}));
+    app.get('/api/health',(req,res)=>res.json({ok:true,backend:'online',agv_connected:connected,core_ready:ready(),protocol_supported:supported(),mqtt_connected:latestState.mqtt_connected ?? null,storage_healthy:latestState.storage_healthy ?? null,
+      warehouse_service_ms:SERVICE_MS,warehouse_order_lift_required:true,warehouse_lift_ready_timeout_ms:LIFT_READY_TIMEOUT_MS,
+      warehouse_lift_result_timeout_ms:LIFT_RESULT_TIMEOUT_MS,warehouse_test_actions:true,agv_ws_url:coreUrl,time:new Date().toISOString()}));
     app.get('/api/state',(req,res)=>res.json(browserState()));
     app.get('/api/shift',(req,res)=>res.json(latestState.shift || {supported:false,phase:'UNAVAILABLE'}));
     app.post('/api/shift/start',route(async (req,res)=>res.json({ok:true,...await command({cmd:'start_shift'})})));
@@ -231,6 +242,20 @@ function createGateway(options = {}) {
     app.get('/api/tasks',(req,res)=>res.json(latestState.fleet.pending_tasks));
     app.get('/api/tasks/history',route((req,res)=>res.json(db.getTaskHistory(limit(req)))));
     app.get('/api/orders',(req,res)=>res.json(orders.list()));
+    app.get('/api/warehouse',(req,res)=>res.json(inventory.snapshot()));
+    app.post('/api/warehouse/configure',route((req,res)=>{
+        requireCore();
+        const unresolved=orders.list().some(order=>order.status==='active')||
+            warehouseActions.list().some(action=>!['completed','interrupted'].includes(action.status));
+        inventory.configure(req.body,latestState,unresolved);res.json({ok:true,warehouse:inventory.snapshot()});
+    }));
+    app.get('/api/warehouse/events',route((req,res)=>res.json(inventory.history(limit(req,50,1000)))));
+    app.get('/api/warehouse/reports',route((req,res)=>res.json(inventory.reports(limit(req,50,200)))));
+    app.get('/api/warehouse/reports/:id',route((req,res)=>{
+        const report=inventory.reportById(id(req.params.id));if(!report)throw httpError(404,'Không tìm thấy báo cáo kho');
+        if(req.query.download==='1')res.attachment(`warehouse-${report.id}.json`);
+        res.json(report);
+    }));
     app.post('/api/agvs/:id/warehouse-action',route(async(req,res)=>{requireCore();res.status(201).json({ok:true,action:await warehouseActions.create(id(req.params.id),req.body)});}));
     app.post('/api/orders',route((req,res)=>{requireCore();res.status(201).json({ok:true,order:orders.create(req.body)});}));
     app.post('/api/orders/:id/resolve',route((req,res)=>res.json({ok:true,order:orders.resolve(id(req.params.id,'order id'),req.body.physically_clear)})));
@@ -295,6 +320,7 @@ function createGateway(options = {}) {
         if (current !== wasFresh) {
             if (!current) {
                 orders.interruptAll('Dữ liệu Core đã cũ; đối soát xe và kiện hàng');
+                inventory.observationGap('Dữ liệu Core đã cũ trong ca');
                 for (const a of latestState.fleet.agvs) db.logAgvEventIfChanged(a.id,a.node,batteryForDisplay(a),'UNKNOWN');
             }
             broadcast();wasFresh = current;

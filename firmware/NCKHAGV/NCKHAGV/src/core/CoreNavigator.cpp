@@ -49,6 +49,12 @@ MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
     const uint32_t limit = Config::LINE_LOSS_GRACE_MS ? Config::LINE_LOSS_GRACE_MS :
         (searchDirection_ != MotorAction::Stop ? Config::LINE_RECOVERY_TIMEOUT_MS : Config::LINE_LOSS_CONFIRM_MS);
     if (elapsed >= limit) {
+#if defined(ARDUINO)
+        if (Config::DEBUG_ENABLED) Serial.printf(
+            "[LINE] search_timeout pattern=%u samples=%u elapsed=%lums limit=%lums node=%s next=%s\n",
+            in.linePattern, centerSamples_, static_cast<unsigned long>(elapsed),
+            static_cast<unsigned long>(limit), current_, nextNode());
+#endif
         fault(ErrorCode::LineLost);
         return MotorAction::Stop;
     }
@@ -58,12 +64,21 @@ MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
         searchMotorChangedMs_ = in.now;
         return MotorAction::Stop;
     }
-    // Accept only a narrow centered line, not a side eye or a wide junction.
-    // Stop throughout validation; require elapsed time AND distinct samples.
-    if (in.linePattern == 2) {
+    // Forward profile01 may reacquire the same side across 100/110 or 001/011.
+    // Center, left and right are separate evidence; wide junctions are not proof.
+    const bool sideConfirm = Config::LINE_RECOVERY_SIDE_CONFIRM && !segmentReverse();
+    uint8_t candidate = in.linePattern == 2 ? 2 : 0;
+    if (sideConfirm) {
+        if (in.linePattern == 4 || in.linePattern == 6) candidate = 4;
+        if (in.linePattern == 1 || in.linePattern == 3) candidate = 1;
+    }
+    // Stop throughout validation; require elapsed time AND distinct fresh samples.
+    if (candidate) {
         searchPulse_ = false;
         searchMotorChangedMs_ = in.now;
-        if (!centerSamples_) {
+        if (!centerSamples_ || recoveryCandidate_ != candidate ||
+            (sideConfirm && static_cast<uint32_t>(in.now-centerSampleMs_) > Config::LINE_RECOVERY_SAMPLE_GAP_MS)) {
+            recoveryCandidate_ = candidate;
             centerSamples_ = 1;
             centerSinceMs_ = centerSampleMs_ = in.now;
         } else if (in.now != centerSampleMs_) {
@@ -73,10 +88,11 @@ MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
         if (centerSamples_ >= 3 && static_cast<uint32_t>(in.now-centerSinceMs_) >= Config::LINE_RECOVERY_CENTER_MS) {
             lineLossPending_ = false;
             centerSamples_ = 0;
-            const auto action = segmentReverse() ? MotorAction::Backward : MotorAction::Forward;
+            const auto action = segmentReverse() ? MotorAction::Backward : AGVMath::lineAction(in.linePattern);
             rememberLine(in, action);
 #if defined(ARDUINO)
-            if (Config::DEBUG_ENABLED) Serial.printf("[LINE] search_recovered node=%s next=%s\n", current_, nextNode());
+            if (Config::DEBUG_ENABLED) Serial.printf("[LINE] search_recovered pattern=%u motor=%s node=%s next=%s\n",
+                in.linePattern, motorActionName(action), current_, nextNode());
 #endif
             return action;
         }
@@ -524,7 +540,11 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
     if (static_cast<uint32_t>(in.now - segmentStartedMs_) >= Config::SEGMENT_TIMEOUT_MS) {
         fault(ErrorCode::MotionTimeout); return MotorAction::Stop;
     }
-    if (missingZone()) return MotorAction::Stop;
+    if (missingZone()) {
+        // Evidence gathered before grant revocation must not survive the hold.
+        centerSamples_ = 0;
+        return MotorAction::Stop;
+    }
     const MotorAction action = segmentReverse()
         ? AGVMath::reverseLineAction(in.linePattern) : AGVMath::lineAction(in.linePattern);
     if (Config::LINE_RECOVERY_ENABLED && (lineLossPending_ || in.linePattern == 0))

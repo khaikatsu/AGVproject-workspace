@@ -115,9 +115,11 @@ MotorAction lineAction(uint8_t p) {
     switch (p) {
         case 2: case 5: case 7: return MotorAction::Forward;
         case 4: return MotorAction::CorrectLeft;
-        case 6: return Config::ONE_ROBOT_TRIAL ? MotorAction::GentleCorrectLeft : MotorAction::CorrectLeft;
+        case 6: return Config::ONE_ROBOT_TRIAL || Config::GENTLE_FORWARD_CORRECTION
+            ? MotorAction::GentleCorrectLeft : MotorAction::CorrectLeft;
         case 1: return MotorAction::CorrectRight;
-        case 3: return Config::ONE_ROBOT_TRIAL ? MotorAction::GentleCorrectRight : MotorAction::CorrectRight;
+        case 3: return Config::ONE_ROBOT_TRIAL || Config::GENTLE_FORWARD_CORRECTION
+            ? MotorAction::GentleCorrectRight : MotorAction::CorrectRight;
         default: return MotorAction::Stop;
     }
 }

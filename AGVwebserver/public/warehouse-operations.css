@@ -1,0 +1,73 @@
+/* Warehouse workflow: current assignments and inventory stay visible outside map sidebars. */
+.operations-board {flex:0 0 auto;margin:4px 12px 0;padding:16px 18px;border:1px solid #30455f;border-radius:12px;background:#0f1d30;}
+.operations-heading,.operations-section-heading,.transfer-card-heading {display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.operations-heading {margin-bottom:14px;}
+.operations-heading h2 {margin:4px 0 0;font-size:18px;letter-spacing:-.02em;}
+.operations-columns {display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:22px;}
+.operations-columns>div {min-width:0;}
+.operations-section-heading {margin-bottom:9px;}
+.operations-section-heading h3 {margin:0;font-size:12px;color:#d5e4f6;}
+.operations-section-heading>span {font-size:11px;color:#a9bad0;}
+.operation-badge {display:inline-flex;align-items:center;gap:5px;padding:4px 8px;max-width:100%;border:1px solid #37516f;border-radius:6px;color:#a9c8ed;background:#162b43;font-size:11px;line-height:1.35;}
+.operation-badge[data-tone="good"] {color:#75e2b9;border-color:#295c50;background:#123b32;}
+.operation-badge[data-tone="warn"] {color:#ffd18c;border-color:#72572e;background:#3b2e1b;}
+.operation-badge[data-tone="bad"] {color:#ffb0b0;border-color:#82454f;background:#40222d;}
+.robot-transfer-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+.robot-transfer-card {min-width:0;padding:12px;border:1px solid #344b68;border-top:3px solid var(--vehicle-color,#6fafff);border-radius:9px;background:#14243a;}
+.robot-transfer-card[data-tone="bad"] {border-color:#88505b;}
+.robot-transfer-card[data-robot-transfer="02"] {--vehicle-color:#51d7bf;}
+.transfer-card-heading strong {font-size:15px;color:var(--vehicle-color,#8cbfff);}
+.transfer-card-heading .operation-badge {font-size:10px;}
+.transfer-phase {margin:10px 0 4px;font-size:13px;font-weight:650;line-height:1.45;}
+.transfer-route {display:grid;grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr);align-items:center;gap:5px;margin:10px 0;}
+.transfer-route-end {min-width:0;padding:8px;border:1px solid #334d6e;border-radius:6px;background:#0e1d31;}
+.transfer-route-end span {display:block;font-size:10px;color:#9fb6d1;}
+.transfer-route-end strong {display:block;font-size:21px;line-height:1.25;color:#f0f7ff;overflow-wrap:anywhere;}
+.transfer-route-end[data-current="true"] {border-color:#6ea9ff;background:#1c385b;}
+.transfer-route-arrow {text-align:center;color:#88b7f3;font-size:19px;}
+.transfer-metadata {margin:5px 0;color:#b3c7df;font-size:11px;line-height:1.5;overflow-wrap:anywhere;}
+.transfer-alert {margin:6px 0 0;color:#ffc58e;font-size:11px;line-height:1.5;overflow-wrap:anywhere;}
+.transfer-stage-list {display:flex;gap:4px;list-style:none;margin:10px 0 0;padding:0;}
+.transfer-stage-list li {flex:1;min-width:0;border-top:3px solid #34475e;padding-top:4px;color:#899fb9;font-size:9px;text-align:center;}
+.transfer-stage-list li[data-stage="done"] {border-color:#3cbf9c;color:#80d5b9;}
+.transfer-stage-list li[data-stage="current"] {border-color:#7cb5ff;color:#c7e2ff;}
+.warehouse-slot-grid {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;}
+.warehouse-slot-card {min-width:0;border:1px solid #3b536e;border-radius:7px;background:#122338;padding:9px 10px;}
+.warehouse-slot-card[data-tone="good"] {border-color:#2a6457;background:#103128;}
+.warehouse-slot-card[data-tone="warn"] {border-color:#866537;background:#382e20;}
+.warehouse-slot-card[data-tone="bad"] {border-color:#985463;background:#38232d;}
+.warehouse-slot-header {display:flex;justify-content:space-between;align-items:baseline;gap:5px;}
+.warehouse-slot-header strong {font-size:17px;color:#edf5ff;}
+.warehouse-slot-header span {font-size:10px;color:#bed0e5;}
+.warehouse-slot-rack {margin:6px 0 3px;font-size:13px;font-weight:650;overflow-wrap:anywhere;}
+.warehouse-slot-detail,.warehouse-slot-baseline {margin:3px 0;color:#c2cfe0;font-size:10px;line-height:1.5;overflow-wrap:anywhere;}
+.warehouse-slot-baseline {color:#97acc4;}
+.operations-footnote {margin:8px 0 0;font-size:10px;color:#9bb1cc;}
+.operations-board[data-stale="true"] .robot-transfer-grid,.operations-board[data-stale="true"] .warehouse-slot-grid {opacity:.7;}
+.transfer-form-step {display:flex;align-items:center;gap:8px;margin:14px 0 7px;}
+.transfer-step-number {display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:#234571;color:#cce2ff;font-size:11px;font-weight:700;}
+.order-line {grid-template-columns:minmax(0,1fr) 30px;}
+.order-line input[type="hidden"] {display:none;}
+.order-line select {min-height:40px;font-size:12px;}
+.add-transfer-line {min-height:28px;font-size:11px;padding:4px 8px;}
+.transfer-preview {border:1px solid #40669b;border-radius:8px;padding:10px;margin:14px 0 8px;background:#192f4e;}
+.transfer-preview .transfer-route {margin:0;}
+.transfer-preview p {margin:0;font-size:12px;color:#c1d7f3;line-height:1.5;}
+.transfer-form-hint {font-size:11px;line-height:1.5;color:#ffd18c;}
+.transfer-form-hint:empty {display:none;}
+#orderDispatchHint {margin:9px 0 12px;font-size:11px;}
+.order-progress {border:0;border-top:1px solid #2b415b;margin:14px 0 0;padding:10px 0 0;}
+.order-progress summary {display:flex;justify-content:space-between;gap:8px;font-size:11px;color:#a9bed8;cursor:pointer;}
+.order-progress summary strong {color:#dfefff;}
+.order-entry {padding:8px 0;}
+.order-resolved-filter {margin:0 0 9px;color:#a9bed8;font-size:11px;cursor:pointer;}
+.order-item {padding:10px 0;}
+.order-transfer-line {display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin:0 0 4px;}
+.order-transfer-line strong {font-size:15px;color:#e7f2ff;}
+.order-transfer-line span {color:#87bdff;font-size:12px;}
+.order-route-details {margin:7px 0 0;color:#98b3d1;font-size:11px;}
+.order-route-details summary {font-size:10px;font-weight:400;}
+.order-route-details div {margin:4px 0;line-height:1.5;}
+#warehouseShiftSummary {text-align:right;}
+@media(max-width:1100px) {.operations-columns {grid-template-columns:minmax(0,1fr);gap:16px;}.warehouse-slot-grid {grid-template-columns:repeat(6,minmax(0,1fr));}.operations-board {margin:8px 12px 0;}}
+@media(max-width:720px) {.operations-board {margin:8px 10px 0;padding:13px;}.operations-heading {align-items:flex-start;}.operations-heading h2 {font-size:15px;}.operations-heading>.operation-badge {max-width:100px;}.warehouse-slot-grid {grid-template-columns:repeat(3,minmax(0,1fr));}.robot-transfer-grid {grid-template-columns:minmax(0,1fr);}.transfer-route-end strong {font-size:22px;}.operations-columns {gap:18px;}.operations-section-heading {align-items:flex-start;}}

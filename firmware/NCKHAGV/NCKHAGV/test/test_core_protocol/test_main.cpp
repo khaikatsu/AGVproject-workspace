@@ -1165,6 +1165,83 @@ void test_line_search_no_direction_and_expired_memory_hold_still() {
                               static_cast<int>(nav.update(in)));
     }
 }
+void test_robot01_side_recovery_resumes_same_route_before_deadline() {
+    if (!Config::GENTLE_FORWARD_CORRECTION) return;
+    for (bool reverse : {false, true}) for (uint8_t side : {1, 3, 4, 6}) {
+        CoreNavigator nav; ControlInput in;
+        startRecoveryTrip(nav, in, reverse, UINT32_MAX - Config::RFID_STOP_DWELL_MS - 180u);
+        const auto lostAt = loseLine(nav, in, side);
+        MotorAction action = MotorAction::Stop;
+        for (unsigned sample=0; sample<=5; ++sample) {
+            in.now = lostAt + 100 + sample*20;
+            // A side eye and side+center are evidence of the same side.
+            in.linePattern = sample%2 ? (side<=3 ? 1 : 4) : side;
+            action = nav.update(in);
+            if (!reverse && sample<5)
+                TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(action));
+            if (sample<5 || reverse) TEST_ASSERT_TRUE(nav.recoveringLine());
+        }
+        if (reverse) { TEST_ASSERT_FALSE(nav.following()); continue; }
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(AGVMath::lineAction(in.linePattern)),static_cast<int>(action));
+        TEST_ASSERT_TRUE(nav.following()); TEST_ASSERT_FALSE(nav.recoveringLine());
+        TEST_ASSERT_EQUAL_INT(301,nav.routeCommandId()); TEST_ASSERT_EQUAL_INT(0,nav.pathIndex());
+        TEST_ASSERT_EQUAL_STRING("GS1",nav.nextNode());
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None),static_cast<int>(nav.error()));
+    }
+}
+void test_robot01_side_recovery_rejects_noise_stale_samples_and_latched_fault() {
+    if (!Config::GENTLE_FORWARD_CORRECTION) return;
+    for (uint8_t interruption : {0, 2, 3, 5, 7}) {
+        CoreNavigator nav; ControlInput in; startRecoveryTrip(nav,in);
+        const auto lostAt=loseLine(nav,in,4);
+        for (unsigned elapsed : {100u,120u,140u,160u}) {
+            in.now=lostAt+elapsed; in.linePattern=6;
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        }
+        in.now=lostAt+180; in.linePattern=interruption; nav.update(in);
+        in.now=lostAt+200; in.linePattern=6;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        TEST_ASSERT_TRUE(nav.recoveringLine());
+        // One timestamp and a >50ms sampling gap cannot count as stable line.
+        for (int repeat=0;repeat<5;++repeat) nav.update(in);
+        in.now=lostAt+300; nav.update(in);
+        TEST_ASSERT_TRUE(nav.recoveringLine());
+        in.now=lostAt+400; nav.update(in);
+        TEST_ASSERT_TRUE(nav.recoveringLine());
+        in.now=lostAt+Config::LINE_RECOVERY_TIMEOUT_MS;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost),static_cast<int>(nav.error()));
+        in.linePattern=2; in.now+=20;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        TEST_ASSERT_FALSE(nav.active());
+    }
+}
+void test_robot01_side_recovery_revalidates_after_grant_or_obstacle() {
+    if (!Config::GENTLE_FORWARD_CORRECTION) return;
+    for (bool obstacle : {false,true}) {
+        CoreNavigator nav; auto in=straightInput(); TEST_ASSERT_TRUE(startStraightTrip(nav,in));
+        in.linePattern=4; ++in.now; nav.update(in);
+        in.linePattern=0; ++in.now; const auto lostAt=in.now; nav.update(in);
+        for (unsigned elapsed : {100u,120u,140u,160u}) {
+            in.now=lostAt+elapsed; in.linePattern=6;
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        }
+        if (obstacle) in.obstacle=true; else nav.revokeGrant("M4",101);
+        in.now=lostAt+180;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        if (obstacle) in.obstacle=false; else TEST_ASSERT_TRUE(nav.grant("M4",102));
+        in.now=lostAt+200;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        TEST_ASSERT_TRUE(nav.recoveringLine());
+        for (unsigned elapsed : {220u,240u,260u,280u}) {
+            in.now=lostAt+elapsed;
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        }
+        in.now=lostAt+300;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(AGVMath::lineAction(6)),static_cast<int>(nav.update(in)));
+        TEST_ASSERT_TRUE(nav.following()); TEST_ASSERT_EQUAL_INT(42,nav.routeCommandId());
+    }
+}
 void test_line_search_hazards_stop_cancel_and_grant() {
     if (!Config::LINE_RECOVERY_ENABLED) return;
     for (int hazard = 0; hazard < 7; ++hazard) {
@@ -1410,6 +1487,9 @@ int main() {
     RUN_TEST(test_robot02_left_vote_noise_spacing_wide_and_blank);
     RUN_TEST(test_line_search_direction_pulses_and_reverse);
     RUN_TEST(test_line_search_requires_stable_center_and_keeps_task);
+    RUN_TEST(test_robot01_side_recovery_resumes_same_route_before_deadline);
+    RUN_TEST(test_robot01_side_recovery_rejects_noise_stale_samples_and_latched_fault);
+    RUN_TEST(test_robot01_side_recovery_revalidates_after_grant_or_obstacle);
     RUN_TEST(test_line_search_no_direction_and_expired_memory_hold_still);
     RUN_TEST(test_line_search_hazards_stop_cancel_and_grant);
     RUN_TEST(test_line_search_rfid_stops_and_clears_old_direction);

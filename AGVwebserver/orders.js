@@ -2,18 +2,22 @@ const {randomUUID} = require('crypto');
 const {planOrder,shortestCost,shortestRoute} = require('./order-planner');
 
 const SERVICE_MS = 5000;
+const LIFT_READY_TIMEOUT_MS = 5000;
+const LIFT_RESULT_TIMEOUT_MS = 15000;
 const activeItem = item=>!['queued','delivered','interrupted'].includes(item.status);
 
-function createOrderService({db,getState,getSession,send,publish}) {
+function createOrderService({db,getState,getSession,send,publish,inventory}) {
   const orders = db.getOrders();
   let tickPromise = null,stopped = false;
   const save = order=>{order.updated = new Date().toISOString();db.saveOrder(order);publish();};
+  const moveKey=(order,item)=>`order:${order.id}:${item.number}`;
   // A restart loses the in-memory command handshake and cargo observation.
   for (const order of orders) if (order.status === 'active' && !order.items.every(item=>item.status === 'queued' && !item.task_id)) {
     order.status = 'needs_attention';order.reason = 'Gateway khởi động lại; đối soát vị trí xe và kiện hàng trước khi tạo đơn mới';
     save(order);
   }
   function interrupt(order,item,reason) {
+    if(inventory)for(const candidate of order.items)inventory.interrupt(moveKey(order,candidate),reason);
     if (item) {item.status = 'interrupted';item.reason = reason;}
     order.status = 'needs_attention';order.reason = reason;save(order);
   }
@@ -31,6 +35,15 @@ function createOrderService({db,getState,getSession,send,publish}) {
   function robotAt(state,item,node) {
     const robot = state.fleet.agvs.find(candidate=>candidate.id === item.robot);
     return robot && robot.online !== false && robot.position_valid !== false && robot.state === 'IDLE' && robot.node === node && !robot.task_id;
+  }
+  function liftReady(robot,node) {
+    return robot?.node===node && robot.lift?.supported===true && robot.lift.ready===true &&
+      robot.lift.fresh===true && robot.lift.observed_node===node;
+  }
+  function beginLiftWait(order,item,pickup) {
+    item.task_id=null;item.lift_command_id=null;item.lift_sent_at=null;
+    item.lift_wait_started_at=Date.now();delete item.service_until;
+    item.status=pickup?'waiting_pickup_lift':'waiting_dropoff_lift';save(order);
   }
   function delivered(order,item) {
     item.status='delivered';item.completed_at=new Date().toISOString();item.task_id=null;
@@ -68,22 +81,41 @@ function createOrderService({db,getState,getSession,send,publish}) {
       const node = pickup ? item.pickup : exiting ? item.exit_gate : item.dropoff;
       if (!robotAt(state,item,node)) {interrupt(order,item,`Task hoàn thành nhưng xe chưa xác nhận đứng ở ${node}`);return;}
       if (exiting) {delivered(order,item);return;}
-      item.status = pickup ? 'pickup_service' : 'dropoff_service';
-      item.service_until = new Date(Date.now()+SERVICE_MS).toISOString();save(order);
+      beginLiftWait(order,item,pickup);
       return;
     }
-    if (item.status !== 'pickup_service' && item.status !== 'dropoff_service') return;
-    const pickup = item.status === 'pickup_service',node = pickup ? item.pickup : item.dropoff;
-    if (!robotAt(state,item,node)) {interrupt(order,item,`Xe rời ${node} trong lúc mô phỏng bốc/dỡ`);return;}
-    if (Date.now() < Date.parse(item.service_until)) return;
-    if (pickup) item.status = 'ready_dropoff';
-    else {item.status='ready_exit';item.exit_gate=warehouseGate(state,item.dropoff);}
-    save(order);
+    if (item.status==='waiting_pickup_lift' || item.status==='waiting_dropoff_lift') {
+      const pickup=item.status==='waiting_pickup_lift',node=pickup?item.pickup:item.dropoff;
+      if (!robotAt(state,item,node)) {interrupt(order,item,`Xe rời ${node} trước khi servo sẵn sàng`);return;}
+      if (Date.now()-item.lift_wait_started_at>LIFT_READY_TIMEOUT_MS)
+        interrupt(order,item,`Servo xe ${item.robot} chưa sẵn sàng tại ${node}`);
+      return;
+    }
+    if (item.status!=='pickup_lift' && item.status!=='dropoff_lift') return;
+    const pickup=item.status==='pickup_lift',node=pickup?item.pickup:item.dropoff,expected=pickup;
+    if (robot.node!==node) {interrupt(order,item,`Xe rời ${node} khi đang nâng/hạ kệ`);return;}
+    const lift=robot.lift;
+    if (lift?.command_id===item.lift_command_id && lift.state==='INTERRUPTED') {
+      interrupt(order,item,`Servo xe ${item.robot} bị gián đoạn`);return;
+    }
+    if (lift?.fresh===true && lift.command_id===item.lift_command_id &&
+        lift.state===(pickup?'DONE_UP':'DONE_DOWN') && lift.active===false &&
+        robot.virtual_cargo_known===true && robot.virtual_cargo===expected && robotAt(state,item,node)) {
+      inventory?.confirmLift(moveKey(order,item),pickup?'pickup':'dropoff',robot,item.lift_command_id,order.core_session_id);
+      item.lift_completed_at=new Date().toISOString();
+      if (pickup) item.status='ready_dropoff';
+      else {item.status='ready_exit';item.exit_gate=warehouseGate(state,item.dropoff);}
+      save(order);return;
+    }
+    if (Date.now()-item.lift_sent_at>LIFT_RESULT_TIMEOUT_MS)
+      interrupt(order,item,`Không nhận hoàn tất servo đúng lệnh tại ${node}; không cho xe chạy tiếp`);
   }
   function eligible(state,used) {
     const trialRobot = selectedRobot(state);
     return state.fleet.agvs.filter(robot=>robot.participating !== false && robot.state === 'IDLE' && !robot.error && robot.online !== false && robot.position_valid !== false &&
-      (!trialRobot || robot.id === trialRobot) && !robot.task_id && !used.has(robot.id));
+      (!trialRobot || robot.id === trialRobot) && !robot.task_id && !used.has(robot.id) && robot.lift?.supported===true &&
+      (!inventory || inventory.robotAvailable(robot.id)) &&
+      !(robot.virtual_cargo_known===true && robot.virtual_cargo===true));
   }
   function selectedRobot(state) {
     if (state.shift?.test_mode === 'robot01') return '01';
@@ -105,6 +137,8 @@ function createOrderService({db,getState,getSession,send,publish}) {
     if (robot.online === false) return `Xe ${robot.id} đang mất kết nối`;
     if (robot.error || robot.state === 'ERROR') return `Xe ${robot.id} đang lỗi ${robot.error || 'ERROR'}; cần xử lý trước khi lấy hàng`;
     if (robot.position_valid === false) return `Xe ${robot.id} chưa xác nhận vị trí RFID`;
+    if (robot.lift?.supported!==true) return `Xe ${robot.id} chưa báo capability nâng/hạ servo`;
+    if (robot.virtual_cargo_known===true && robot.virtual_cargo===true) return `Xe ${robot.id} đang được ghi nhận có kệ trên xe`;
     if (robot.state !== 'IDLE' || robot.task_id) return `Xe ${robot.id} đang thực hiện task ${robot.task_id || ''}`;
     if (used.has(robot.id)) {
       const held=orders.find(order=>order.status==='needs_attention'&&order.items.some(candidate=>candidate.robot===robot.id&&!['queued','delivered'].includes(candidate.status)));
@@ -122,18 +156,26 @@ function createOrderService({db,getState,getSession,send,publish}) {
     if (selected) item.robot=selected;
     const robot=state.fleet.agvs.find(candidate=>candidate.id===item.robot);
     item.route_plan=preview(state,item,robot);
-    item.waiting_reason=selected ? waitingReason(state,robot,used,item) : 'Chờ xe sẵn sàng gần kho lấy nhất';
+    const participating=state.fleet.agvs.filter(candidate=>candidate.participating!==false);
+    item.waiting_reason=selected ? waitingReason(state,robot,used,item) :
+      participating.length && participating.every(candidate=>candidate.lift?.supported!==true) ?
+        'Chưa có xe tham gia báo capability nâng/hạ servo' : 'Chờ xe sẵn sàng gần kho lấy nhất';
     if (before!==JSON.stringify([item.robot,item.route_plan,item.waiting_reason,order.selection_policy])) save(order);
   }
   async function dispatch(order,item,robot,target,phase,state) {
+    if(phase==='pickup'&&inventory) {
+      try {
+        const move=inventory.reserve({key:moveKey(order,item),pickup:item.pickup,dropoff:item.dropoff,robot:robot.id});
+        item.rack_id=move.rack_id;
+      } catch(error) {item.waiting_reason=error.message;save(order);return;}
+    }
     item.robot = robot.id;item.status = phase === 'pickup' ? 'dispatching' : phase === 'exit' ? 'dispatching_exit' : 'dispatching_dropoff';
     item.waiting_reason='';
     if (phase === 'pickup') item.route_plan=preview(state,item,robot);
     item.task_id = null;save(order);
     if (robot.node === target) {
       if (phase === 'exit') {delivered(order,item);return;}
-      item.status = phase === 'pickup' ? 'pickup_service' : 'dropoff_service';
-      item.service_until = new Date(Date.now()+SERVICE_MS).toISOString();save(order);return;
+      beginLiftWait(order,item,phase==='pickup');return;
     }
     try {
       const result = await send({cmd:'direct_goto',agv_id:robot.id,target,priority:0});
@@ -143,6 +185,18 @@ function createOrderService({db,getState,getSession,send,publish}) {
       item.status = phase === 'pickup' ? 'to_pickup' : phase === 'exit' ? 'to_exit' : 'to_dropoff';save(order);
     } catch (error) {
       interrupt(order,item,`Không xác định được chặng ${phase} của kiện ${item.number}: ${error.message}`);
+    }
+  }
+  async function dispatchLift(order,item,robot,pickup) {
+    const node=pickup?item.pickup:item.dropoff;
+    item.status=pickup?'dispatching_pickup_lift':'dispatching_dropoff_lift';save(order);
+    try {
+      const result=await send({cmd:'warehouse_lift',agv_id:robot.id,node,action:pickup?'pickup':'dropoff'});
+      if(!Number.isSafeInteger(result.command_id)||result.command_id<=0)throw new Error('Core không trả command_id servo');
+      item.lift_command_id=result.command_id;item.lift_sent_at=Date.now();
+      item.status=pickup?'pickup_lift':'dropoff_lift';save(order);
+    } catch(error) {
+      interrupt(order,item,`Không xác định được thao tác ${pickup?'nâng':'hạ'} kệ: ${error.message}`);
     }
   }
   function tick() {
@@ -177,6 +231,17 @@ function createOrderService({db,getState,getSession,send,publish}) {
             const robot=state.fleet.agvs.find(candidate=>candidate.id===item.robot);
             if (!robot || !robotAt(state,item,item.dropoff)) {interrupt(order,item,'Xe không còn ở kho giao trước khi lùi ra gate');break;}
             await dispatch(order,item,robot,item.exit_gate,'exit',state);
+          } else if (item.status==='waiting_pickup_lift' || item.status==='waiting_dropoff_lift') {
+            const pickup=item.status==='waiting_pickup_lift',node=pickup?item.pickup:item.dropoff;
+            const robot=state.fleet.agvs.find(candidate=>candidate.id===item.robot);
+            if (!robot || !robotAt(state,item,node)) {interrupt(order,item,`Xe không còn đứng tại ${node} trước khi nâng/hạ`);break;}
+            if (pickup && robot.virtual_cargo_known===true && robot.virtual_cargo===true) {
+              interrupt(order,item,`Xe ${robot.id} đã có kệ trước lệnh nâng`);break;
+            }
+            if (!pickup && (robot.virtual_cargo_known!==true || robot.virtual_cargo!==true)) {
+              interrupt(order,item,`Không xác nhận được kệ đang ở trên xe ${robot.id} trước lệnh hạ`);break;
+            }
+            if (liftReady(robot,node)) await dispatchLift(order,item,robot,pickup);
           } else if (item.status === 'ready_dropoff') {
             const robot = state.fleet.agvs.find(candidate=>candidate.id === item.robot);
             if (!robot || !robotAt(state,item,item.pickup)) {interrupt(order,item,'Xe không còn ở kho lấy trước khi giao');break;}
@@ -208,6 +273,7 @@ function createOrderService({db,getState,getSession,send,publish}) {
       plan = planOrder(state.map,body);
       for (const item of plan.items) {warehouseGate(state,item.pickup);warehouseGate(state,item.dropoff);}
     } catch (error) {error.status = 400;throw error;}
+    inventory?.assertPlan(plan);
       const order = {id:`order-${Date.now()}-${randomUUID().slice(0,8)}`,...plan,destinationOwners:{},status:'active',reason:'',
       core_session_id:getSession(),created:new Date().toISOString()};
     for (const item of order.items) planQueued(order,item,state,new Set());
@@ -219,4 +285,4 @@ function createOrderService({db,getState,getSession,send,publish}) {
   }};
 }
 
-module.exports = {createOrderService,SERVICE_MS};
+module.exports = {createOrderService,SERVICE_MS,LIFT_READY_TIMEOUT_MS,LIFT_RESULT_TIMEOUT_MS};

@@ -141,7 +141,7 @@ function showView(view) {
     else button.removeAttribute('aria-current');
   });
   if (view === 'map' && backendOnline) loadMapList();
-  if (view === 'reports' && backendOnline) {loadLatestKpi();loadKpiHistory();}
+  if (view === 'reports' && backendOnline) {loadLatestKpi();loadKpiHistory();loadWarehouseReports();}
   $('left-panel').scrollTop = 0;$('right-panel').scrollTop = 0;
   closeMapPreview();
   scheduleMapDocking();
@@ -213,6 +213,8 @@ function updateConnection() {
   $('startShiftBtn').disabled = !controlsReady() || !shift?.supported || !shift.can_start || $('startShiftBtn').dataset.busy === 'true';
   $('endShiftBtn').disabled = !controlsReady() || !shift?.supported || shift.phase !== 'RUNNING' || $('endShiftBtn').dataset.busy === 'true';
   updateWarehouseControls();
+  updateWarehouseInventoryControls();
+  renderWarehouseOperations(lastState);renderTransferForm();
   document.querySelectorAll('[data-map-edit]').forEach(button=>button.disabled = !canEditMap() || button.dataset.busy === 'true');
   $('mapEditHint').textContent = canEditMap() ? 'Có thể chỉnh cấu trúc bản đồ.' : 'Chỉnh cấu trúc khi core chưa có robot và nhiệm vụ. Vẫn có thể xem bản đồ đã lưu.';
   renderObstacleAction();renderSummary(lastState);
@@ -230,6 +232,8 @@ function connect(automatic = false) {
   if (nextApi !== API_BASE) {
     lastState = null;recentLogs.length = 0;seenLogs.clear();logSession = null;
     closeMapPreview();renderEmpty();renderSystemLog();renderKpi(null);
+    warehouseLatestReport=null;warehouseReportSelection=null;
+    $('warehouseReportList').textContent='Chưa tải báo cáo kho.';$('warehouseReportDetail').replaceChildren();
     $('mapListBox').replaceChildren();$('kpiHistoryBox').replaceChildren();$('robotHistoryPanel').hidden = true;
   }
   API_BASE = nextApi;backendOnline = false;updateConnection();
@@ -371,11 +375,10 @@ function addOrderLine(kind,node = '',quantity = 1) {
   for (const warehouse of orderWarehouses) select.add(new Option(warehouse,warehouse));
   if (node && orderWarehouses.includes(node)) select.value = node;
   else if (kind === 'dropoff' && orderWarehouses.length > 1) select.selectedIndex = 1;
-  const count = document.createElement('input');count.type = 'number';count.min = '1';count.max = '20';count.step = '1';
-  count.value = String(quantity);count.setAttribute('aria-label','Số kiện');
+  const count = document.createElement('input');count.type = 'hidden';count.value = '1';
   const remove = document.createElement('button');remove.type = 'button';remove.className = 'btn-outline';remove.textContent = '×';remove.title = 'Xóa kho';
   remove.setAttribute('aria-label','Xóa kho');remove.onclick = ()=>{row.remove();updateOrderTotals();};
-  count.oninput = updateOrderTotals;select.onchange = updateOrderTotals;
+  select.onchange = ()=>{select.dataset.initialized='true';updateOrderTotals();};
   row.append(select,count,remove);box.append(row);updateOrderTotals();
 }
 function populateOrderWarehouses(map) {
@@ -400,14 +403,16 @@ function updateOrderTotals() {
   const pickups = orderLines('pickup'),deliveries = orderLines('dropoff');
   const taken = pickups.reduce((sum,line)=>sum+(Number.isInteger(line.quantity) ? line.quantity : 0),0);
   const given = deliveries.reduce((sum,line)=>sum+(Number.isInteger(line.quantity) ? line.quantity : 0),0);
-  $('orderTotals').textContent = `Lấy ${taken} · giao ${given} kiện${taken !== given ? ' · chưa khớp' : ''}`;
+  $('orderTotals').textContent = `Lấy ${taken} · giao ${given} kệ${taken !== given ? ' · chưa khớp' : ''}`;
+  renderTransferForm();
 }
 async function submitOrder() {
   if (!tasksReady()) return toast('Chờ ca RUNNING và Core sẵn sàng','warn');
+  const reason=validateTransferForm();if(reason)return toast(reason,'warn');
   const pickups = orderLines('pickup'),deliveries = orderLines('dropoff');
   if (!pickups.length || !deliveries.length) return toast('Cần ít nhất một kho lấy và một kho giao','warn');
   const result = await control('POST','/api/orders',{pickups,deliveries},$('submitOrderBtn'));
-  if (result) {toast(`Đã tạo đơn ${result.order.id.slice(0,19)} · ${result.order.total} kiện`);showView('tasks');}
+  if (result) {toast(`Đã tạo ${result.order.total} lượt chuyển kệ. Theo dõi tuyến của từng xe ở bảng phía trên.`);showView('tasks');}
 }
 function singleWarehouseRobot() {
   const shift=lastState?.shift;
@@ -450,15 +455,19 @@ function updateOrderTimers() {
   renderWarehouseActionStatus();
 }
 function renderOrderProgress(orders) {
-  const rows = Array.isArray(orders) ? orders : [];
+  const rows = (Array.isArray(orders) ? orders : []).filter(order=>order.status!=='closed'||$('orderShowResolved').checked);
   const select = $('orderProgressSelect');
-  const optionsKey = JSON.stringify(rows.map(order=>order.id));
+  const optionsKey = JSON.stringify(rows.map(order=>[order.id,order.status,order.items.map(item=>[item.pickup,item.dropoff,item.robot])]));
   if (optionsKey !== orderProgressOptionsKey) {
     const previous = rows.find(order=>order.id === select.value);
     const selected = previous?.status === 'active' ? previous : rows.find(order=>order.status === 'active') || previous || rows[0];
     select.replaceChildren();
     if (!rows.length) select.add(new Option('Chưa có đơn hàng',''));
-    else for (const order of rows) select.add(new Option(`${order.id.slice(0,19)} · ${order.total} kiện`,order.id));
+    else for (const order of rows) {
+      const route=order.items.length===1?`${order.items[0].pickup} → ${order.items[0].dropoff}`:`${order.total} lượt chuyển kệ`;
+      const robots=[...new Set(order.items.map(item=>item.robot).filter(Boolean))];
+      select.add(new Option(`${route} · ${robots.length?`Xe ${robots.join(' + ')}`:'Chờ phân xe'}`,order.id));
+    }
     select.value = selected?.id || '';
     select.disabled = rows.length < 2;
     orderProgressOptionsKey = optionsKey;
@@ -469,35 +478,43 @@ function renderOrderProgress(orders) {
   const progress = $('orderProgressBar');
   progress.max = total || 1;
   progress.value = Math.min(delivered,total);
-  progress.setAttribute('aria-valuetext',`${delivered}/${total} kiện`);
-  $('orderProgressCount').textContent = `${delivered}/${total} kiện`;
+  progress.setAttribute('aria-valuetext',`${delivered}/${total} kệ`);
+  $('orderProgressCount').textContent = `${delivered}/${total} kệ`;
 }
 function renderOrders(orders) {
+  orders=Array.isArray(orders)?orders:[];
   const robot01Scope=!!singleWarehouseRobot();
   $('orderList').closest('section').hidden=robot01Scope;
   const selected=lastState?.shift?.test_mode === 'robot01' ? '01' : lastState?.shift?.test_mode === 'robot02' ? '02' :
     lastState?.shift?.trial_robot_id || lastState?.fleet?.trial_robot_id;
   if ($('orderDispatchHint')) $('orderDispatchHint').textContent=selected ?
-    `Chế độ test: mặc định xe ${selected}. Xe đi tới kho lấy rồi tới kho giao khi sẵn sàng.` :
-    'Server chọn xe sẵn sàng gần kho lấy nhất theo tổng trọng số đường có hướng.';
+    `Phạm vi hiện tại: xe ${selected}.` :
+    'Tự chọn xe sẵn sàng gần kho lấy nhất. Theo dõi xe và tuyến đã giao ở bảng phía trên.';
   renderOrderProgress(orders);
-  const key = JSON.stringify(orders || []);
+  const resolvedCount=orders.filter(order=>order.status==='closed').length;
+  $('orderResolvedFilter').hidden=resolvedCount===0;
+  $('orderResolvedFilterLabel').textContent=`Hiện đơn đã đối soát (${resolvedCount})`;
+  const visibleOrders=orders.filter(order=>order.status!=='closed'||$('orderShowResolved').checked);
+  const key = JSON.stringify([visibleOrders,resolvedCount]);
   if (key === orderRenderKey) return;
   orderRenderKey = key;
   const list = $('orderList');
   list.replaceChildren();
-  if (!orders?.length) {list.textContent = 'Chưa có đơn hàng';return;}
-  const names = {active:'Đang điều phối',completed:'Đã giao đủ (mô phỏng)',needs_attention:'Cần đối soát',closed:'Đã đóng sau đối soát'};
-  const phases = {queued:'Chờ xe',dispatching:'Đang cấp việc lấy',to_pickup:'Đi lấy',pickup_service:'Đang bốc hàng',
-    ready_dropoff:'Chờ giao',dispatching_dropoff:'Đang cấp việc giao',to_dropoff:'Đi giao',
-    dropoff_service:'Đang dỡ hàng',ready_exit:'Chờ lùi ra gate',dispatching_exit:'Đang cấp lệnh lùi ra gate',to_exit:'Lùi ra gate',
-    delivered:'Đã giao (mô phỏng)',interrupted:'Gián đoạn'};
-  for (const order of orders) {
+  if (!visibleOrders.length) {list.textContent = resolvedCount?'Không còn đơn đang xử lý. Các đơn đã đối soát được ẩn khỏi danh sách.':'Chưa có đơn hàng';return;}
+  const names = {active:'Đang điều phối',completed:'Đã hoàn thành',needs_attention:'Cần đối soát',closed:'Đã đóng sau đối soát'};
+  const phases = {queued:'Chờ xe',dispatching:'Đang cấp việc lấy',to_pickup:'Đi tới kệ nguồn',
+    waiting_pickup_lift:'Chờ servo sẵn sàng để nâng',dispatching_pickup_lift:'Đang gửi lệnh nâng',pickup_lift:'Đang nâng kệ',
+    ready_dropoff:'Chờ đưa kệ tới đích',dispatching_dropoff:'Đang cấp việc giao',to_dropoff:'Đưa kệ tới vị trí đích',
+    waiting_dropoff_lift:'Chờ servo sẵn sàng để hạ',dispatching_dropoff_lift:'Đang gửi lệnh hạ',dropoff_lift:'Đang hạ kệ',
+    ready_exit:'Chờ lùi ra gate',dispatching_exit:'Đang cấp lệnh lùi ra gate',to_exit:'Lùi ra gate',
+    delivered:'Đã đặt kệ (chưa có cảm biến tải)',interrupted:'Gián đoạn'};
+  for (const order of visibleOrders) {
     const entry = document.createElement('details');entry.className = 'order-entry';entry.dataset.orderId = order.id;
     entry.open = orderExpanded.has(order.id) ? orderExpanded.get(order.id) : order.status !== 'completed' && order.status !== 'closed';
     entry.addEventListener('toggle',()=>orderExpanded.set(order.id,entry.open));
     const delivered = order.items.filter(item=>item.status === 'delivered').length;
-    const summary = document.createElement('summary');summary.textContent = `${order.id.slice(0,19)} · ${delivered}/${order.total} kiện · ${names[order.status] || order.status}`;
+    const summary = document.createElement('summary');summary.textContent = `${delivered}/${order.total} kệ · ${names[order.status] || order.status}`;
+    summary.title=`${fmtDate(order.created)} · ${order.id}`;
     const progress = document.createElement('progress');progress.max = order.total;progress.value = delivered;
     entry.append(summary,progress);
     if (order.reason) {const reason = document.createElement('div');reason.className = 'order-reason';reason.textContent = order.reason;entry.append(reason);}
@@ -513,16 +530,22 @@ function renderOrders(orders) {
     }
     for (const item of order.items) {
       const line = document.createElement('div');line.className = 'order-item';
-      line.textContent = `Kiện ${item.number}: ${item.pickup} → ${item.dropoff} · ${item.robot || 'chưa phân xe'} · ${phases[item.status] || item.status}`;
+      const heading=operationText(line,'','div','order-transfer-line');
+      operationText(heading,`${item.pickup} → ${item.dropoff}`,'strong');
+      operationText(heading,item.robot?`Xe ${item.robot}`:'Chờ phân xe','span');
+      operationText(line,`${item.rack_id?`Kệ ${item.rack_id} · `:''}${phases[item.status] || item.status}`,'div','transfer-metadata');
       if (item.task_id) line.title = `Core task_id: ${item.task_id}`;
       if (item.waiting_reason) {
         const waiting=document.createElement('div');waiting.className='order-reason';waiting.textContent=item.waiting_reason;line.append(waiting);
       }
+      const routeDetails=document.createElement('details');routeDetails.className='order-route-details';
+      operationText(routeDetails,'Chi tiết đường đi','summary');
       if (item.route_plan) for (const [key,label] of [['pickup','Tuyến lấy dự kiến'],['delivery','Tuyến giao dự kiến'],['exit','Lùi sau khi giao']]) {
         const route=item.route_plan[key],detail=document.createElement('div');detail.className='order-service';
         detail.textContent=route?.path?.length ? `${label}: ${route.path.join(' → ')} · trọng số ${route.cost}` : `${label}: chưa có đường`;
-        line.append(detail);
+        routeDetails.append(detail);
       }
+      if(item.route_plan)line.append(routeDetails);
       if (item.status === 'pickup_service' || item.status === 'dropoff_service') {
         const timer = document.createElement('div');timer.className = 'order-service';
         timer.dataset.orderServiceUntil = item.service_until;timer.dataset.orderServiceKind = item.status === 'pickup_service' ? 'bốc hàng' : 'dỡ hàng';
@@ -600,6 +623,8 @@ function populateTaskAgvSelect(agvs) {
     : '';
 }
 function render(state) {
+  renderWarehouse(state.warehouse);
+  renderWarehouseOperations(state);
   renderShift(state.shift);
   if (state.fleet.accepting_tasks === false && selectedAgvId) cancelSelection();
   if (selectedAgvId && !state.fleet.agvs.some(a=>a.id === selectedAgvId && ['IDLE','WORKING','BLOCKED'].includes(a.state))) cancelSelection();
@@ -609,6 +634,8 @@ function render(state) {
   $('mapTitle').textContent = `${state.map.map_name || 'Bản đồ kho'} • phiên bản ${state.map.revision ?? '—'}`;
 }
 function renderEmpty() {
+  renderWarehouse(null);
+  renderWarehouseOperations(null);
   renderShift(null);
   renderFleet([]);renderTasks([]);renderTaskHistory([]);renderOrders([]);$('nodesG').replaceChildren();$('edgesG').replaceChildren();$('agvsG').replaceChildren();$('routesG').replaceChildren();$('sonarObstaclesG').replaceChildren();
   populateNodeOptions(null);renderSummary(null);renderObstacleAction();

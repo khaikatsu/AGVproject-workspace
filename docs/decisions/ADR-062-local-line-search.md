@@ -1,5 +1,17 @@
 # ADR-062 — Tìm lại line tại chỗ, giữ chặng đang chạy
 
+## Bổ sung 19/10/2026 — Recovery xe01 sau khôi phục firmware cũ
+
+SOURCE: người dùng kể lại lần thử thấy mắt còn đọc vạch nhưng xe không bám, sau đó server báo mất line; hiện không có xe để lấy trace. OBSERVED từ source đang làm việc sau khôi phục: recovery chỉ nhận010, dù001/011/100/110 hợp lệ khi Following bình thường. Ba ca native mới tái hiện việc vẫn xuất pivot hoặc không thoát recovery khi line bên liên tục. Chưa có bằng chứng runtime xác nhận đây là nguyên nhân duy nhất của lần thử được kể lại.
+
+IMPLEMENTED `20261019-robot01-side-recovery-v3`: profile01 bật `AGV_LINE_RECOVERY_SIDE_CONFIRM=1`, chỉ áp dụng Following đi tiến. Sau000, nhận010 hoặc nhóm100/110 hay001/011 ổn định cùng nhóm ít nhất100ms, ít nhất3 mẫu khác thời điểm, gap≤50ms. MotorSTOP suốt xác nhận. Đổi nhóm,000,101/111, mất grant hoặc vật cản xóa bằng chứng; không trộn line giữa với line bên. Đủ bằng chứng trước deadline trả đúng lineAction hiện tại và giữ tuyến/index/grant. Hết hạn vẫn chốtLINE_LOST; line quay lại sau đó không tự xóa lỗi. Serial bổ sung pattern/số mẫu/elapsed lúc timeout và pattern/action khi phục hồi.
+
+Không tăng hạn quét600ms hoặc số lượt quét; không khôi phục PD, grace2s hay trợ bám từ ADR-073. PWM tiến/gentle/hard/lùi/pivot giữ bản `gentle-curve-v2` (010=210/230,110=190/150,011=130/210). Lùi và profile02 tiếp tục cần010; nhánh giữ grant xóa mẫu xác nhận trước khi chờ. Các đoạn ADR-073 phía dưới ghi lịch sử trước khôi phục, không mô tả đầy đủ source hiện tại. VERIFIED: native98/98 và host navigator→driver hai profile PASS; xem tests/README.md. OPEN: chưa upload/đo xe thật, chưa xác minh firmwareBuild của lần thử người dùng kể lại.
+
+Cập nhật19/10/2026, [ADR-073 v6](ADR-073-forward-line-pd-two-robots.md): riêng xe01 có hướng tìm, hạn xác nhận lỗi nay2s tính từ000; motor vẫn chỉ quét≤600ms rồi STOP chờ xác nhận line. Xe02 giữ grace7s; xe01 không có hướng/đã quét giữ `LINE_LOSS_CONFIRM_MS` hiện tại7s. Hạn xoay/capture, lượt quét/chặng và các chốt an toàn không đổi. Quy tắc fault ngay600ms bên dưới là lịch sử trướcv6 đối với xe01 có hướng tìm.
+
+Cập nhật19/10/2026, [ADR-073 v5](ADR-073-forward-line-pd-two-robots.md): khi bậtPD và đangFollowing đi tiến, line bên001/011 hoặc100/110 ổn định cùng phía100ms/≥3 mẫu mới với gap≤50ms có thể kết thúc phục hồi trước deadline. GiữSTOP khi xác nhận; không trộn với010, không tự xóa lỗi đã chốt. Phần centered-only bên dưới vẫn áp cho lùi/tắtPD; Turning/TurnCapture giữ nguyên.
+
 ## Cập nhật17/10/2026 — REQ-ROBOT02-LINE-GRACE-7S-01
 
 SOURCE: người dùng muốn giữ lệnh khoảng7s khi mất line ngắn, để xe tự bám tiếp mà không bị server khóa ngay. Áp riêng xe02 theo phạm vi firmware đang chỉnh;01 giữ giới hạn cũ.

@@ -4,13 +4,13 @@ const SERVICE_MS=5000;
 const finished=action=>['completed','interrupted'].includes(action.status);
 
 // Temporary warehouse tests; the servo cargo marker is not an order or a load sensor.
-function createWarehouseActions({getState,getSession,send,publish}) {
+function createWarehouseActions({getState,getSession,send,publish,inventory}) {
   const actions=[];let running=null,closed=false;
   const scopedRobot=state=>state?.shift?.trial_robot_id ||
     (state?.shift?.operation_profile==='scoped'&&state.shift.active_robot_ids?.length===1 ? state.shift.active_robot_ids[0] :
       state?.shift?.test_mode==='robot01'?'01':state?.shift?.test_mode==='robot02'?'02':null);
   const changed=()=>publish();
-  function interrupt(action,reason){action.status='interrupted';action.reason=reason;changed();}
+  function interrupt(action,reason){if(action.inventory_tracked)inventory.interrupt(`action:${action.id}`,reason);action.status='interrupted';action.reason=reason;changed();}
   function at(state,action,node){const robot=state.fleet.agvs.find(robot=>robot.id===action.robot);
     return robot&&robot.online!==false&&robot.position_valid!==false&&!robot.error&&robot.state==='IDLE'&&!robot.task_id&&robot.node===node;}
   function complete(action){action.status='completed';action.task_id=null;action.completed_at=new Date().toISOString();changed();}
@@ -59,6 +59,12 @@ function createWarehouseActions({getState,getSession,send,publish}) {
     if(!Number.isFinite(route.cost)||!Number.isFinite(exit.cost))throw Object.assign(Error('Không có đường tới kho hoặc ra gate'),{status:409});
     const action={id:randomUUID(),robot:robotId,action:body.action,warehouse,gate,status:'dispatching',task_id:null,
       core_session_id:getSession(),servo:robot.lift?.supported===true,route:route.path,exit_route:exit.path,reason:'',created:new Date().toISOString()};
+    if(inventory?.snapshot().initialized) {
+      if(!action.servo)throw Object.assign(Error('Kho đã quản lý kệ: cần capability servo để cập nhật vị trí'),{status:409});
+      const move=inventory.reserve({key:`action:${action.id}`,robot:robotId,standalone:true,
+        pickup:body.action==='pickup'?warehouse:null,dropoff:body.action==='dropoff'?warehouse:null});
+      action.inventory_tracked=true;action.rack_id=move.rack_id;
+    }
     actions.push(action);if(actions.length>20)actions.shift();
     if(robot.node===warehouse)await beginService(action);
     else await dispatch(action,warehouse,false);
@@ -82,6 +88,7 @@ function createWarehouseActions({getState,getSession,send,publish}) {
       if(lift?.command_id===action.lift_command_id&&lift.state==='INTERRUPTED'){interrupt(action,'Servo bị gián đoạn');return;}
       if(lift?.fresh===true&&lift.command_id===action.lift_command_id&&lift.state===(up?'DONE_UP':'DONE_DOWN')&&
         lift.active===false&&robot.virtual_cargo_known===true&&robot.virtual_cargo===up&&at(state,action,action.warehouse)){
+        if(action.inventory_tracked)inventory.confirmLift(`action:${action.id}`,action.action,robot,action.lift_command_id,action.core_session_id);
         await dispatch(action,action.gate,true);return;
       }
       if(Date.now()-action.lift_sent_at>15000)interrupt(action,'Không nhận hoàn tất servo đúng lệnh; không tự lùi');

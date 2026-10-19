@@ -1,5 +1,11 @@
 # Phát triển web giám sát AGV
 
+18/10/2026, bổ sung REQ-WAREHOUSE-UI-01: tiêu đề bảng đổi thành **Trạng thái kho hàng** theo ảnh người dùng. Danh sách lượt và bộ chọn tiến độ mặc định ẩn đơn `closed` (đã đóng sau đối soát); bật **Hiện đơn đã đối soát (N)** để xem lại. Đơn active/cần đối soát vẫn hiện, dữ liệu SQLite và báo cáo không bị xóa.
+
+18/10/2026, REQ-WAREHOUSE-UI-01: bảng **Xe đang đi đâu · Kho đang có gì?** nằm phía trên map ở Tổng quan/Nhiệm vụ. Mỗi xe hiện LẤY TỪ→GIAO ĐẾN, pha hiện tại, RFID, đích lệnh và mã kệ; sáu ô kho hiện trạng thái hiện tại và đầu ca, xe lấy/nhận/giữ chỗ/đối soát. Form chuyển kệ bỏ ô số lượng1, hiện nguồn có kệ/đích trống và lý do nút giao việc chưa sẵn sàng. Tuyến/xe được ưu tiên trong danh sách đơn; mã/chi tiết đường nằm phần mở rộng. Dữ liệu cũ và lỗi không tiếp tục hiển thị bước như đang chạy. [ADR-071](decisions/ADR-071-warehouse-operations-overview.md).
+
+18/10/2026: bảng **Trạng thái kệ** ở Tổng quan/Nhiệm vụ/Báo cáo hiển thị từng ô K trống/có kệ/đặt chỗ/cần đối soát và kệ trên xe. Mở **Nhập / đối soát vị trí kệ khi ca đã đóng**, nhập mã tại vị trí thực tế, để trống ô rỗng, kiểm tra xe đã trống rồi xác nhận lưu. Không gán vị trí mặc định. Đơn chuyển kệ cần nguồn có kệ và đích trống, một kệ mỗi vị trí. Khu Báo cáo thêm nhật ký chuyển kệ và báo cáo đầu/cuối ca tự lưu khi Core CLOSED; chọn xem lại hoặc tải JSON. Vị trí dựa vào kết quả servo, chưa có cảm biến tải. [ADR-070](decisions/ADR-070-warehouse-racks-and-shift-reports.md).
+
 17/10/2026: mapv4 vẽ bốn cạnh bo theo geometry, gồm cả tuyến dự kiến và xem trước snapshot; không dựng nodeC hoặc đường chéo nối thẳng. Nhãn hai đoạn85/50, các node/kho/trạm giữ tên và mũi tên theo ảnh. Vị trí encoder/sonar do Core nội suy trên sơ đồ, chưa là tọa độ đo thật. [ADR-064](decisions/ADR-064-rounded-map-without-corner-tags.md).
 
 16/10/2026, test tạm: dashboard đọc `fleet.battery_gate_enabled=false` để hiện rõ bỏ chốt pin/sạc thủ công, không còn báo ngưỡng20/40 đang có hiệu lực. Bộ chọn xe vẫn giữ scope; thiếu cờ tương thích Core cũ. Số đo và cảnh báo pin vẫn hiển thị, không tự chặn nút theo %. [ADR-060](decisions/ADR-060-temporary-battery-bypass-manual-charge.md).

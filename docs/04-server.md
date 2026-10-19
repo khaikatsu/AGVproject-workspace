@@ -1,5 +1,7 @@
 # Phát triển server và lưu trữ
 
+CURRENT 19/10/2026: Core xử lý `STALE_COMMAND` như lỗi lệch counter bền vững: xóa pending retry, không phát STOP ID thấp kế tiếp, không tự xóa ERROR từ diagnostic khỏe. Diagnostic `lastCommandId` đẩy `CommandIds` tiến và reserve bền vững phía trên; chỉ thao tác `clear_error` sau xác minh mới gửi `RESET_FAULT` ID mới. Không replay GOTO/task cũ. [ADR-072](decisions/ADR-072-stale-command-counter-recovery.md).
+
 CURRENT 16/10/2026, ghi đè tạm để test: Core main comment ngưỡng pin gốc, bật bypass cho mở ca/task/GOTO và tắt tự sạc vì nhóm sạc thủ công. Kết thúc ca vẫn về trạm, đỗ IDLE; RFID/MQTT/ACK/mutex và scope giữ nguyên. Hai cờ trạng thái được công bố cho dashboard; không sửa firmware. [ADR-060](decisions/ADR-060-temporary-battery-bypass-manual-charge.md).
 
 CURRENT 16/10/2026: một entrypoint/binary Core phục vụ scope xe 01, xe 02 hoặc cả hai. Scope là danh sách robot tham gia, không phải nhánh thuật toán trial; các chốt pin20/40, RFID, MQTT, ACK và mutex giữ như vận hành thật. State thêm `operation_profile` và `active_robot_ids`; robot thêm `participating`. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).

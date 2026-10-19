@@ -14,6 +14,14 @@ async function until(fn,timeout = 3000) {
   throw new Error('Timed out waiting for fixture');
 }
 function state() {return {protocol_version:1,core_session_id:'session-1',map:{nodes:[{id:'A',x:0,y:0,type:'waypoint'},{id:'T',x:1,y:1,type:'station'}],edges:[{from:'A',to:'T',weight:1}],obstacles:[]},fleet:{agvs:[],pending_tasks:[],tasks:[]},mutex:{},logs:[]};}
+async function configureWarehouse(f,occupied) {
+  f.model.shift={phase:'CLOSED'};f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.shift?.phase==='CLOSED');
+  const before=(await f.api('GET','/api/warehouse')).data;
+  const result=await f.api('POST','/api/warehouse/configure',{expected_revision:before.revision,physically_verified:true,
+    slots:f.model.map.nodes.filter(node=>/^K[1-6]$/.test(node.id)).map(node=>({node:node.id,rack_id:occupied.includes(node.id)?`R${node.id}`:null}))});
+  assert.equal(result.status,200,JSON.stringify(result.data));
+}
 async function fixture(t,options = {}) {
   fs.mkdirSync(path.join(__dirname,'../.qa'),{recursive:true});
   const directory = fs.mkdtempSync(path.join(__dirname,'../.qa/gateway-test-'));
@@ -34,7 +42,8 @@ async function fixture(t,options = {}) {
       } else if (request.cmd === 'cancel_task') {
         const row = model.fleet.tasks.find(r=>r.task_id === request.task_id);row.status = 'cancelled';
         model.fleet.pending_tasks = model.fleet.tasks.filter(r=>r.status === 'pending');result.data.cancelled = 1;
-      } else if (request.cmd === 'load_map_data') {model.map = request.map;result.data.map_revision = 2;}
+      } else if (request.cmd === 'warehouse_lift') result.data.command_id = 900+commands.length;
+      else if (request.cmd === 'load_map_data') {model.map = request.map;result.data.map_revision = 2;}
       else if (request.cmd === 'set_obstacle' && options.noObstacleReply) return;
       if (options.delay) {
         const response=JSON.stringify({...result,state:model});
@@ -109,6 +118,7 @@ test('delta WebSocket includes order status changes after scheduler mutates an e
   const f=await fixture(t);f.model.map.nodes.push(...['K1','K2'].map(id=>({id,type:'station'})),...['G1','G2'].map(id=>({id,type:'waypoint'})));
   f.model.map.edges.push({from:'A',to:'K1',weight:1},{from:'K1',to:'K2',weight:1},
     {from:'K1',to:'G1',weight:1,two_way:true},{from:'K2',to:'G2',weight:1,two_way:true});
+  await configureWarehouse(f,['K1']);
   f.model.shift={phase:'RUNNING'};f.model.fleet.accepting_tasks=true;f.push();
   await until(async()=>(await f.api('GET','/api/state')).data.shift?.phase==='RUNNING');
   const socket=new WebSocket(f.base.replace('http:','ws:')+'/ws?delta=1'),messages=[];
@@ -141,8 +151,11 @@ test('warehouse orders use Core task IDs and wait at pickup before any delivery 
     edges:[{from:'A',to:'K1',weight:1},{from:'K1',to:'K3',weight:1},{from:'K1',to:'K4',weight:2},
         {from:'K2',to:'K3',weight:2},{from:'K2',to:'K4',weight:1},
         ...[1,2,3,4].map(index=>({from:`K${index}`,to:`G${index}`,weight:1,two_way:true}))],obstacles:[]};
+  await configureWarehouse(f,['K1','K2']);
   f.model.shift = {phase:'RUNNING'};f.model.fleet.accepting_tasks = true;
-  f.model.fleet.agvs = [{id:'01',node:'A',state:'IDLE',online:true,position_valid:true,task_id:null}];
+  f.model.fleet.agvs = [{id:'01',node:'A',state:'IDLE',online:true,position_valid:true,task_id:null,
+    lift:{supported:true,ready:true,fresh:true,observed_node:'A',active:false,state:'IDLE',command_id:0},
+    virtual_cargo_known:false,virtual_cargo:false}];
   f.push();await until(async()=> (await f.api('GET','/api/state')).data.shift?.phase === 'RUNNING');
   const body = {pickups:[{pickup:'K1',quantity:1},{pickup:'K2',quantity:1}],
     deliveries:[{dropoff:'K3',quantity:1},{dropoff:'K4',quantity:1}]};
@@ -155,14 +168,56 @@ test('warehouse orders use Core task IDs and wait at pickup before any delivery 
   assert.ok(first.items.some(item=>item.status === 'to_pickup'));
   assert.ok((await f.api('GET','/api/state')).data.orders.some(order=>order.id === first.id));
   const task = f.model.fleet.tasks.find(row=>row.task_id === first.items.find(item=>item.task_id).task_id);
-  task.status = 'completed';f.model.fleet.agvs[0].node = task.target;f.push();
-  await until(async()=> (await f.api('GET','/api/orders')).data[0].items.some(item=>item.status === 'pickup_service'));
+  task.status = 'completed';f.model.fleet.agvs[0].node = task.target;f.model.fleet.agvs[0].lift.observed_node=task.target;f.push();
+  await until(async()=> (await f.api('GET','/api/orders')).data[0].items.some(item=>item.status === 'pickup_lift'));
+  assert.equal(f.commands.filter(command=>command.cmd==='warehouse_lift'&&command.action==='pickup').length,1);
   assert.equal(f.commands.filter(command=>command.cmd === 'direct_goto' && ['K3','K4'].includes(command.target)).length,0);
   f.model.fleet.agvs[0].online = false;f.push();
   await until(async()=> (await f.api('GET','/api/orders')).data[0].status === 'needs_attention');
   assert.equal((await f.api('POST',`/api/orders/${first.id}/resolve`,{})).status,400);
   assert.equal((await f.api('POST',`/api/orders/${first.id}/resolve`,{physically_clear:true})).data.order.status,'closed');
 });
+test('warehouse API records confirmed rack moves and saves one downloadable report only at CLOSED',async t=>{
+  const f=await fixture(t);
+  f.model.map={nodes:['K1','K2','G1','G2'].map(id=>({id,type:id[0]==='K'?'station':'waypoint'})),
+    edges:[{from:'K2',to:'K1',weight:1},{from:'K1',to:'G1',weight:1,two_way:true},{from:'K2',to:'G2',weight:1,two_way:true}],obstacles:[]};
+  await configureWarehouse(f,['K2']);
+  const robot={id:'02',node:'K2',state:'IDLE',online:true,position_valid:true,task_id:null,
+    lift:{supported:true,ready:true,fresh:true,observed_node:'K2',active:false,state:'IDLE',command_id:0},virtual_cargo_known:false,virtual_cargo:false};
+  f.model.fleet.agvs=[robot];f.model.fleet.accepting_tasks=true;f.model.shift.phase='RUNNING';f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.shift?.phase==='RUNNING');
+  const before=(await f.api('GET','/api/warehouse')).data;
+  assert.equal((await f.api('POST','/api/warehouse/configure',{slots:[],expected_revision:before.revision,physically_verified:true})).status,409);
+  const result=await f.api('POST','/api/orders',{pickups:[{pickup:'K2',quantity:1}],deliveries:[{dropoff:'K1',quantity:1}]});
+  assert.equal(result.status,201);
+  const item=async()=>(await f.api('GET','/api/orders')).data[0].items[0];
+  await until(async()=>(await item()).status==='pickup_lift');
+  assert.equal((await f.api('GET','/api/warehouse')).data.slots.find(slot=>slot.node==='K2').rack_id,'RK2');
+  const done=async(up)=>{
+    const current=await item();robot.virtual_cargo_known=true;robot.virtual_cargo=up;
+    Object.assign(robot.lift,{command_id:current.lift_command_id,state:up?'DONE_UP':'DONE_DOWN',active:false,observed_node:robot.node});f.push();
+  };
+  await done(true);await until(async()=>(await item()).status==='to_dropoff');
+  assert.equal((await f.api('GET','/api/warehouse')).data.racks[0].location.id,'02');
+  f.model.fleet.tasks.at(-1).status='completed';robot.node='K1';robot.lift.observed_node='K1';f.push();
+  await until(async()=>(await item()).status==='dropoff_lift');await done(false);
+  await until(async()=>(await item()).status==='to_exit');
+  f.model.fleet.tasks.at(-1).status='completed';robot.node='G1';f.push();
+  await until(async()=>(await item()).status==='delivered');
+  f.model.shift.phase='CLOSING';f.push();await pause(50);
+  assert.deepEqual((await f.api('GET','/api/warehouse/reports')).data,[]);
+  f.model.shift.phase='CLOSED';f.push();
+  await until(async()=>(await f.api('GET','/api/warehouse/reports')).data.length===1);
+  f.push();await pause(30);const reports=(await f.api('GET','/api/warehouse/reports')).data;assert.equal(reports.length,1);
+  assert.deepEqual(reports[0].summary,{pickups:1,dropoffs:1,on_robots:0,needs_attention:0});
+  assert.equal(reports[0].final_state.slots.find(slot=>slot.node==='K1').rack_id,'RK2');
+  const download=await fetch(`${f.base}/api/warehouse/reports/${reports[0].id}?download=1`);
+  assert.match(download.headers.get('content-disposition'),/attachment/);assert.equal((await download.json()).id,reports[0].id);
+  const events=(await f.api('GET','/api/warehouse/events')).data;
+  assert.equal(events.filter(event=>event.type==='pickup').length,1);assert.equal(events.filter(event=>event.type==='dropoff').length,1);
+  assert.equal((await f.api('GET','/api/state')).data.warehouse.latest_report_id,reports[0].id);
+});
+
 test('Same destination stays distinct; cancel one ID; clearing target never completes history',async t=>{
   const f = await fixture(t);
   const one = await f.api('POST','/api/tasks',{target:'T',priority:0});
