@@ -719,6 +719,7 @@ function renderShift(shift) {
   }
 }
 async function changeShift(mode,button) {
+  if(mode==='start'){openShiftWarehouse();return;}
   const result = await control('POST',`/api/shift/${mode}`,{},button);
   if (result) toast(mode === 'start' ? 'Core đã mở ca làm việc' : 'Core đã nhận kết thúc ca; theo dõi xe về trạm');
 }

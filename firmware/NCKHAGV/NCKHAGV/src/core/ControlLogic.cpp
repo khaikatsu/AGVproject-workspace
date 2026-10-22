@@ -66,6 +66,12 @@ const char* errorName(ErrorCode e) {
         case ErrorCode::MotionLocked: return "MOTION_LOCKED_PENDING_ZONE_CLEARANCE_CALIBRATION";
         case ErrorCode::ChargerUnconfigured: return "CHARGER_NOT_CONFIGURED";
         case ErrorCode::MotionTimeout: return "SEGMENT_TIMEOUT";
+        case ErrorCode::BatteryNotReady: return "BATTERY_ADC_NOT_READY";
+        case ErrorCode::BatteryUnderVoltage: return "BATTERY_UNDERVOLTAGE";
+        case ErrorCode::BatteryOverVoltage: return "BATTERY_OVERVOLTAGE";
+        case ErrorCode::BatteryCalibrationRequired: return "BATTERY_CALIBRATION_REQUIRED";
+        case ErrorCode::MotionDisabled: return "MOTION_DISABLED_WRONG_BUILD";
+        case ErrorCode::ReverseSteeringUnconfirmed: return "REVERSE_STEERING_NOT_CALIBRATED";
     }
     return "UNKNOWN_ERROR";
 }
@@ -87,6 +93,26 @@ const char* motorActionName(MotorAction action) {
 }
 
 namespace AGVMath {
+ErrorCode motionVoltageError(float voltage) {
+    if (!Config::TWO_ROBOT_BENCH_TRIAL) return ErrorCode::None;
+    if (!std::isfinite(voltage) || voltage <= 0) return ErrorCode::BatteryNotReady;
+    if (voltage < Config::BATTERY_EMPTY_VOLTAGE) return ErrorCode::BatteryUnderVoltage;
+    if (voltage > Config::BENCH_MAX_VOLTAGE) return ErrorCode::BatteryOverVoltage;
+    return ErrorCode::None;
+}
+ErrorCode motionStartError(const MotionStartConditions& in) {
+    // GOTO moi khong duoc ghi de loi goc da chot, nhu LINE_LOST.
+    if (in.previousError != ErrorCode::None && in.previousError != ErrorCode::MotionLocked)
+        return in.previousError;
+    if (!in.enabled) return ErrorCode::MotionDisabled;
+    if (!in.routeAllowed) return ErrorCode::MotionLocked;
+    const auto voltageError = motionVoltageError(in.voltage);
+    if (voltageError != ErrorCode::None) return voltageError;
+    if (in.calibrationRequired && !in.calibrated) return ErrorCode::BatteryCalibrationRequired;
+    if (!in.reverseAllowed) return ErrorCode::ReverseSteeringUnconfirmed;
+    // Loi cu chi duoc xoa bang RESET_FAULT sau khi xac minh dieu kien.
+    return in.previousError;
+}
 bool copyText(char* dst, size_t capacity, const char* src) {
     if (!src || capacity == 0 || std::strlen(src) >= capacity) return false;
     std::memcpy(dst, src, std::strlen(src) + 1);

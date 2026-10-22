@@ -8,6 +8,10 @@
 #include <vector>
 #define CHECK(c) do{if(!(c))throw std::runtime_error(#c);}while(false)
 static bool decode(const char* wire,CoreCommand& c){return CoreProtocol::decodeCommand(reinterpret_cast<const uint8_t*>(wire),std::strlen(wire),c);}
+static int expectedDuty(int angle){
+    const auto pulse=Config::SERVO_MIN_PULSE_US+(Config::SERVO_MAX_PULSE_US-Config::SERVO_MIN_PULSE_US)*angle/180;
+    return static_cast<uint64_t>(pulse)*Config::SERVO_PWM_HZ*((1UL<<Config::SERVO_PWM_BITS)-1)/1000000;
+}
 
 static int selfTest(){
 #if defined(AGV_PROFILE_ID)
@@ -20,26 +24,46 @@ static int selfTest(){
     CoreCommand up,down,bad;
     const char* upWire=R"({"cmd":"LIFT_UP","cmd_id":100,"node":"K5"})";
     CHECK(decode(upWire,up)==Config::SERVO_SINGLE_TEST);
-    if(!Config::SERVO_SINGLE_TEST){CHECK(ServoIo::pins.empty());CHECK(!servo.liftUp());std::cout<<"PASS profile02 servo disabled\n";return 0;}
+    if(!Config::SERVO_SINGLE_TEST){CHECK(ServoIo::pins.empty());CHECK(!servo.liftUp());std::cout<<"PASS non-servo profile stays disabled\n";return 0;}
     CHECK(decode(R"({"cmd":"LIFT_DOWN","cmd_id":101,"node":"K5"})",down));
     for(const auto* wire:{R"({"cmd":"LIFT_UP","cmd_id":102,"node":"S1"})",R"({"cmd":"LIFT_UP","cmd_id":102})",R"({"cmd":"LIFT_UP","cmd_id":102,"node":"K5\u0000X"})"})CHECK(!decode(wire,bad));
     bad=up;CHECK(CoreProtocol::sameCommand(up,bad));bad.type=CoreCommandType::LiftDown;CHECK(!CoreProtocol::sameCommand(up,bad));
     CHECK(ServoIo::pins.size()==1&&ServoIo::pins.at(17)==5);CHECK(ServoIo::pwm.at(5)==0);
     CHECK(ServoIo::hz.at(5)==50&&ServoIo::bits.at(5)==16);CHECK(servo.getAngle(1)==-1);
+    CHECK(ServoIo::writes.at(5)==1); // Boot writes only duty0, never a target angle.
+#if (defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1) || \
+    (defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1)
+    CHECK(Config::SERVO_MIN_PULSE_US==544&&Config::SERVO_MAX_PULSE_US==2400);
+    CHECK(Config::SERVO_LIFT_DOWN_ANGLES[0]==180&&Config::SERVO_LIFT_UP_ANGLES[0]==100);
+    const std::pair<int,int> calibration[]={{0,1782},{45,3302},{90,4823},{100,5160},{180,7864}};
+#else
+    CHECK(Config::SERVO_MIN_PULSE_US==1000&&Config::SERVO_MAX_PULSE_US==2000);
+    CHECK(Config::SERVO_LIFT_DOWN_ANGLES[0]==0&&Config::SERVO_LIFT_UP_ANGLES[0]==45);
+    const std::pair<int,int> calibration[]={{0,3276},{45,4095},{90,4915},{180,6553}};
+#endif
     LiftCycle lift;ServoIo::timeMs=100;CHECK(servo.liftUp());CHECK(lift.start(up,millis()));
-    CHECK(servo.getAngle(1)==45&&ServoIo::pwm.at(5)==4095);CHECK(!servo.liftDown());CHECK(!lift.start(down,millis()));
+    CHECK(servo.getAngle(1)==Config::SERVO_LIFT_UP_ANGLES[0]&&ServoIo::pwm.at(5)==expectedDuty(Config::SERVO_LIFT_UP_ANGLES[0]));CHECK(!servo.liftDown());CHECK(!lift.start(down,millis()));
     ServoIo::timeMs=5099;servo.update();CHECK(servo.busy());CHECK(!lift.update(millis(),true));CHECK(!lift.cargoKnown());
     ServoIo::timeMs=5100;servo.update();CHECK(!servo.busy());CHECK(lift.update(millis(),true));
     CHECK(lift.cargoKnown()&&lift.cargo()&&!lift.busy()&&std::strcmp(lift.state(),"DONE_UP")==0);
     CHECK(!lift.update(20000,true));CHECK(servo.liftDown());CHECK(lift.start(down,millis()));
-    CHECK(servo.getAngle(1)==0&&ServoIo::pwm.at(5)==3276);CHECK(lift.cargo());
+    CHECK(servo.getAngle(1)==Config::SERVO_LIFT_DOWN_ANGLES[0]&&ServoIo::pwm.at(5)==expectedDuty(Config::SERVO_LIFT_DOWN_ANGLES[0]));CHECK(lift.cargo());
     ServoIo::timeMs+=5000;servo.update();CHECK(lift.update(millis(),true)&&!lift.cargo()&&lift.cargoKnown());
     CHECK(servo.liftUp());CHECK(lift.start(up,millis()));CHECK(lift.update(++ServoIo::timeMs,false));
     CHECK(!lift.busy()&&!lift.cargoKnown()&&std::strcmp(lift.state(),"INTERRUPTED")==0);
     CHECK(!lift.update(ServoIo::timeMs+5000,true)); // No automatic completion/replay after STOP.
     ServoIo::timeMs=UINT32_MAX-1000;servo.update();CHECK(servo.liftDown());CHECK(lift.start(down,millis()));
     ServoIo::timeMs+=5000;servo.update();CHECK(lift.update(millis(),true)&&!lift.cargo());
-    std::cout<<"PASS GPIO17 one-channel 50Hz PWM/down0/up45, parser/dedup identity, 5s, interruption, wrap, no boot motion\n";return 0;
+    for(const auto& sample:calibration){
+        CHECK(servo.setAngle(1,sample.first));CHECK(ServoIo::pwm.at(5)==sample.second);
+        CHECK(ServoIo::pwm.size()==1); // No motor/other servo channel touched.
+        ServoIo::timeMs+=5000;servo.update();CHECK(!servo.busy());
+    }
+    const auto writes=ServoIo::writes.at(5);
+    CHECK(!servo.setAngle(1,-1)&&!servo.setAngle(1,181)&&!servo.setAngle(3,45)&&!servo.setAngle(0,45));
+    CHECK(ServoIo::writes.at(5)==writes);
+    std::cout<<"PASS GPIO17 one-channel 50Hz/16bit "<<Config::SERVO_MIN_PULSE_US<<".."<<Config::SERVO_MAX_PULSE_US
+        <<"us, calibrated angles, parser/dedup identity, 5s, interruption, wrap, no boot motion\n";return 0;
 }
 
 // Line-oriented adapter for isolated Core/MQTT/gateway/browser integration.

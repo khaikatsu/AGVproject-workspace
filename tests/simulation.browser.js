@@ -17,7 +17,9 @@ async function main() {
     assert.equal(await page.locator('[data-node]').count(),26);
     await page.screenshot({path:path.join(sim.directory,'simulation-homes.png'),fullPage:true});
     await page.locator('#simTimeScale').selectOption('5');
-    await page.locator('#startShiftBtn').click();await page.locator('#simGoto01:enabled').waitFor();
+    await page.locator('#startShiftBtn').click();
+    await page.locator('#shiftWarehouseVerified').check();await page.locator('#confirmStartShiftBtn').click();
+    await page.locator('#simGoto01:enabled').waitFor();
     // API job cũ kiểm tra cache runtime riêng, cập nhật sau WS dashboard.
     const readyDeadline=Date.now()+3000;
     while((sim.runtime.coreState?.shift?.phase!=='RUNNING'||sim.runtime.coreState?.fleet?.agvs?.find(r=>r.id==='01')?.state!=='IDLE')&&Date.now()<readyDeadline)await new Promise(resolve=>setTimeout(resolve,50));

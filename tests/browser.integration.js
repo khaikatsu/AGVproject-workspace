@@ -200,7 +200,9 @@ async function main() {
     assert.match(await page.locator('#fleetTable').innerText(),/Trạm riêng: S1/);
     model.shift.phase='CLOSED';model.shift.can_start=true;push();
     await page.waitForFunction(()=>!document.querySelector('#startShiftBtn').disabled);
-    await page.locator('#startShiftBtn').click();await page.waitForFunction(()=>!document.querySelector('#submitTaskBtn').disabled);
+    await page.locator('#startShiftBtn').click();
+    await page.locator('#shiftWarehouseVerified').check();await page.locator('#confirmStartShiftBtn').click();
+    await page.waitForFunction(()=>!document.querySelector('#submitTaskBtn').disabled);
     assert.equal(commands.at(-1).cmd,'start_shift');
     // Menu supervised solo: correct ID on the dashboard, other robot disabled.
     const fleetBeforeMenu=model.fleet.agvs;

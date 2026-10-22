@@ -7,12 +7,15 @@ int main() {
     try {
         static_assert(Config::FAST_LINE_RESPONSE,"Run with profile 01 or 02");
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-        static_assert(Config::GENTLE_FORWARD_CORRECTION,"Robot01 rounded-line correction must be enabled");
-        static_assert(!Config::LEFT_TURN_CAPTURE_ENABLED,"Robot02 left capture leaked into Robot01");
-        static_assert(Config::LINE_LOSS_GRACE_MS==0,"Robot02 seven-second grace leaked into Robot01");
-        static_assert(!Config::REVERSE_GENTLE_CORRECTION,"Robot02 reverse correction leaked into Robot01");
+        // The user-supplied PD firmware superseded the old gentle-curve profile.
+        static_assert(Config::LINE_PD_ENABLED && !Config::GENTLE_FORWARD_CORRECTION,"Robot01 must retain its PD baseline");
+        static_assert(Config::LINE_PD_MIN_RUNNING_PWM==110 && Config::LINE_PD_MAX_RUNNING_PWM==230,"Robot01 PD anti-stall limits changed");
+        static_assert(Config::LEFT_TURN_CAPTURE_ENABLED && Config::RIGHT_TURN_CAPTURE_ENABLED,"Robot01 capture baseline changed");
+        static_assert(Config::LINE_LOSS_GRACE_MS==AGV_LINE_LOSS_GRACE_MS,"Robot01 must use its own configured grace");
+        static_assert(Config::REVERSE_GENTLE_CORRECTION,"Robot01 reverse baseline changed");
 #elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
         static_assert(!Config::GENTLE_FORWARD_CORRECTION,"Robot01 rounded-line correction leaked into Robot02");
+        static_assert(Config::LINE_PD_MIN_RUNNING_PWM==0 && Config::LINE_PD_MAX_RUNNING_PWM==255,"Robot01 PD limits leaked into Robot02");
         static_assert(Config::LEFT_TURN_CAPTURE_ENABLED,"Robot02 left capture must remain enabled");
         static_assert(Config::LINE_LOSS_GRACE_MS==7000,"Robot02 seven-second grace must remain enabled");
         static_assert(Config::REVERSE_GENTLE_CORRECTION,"Robot02 reverse correction must remain enabled");
@@ -33,6 +36,19 @@ int main() {
         move.stop();CHECK(motor.leftDuty()==0 && motor.rightDuty()==0);
         CHECK(MotorIo::pwm[0]==0 && MotorIo::pwm[1]==0);
 
+        // Kiểm riêng mẫu PD đầu tiên (D=0) để khóa duty tĩnh của từng profile.
+        struct PdCase { uint8_t pattern; int left; int right; };
+#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+        const PdCase pdCases[]={{4,230,110},{6,225,110},{2,150,140},{3,110,215},{1,110,230}};
+#else
+        const PdCase pdCases[]={{4,255,0},{6,215,45},{2,135,125},{3,55,205},{1,0,255}};
+#endif
+        for(const auto& expected:pdCases) {
+            LinePdController pd;LinePdOutput out;
+            CHECK(pd.update(expected.pattern,1000,255,out));
+            CHECK(out.left==expected.left && out.right==expected.right);
+        }
+
         CoreCommand c;c.type=CoreCommandType::Goto;c.cmdId=9701;c.pathLength=1;
         AGVMath::copyText(c.path[0],sizeof(c.path[0]),"M1");AGVMath::copyText(c.target,sizeof(c.target),"M1");
         RoutePlan route;CHECK(RoutePlanner::plan("M3","G1",c,route));
@@ -43,12 +59,21 @@ int main() {
         CHECK(nav.grant("M1",71));CHECK(nav.update(in)==MotorAction::Forward);move.apply(MotorAction::Forward);
         for(const auto pattern:{4,1,6,3,2}) {
             in.linePattern=pattern;++in.now;
-            CHECK(nav.refreshFollowing(in,early));move.apply(early);
+            CHECK(nav.refreshFollowing(in,early));
+            move.apply(early,false,255,false,{nav.forwardLineTracking(),static_cast<uint8_t>(pattern),in.now});
             CHECK(early==AGVMath::lineAction(pattern));
             // A slow RFID operation happens only after the latest pattern has
             // reached actual driver output. No simulated node arrival involved.
-            if(pattern==4)CHECK(motor.leftDuty()>0 && motor.rightDuty()==0);
-            if(pattern==1)CHECK(motor.leftDuty()==0 && motor.rightDuty()>0);
+            if(Config::LINE_PD_ENABLED) {
+                CHECK(motor.leftDuty()>=Config::LINE_PD_MIN_RUNNING_PWM && motor.leftDuty()<=Config::LINE_PD_MAX_RUNNING_PWM);
+                CHECK(motor.rightDuty()>=Config::LINE_PD_MIN_RUNNING_PWM && motor.rightDuty()<=Config::LINE_PD_MAX_RUNNING_PWM);
+                if(pattern==4 || pattern==6)CHECK(motor.leftDuty()>motor.rightDuty());
+                if(pattern==1 || pattern==3)CHECK(motor.rightDuty()>motor.leftDuty());
+            }
+            else {
+                if(pattern==4)CHECK(motor.leftDuty()>0 && motor.rightDuty()==0);
+                if(pattern==1)CHECK(motor.leftDuty()==0 && motor.rightDuty()>0);
+            }
             if(pattern==6 || pattern==3) {
                 if(Config::GENTLE_FORWARD_CORRECTION) {
                     CHECK(motor.leftDuty()>0 && motor.rightDuty()>0);
@@ -61,8 +86,8 @@ int main() {
                     else CHECK(motor.rightDuty()-motor.leftDuty()>=40);
                     std::cout<<"curve pattern="<<pattern<<" duty="<<motor.leftDuty()<<"/"<<motor.rightDuty()<<'\n';
                 }
-                else if(pattern==6)CHECK(motor.leftDuty()>0 && motor.rightDuty()==0);
-                else CHECK(motor.leftDuty()==0 && motor.rightDuty()>0);
+                else if(!Config::LINE_PD_ENABLED && pattern==6)CHECK(motor.leftDuty()>0 && motor.rightDuty()==0);
+                else if(!Config::LINE_PD_ENABLED)CHECK(motor.leftDuty()==0 && motor.rightDuty()>0);
             }
             in.now+=25;CHECK(nav.pathIndex()==0 && nav.routeCommandId()==9701);
         }

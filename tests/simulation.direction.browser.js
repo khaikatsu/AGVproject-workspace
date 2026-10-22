@@ -9,7 +9,9 @@ async function main(){
     await page.goto(sim.url);await page.locator('#simHealth').filter({hasText:'Sẵn sàng'}).waitFor();
     await page.waitForFunction(()=>document.querySelector('[data-sim-robot="01"]')?.dataset.heading==='90'&&document.querySelector('[data-sim-robot="02"]')?.dataset.heading==='270');
     assert.equal(await page.locator('.sim-heading-arrow').count(),2);
-    await page.locator('#startShiftBtn:enabled').click();await page.locator('#simGoto01:enabled').waitFor();
+    await page.locator('#startShiftBtn:enabled').click();
+    await page.locator('#shiftWarehouseVerified').check();await page.locator('#confirmStartShiftBtn').click();
+    await page.locator('#simGoto01:enabled').waitFor();
     sim.runtime.configure({speedCmS:100,timeScale:5,drainPerCm:0});
     await page.locator('#orderPickups select').selectOption('K1');await page.locator('#orderDeliveries select').selectOption('K2');await page.locator('#submitOrderBtn').click();
     await page.waitForFunction(()=>[...document.querySelectorAll('[data-sim-robot]')].some(n=>n.dataset.phase==='pickup_service'&&n.textContent.includes('Bốc hàng')));

@@ -45,4 +45,11 @@ void LineFollowModule::gentleCorrectRight() {
     motor_.setRightSpeed(Config::GENTLE_OUTER_SPEED + Config::RIGHT_SPEED_TRIM);
     motor_.motorForward();
 }
-void LineFollowModule::stop() { motor_.motorStop(); }
+bool LineFollowModule::followPd(uint8_t pattern, uint32_t now, int cap) {
+    LinePdOutput out;
+    if (!pd_.update(pattern, now, cap, out)) return false;
+    motor_.setLeftSpeed(out.left); motor_.setRightSpeed(out.right);
+    motor_.motorForward();
+    return true;
+}
+void LineFollowModule::stop() { resetPd(); motor_.motorStop(); }

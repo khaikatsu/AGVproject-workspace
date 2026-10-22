@@ -100,7 +100,7 @@ AGVproject/
 
 - [Tổng quan workspace AGV](docs/exports/AGV_Workspace_Overview.docx), nguồn [00-project-brief.md](docs/00-project-brief.md).
 - [Mẫu mô tả yêu cầu](docs/exports/AGV_Requirements_Template.docx), nguồn [template.md](docs/requirements/template.md).
-- [Báo cáo thuật toán và kiến trúc server AGV](docs/exports/Bao_cao_thuat_toan_server_AGV.docx), tạo từ [script báo cáo](scripts/build_server_algorithm_report.py) và sáu hình trong `docs/figures/server-report/`.
+- [Báo cáo thuật toán và kiến trúc server AGV](docs/exports/Bao_cao_thuat_toan_server_AGV.docx), tạo từ [script báo cáo](scripts/build_server_algorithm_report.py) và bảy hình trong `docs/figures/server-report/`.
 
 Định dạng Word dùng `.docx`. Hai tài liệu nền được xuất từ Markdown bằng `scripts/export_documents.py`; báo cáo server dùng `scripts/build_server_algorithm_report.py`. Kiểm tra bố cục Word trước khi chia sẻ. Hướng dẫn cụ thể tại [phát triển](docs/12-development.md).
 

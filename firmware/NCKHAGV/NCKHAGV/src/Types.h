@@ -24,7 +24,9 @@ enum class ErrorCode { None, Configuration, WifiTimeout, MqttTimeout, EmergencyS
     TurnTimeout, TurnConfiguration, TurnInterrupted, ServoConfiguration, InvalidTask,
     TaskBusy, NoTask, NotConnected, NotAtRouteStart, RestartDenied, QueueOverflow,
     InvalidCommand, StaleCommand, CargoMissing, CargoLost,
-    NodeOrderMismatch, ServoInterrupted, MotionLocked, ChargerUnconfigured, MotionTimeout };
+    NodeOrderMismatch, ServoInterrupted, MotionLocked, ChargerUnconfigured, MotionTimeout,
+    BatteryNotReady, BatteryUnderVoltage, BatteryOverVoltage, BatteryCalibrationRequired,
+    MotionDisabled, ReverseSteeringUnconfirmed };
 
 // Core MQTT v0 command. localSession is the ESP32 connection generation, not
 // the Core session string; it prevents a queued command crossing reconnects.

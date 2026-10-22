@@ -8,6 +8,7 @@
     "start": "node server.js",
     "test": "node --test --test-isolation=none ../tests/gateway.test.js ../tests/security.test.js ../tests/orders.test.js ../tests/warehouse-actions.test.js ../tests/warehouse-inventory.test.js",
     "test:warehouse:browser": "node ../tests/warehouse.browser.integration.js",
+    "test:shift:browser": "node ../tests/shift-start.browser.integration.js",
     "test:hardening": "node ../tests/hardening.integration.js",
     "test:tls": "node ../tests/tls.integration.js",
     "test:system": "node ../tests/system.integration.js",

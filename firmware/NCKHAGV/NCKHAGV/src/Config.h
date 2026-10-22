@@ -184,6 +184,60 @@ constexpr int CORRECTION_SPEED = DEFAULT_MOTOR_SPEED;
 constexpr int GENTLE_CORRECTION_SPEED = ONE_ROBOT_TRIAL ? 140 : DEFAULT_MOTOR_SPEED;
 #endif
 constexpr int BASE_SPEED = DEFAULT_MOTOR_SPEED;
+#if defined(AGV_LINE_PD_ENABLED) && AGV_LINE_PD_ENABLED == 1
+constexpr bool LINE_PD_ENABLED = true;
+#else
+constexpr bool LINE_PD_ENABLED = false;
+#endif
+#ifndef AGV_BENCH_LINE_KP
+#define AGV_BENCH_LINE_KP 0.0f
+#endif
+#ifndef AGV_BENCH_LINE_KD
+#define AGV_BENCH_LINE_KD 0.0f
+#endif
+#ifndef AGV_LINE_PD_BASE_SPEED
+#define AGV_LINE_PD_BASE_SPEED 160
+#endif
+#ifndef AGV_LINE_PD_MIN_RUNNING_PWM
+#define AGV_LINE_PD_MIN_RUNNING_PWM 0
+#endif
+#ifndef AGV_LINE_PD_MAX_RUNNING_PWM
+#define AGV_LINE_PD_MAX_RUNNING_PWM 255
+#endif
+#ifndef AGV_LINE_PD_CONTROL_MS
+#define AGV_LINE_PD_CONTROL_MS 10
+#endif
+#ifndef AGV_LINE_PD_RESET_GAP_MS
+#define AGV_LINE_PD_RESET_GAP_MS 100
+#endif
+#ifndef AGV_LINE_PD_STEERING_SIGN
+#define AGV_LINE_PD_STEERING_SIGN 1
+#endif
+constexpr float LINE_KP = AGV_BENCH_LINE_KP, LINE_KD = AGV_BENCH_LINE_KD;
+constexpr int LINE_PD_BASE_SPEED = AGV_LINE_PD_BASE_SPEED;
+constexpr int LINE_PD_MIN_RUNNING_PWM = AGV_LINE_PD_MIN_RUNNING_PWM;
+constexpr int LINE_PD_MAX_RUNNING_PWM = AGV_LINE_PD_MAX_RUNNING_PWM;
+constexpr int LINE_PD_STEERING_SIGN = AGV_LINE_PD_STEERING_SIGN;
+constexpr uint32_t LINE_PD_CONTROL_MS = AGV_LINE_PD_CONTROL_MS;
+constexpr uint32_t LINE_PD_RESET_GAP_MS = AGV_LINE_PD_RESET_GAP_MS;
+static_assert(LINE_KP >= 0 && LINE_KP <= 100 && LINE_KD >= 0 && LINE_KD <= 100, "Invalid PD gains");
+static_assert(LINE_PD_CONTROL_MS > 0 && LINE_PD_CONTROL_MS <= 100 &&
+              LINE_PD_RESET_GAP_MS >= 2*LINE_PD_CONTROL_MS && LINE_PD_RESET_GAP_MS <= 500, "Invalid PD timing");
+static_assert(LINE_PD_STEERING_SIGN == 1 || LINE_PD_STEERING_SIGN == -1, "Invalid PD steering sign");
+static_assert(LINE_PD_BASE_SPEED > 0 && LINE_PD_BASE_SPEED <= 255 &&
+              (!LINE_PD_ENABLED || (LINE_PD_BASE_SPEED+LEFT_SPEED_TRIM > 0 && LINE_PD_BASE_SPEED+LEFT_SPEED_TRIM <= 255 &&
+               LINE_PD_BASE_SPEED+RIGHT_SPEED_TRIM > 0 && LINE_PD_BASE_SPEED+RIGHT_SPEED_TRIM <= 255)), "Invalid PD base PWM");
+static_assert(LINE_PD_MIN_RUNNING_PWM >= 0 && LINE_PD_MIN_RUNNING_PWM <= 255 &&
+              LINE_PD_MAX_RUNNING_PWM >= 0 && LINE_PD_MAX_RUNNING_PWM <= 255 &&
+              LINE_PD_MIN_RUNNING_PWM <= LINE_PD_MAX_RUNNING_PWM,
+              "Invalid PD running PWM limits");
+static_assert(!LINE_PD_ENABLED ||
+              (LINE_PD_BASE_SPEED+LEFT_SPEED_TRIM >= LINE_PD_MIN_RUNNING_PWM &&
+               LINE_PD_BASE_SPEED+LEFT_SPEED_TRIM <= LINE_PD_MAX_RUNNING_PWM &&
+               LINE_PD_BASE_SPEED+RIGHT_SPEED_TRIM >= LINE_PD_MIN_RUNNING_PWM &&
+               LINE_PD_BASE_SPEED+RIGHT_SPEED_TRIM <= LINE_PD_MAX_RUNNING_PWM),
+              "PD straight duty must remain inside running PWM limits");
+
 #if defined(AGV_BENCH_GENTLE_OUTER_SPEED)
 constexpr int GENTLE_OUTER_SPEED = AGV_BENCH_GENTLE_OUTER_SPEED;
 #else
@@ -271,6 +325,15 @@ constexpr bool LINE_RECOVERY_SIDE_CONFIRM = true;
 constexpr bool LINE_RECOVERY_SIDE_CONFIRM = false;
 #endif
 constexpr uint32_t LINE_RECOVERY_SAMPLE_GAP_MS = 50;
+#if defined(AGV_LINE_RECOVERY_TRACK_CONFIRM) && AGV_LINE_RECOVERY_TRACK_CONFIRM == 1
+constexpr bool LINE_RECOVERY_TRACK_CONFIRM = true;
+#else
+constexpr bool LINE_RECOVERY_TRACK_CONFIRM = false;
+#endif
+// Waiting longer never extends the 600ms motor-search budget.
+constexpr uint32_t TURN_CAPTURE_CONFIRM_TIMEOUT_MS = LINE_RECOVERY_TRACK_CONFIRM ? 1500 : LINE_RECOVERY_TIMEOUT_MS;
+static_assert(TURN_CAPTURE_CONFIRM_TIMEOUT_MS >= LINE_RECOVERY_TIMEOUT_MS,
+              "Turn confirmation must include the bounded motor-search budget");
 #if defined(AGV_LINE_LOSS_GRACE_MS)
 constexpr uint32_t LINE_LOSS_GRACE_MS = AGV_LINE_LOSS_GRACE_MS;
 #else
@@ -292,6 +355,14 @@ constexpr float OBSTACLE_CLEAR_CM = 20.0f;
 // is reacquired after leaving the original line; bench calibration is pending.
 constexpr uint32_t TURN_MIN_MS = 100;
 constexpr uint32_t TURN_TIMEOUT_MS = 2500;
+#if defined(AGV_G1_TURN_AROUND_PWM)
+constexpr int G1_TURN_AROUND_PWM = AGV_G1_TURN_AROUND_PWM;
+#else
+constexpr int G1_TURN_AROUND_PWM = 0; // Khong override o cac profile khac.
+#endif
+static_assert(G1_TURN_AROUND_PWM == 0 ||
+              (G1_TURN_AROUND_PWM > 0 && G1_TURN_AROUND_PWM <= 255 &&
+               G1_TURN_AROUND_PWM <= TURN_SPEED), "Invalid G1 turn-around PWM");
 #if defined(AGV_LEFT_TURN_CAPTURE_ENABLED) && AGV_LEFT_TURN_CAPTURE_ENABLED == 1
 constexpr bool LEFT_TURN_CAPTURE_ENABLED = true;
 #else
@@ -305,6 +376,19 @@ constexpr int LEFT_TURN_CAPTURE_PWM = LINE_RECOVERY_PWM;
 static_assert(LEFT_TURN_CAPTURE_PWM > 0 && LEFT_TURN_CAPTURE_PWM <= 255 &&
               (!LEFT_TURN_CAPTURE_ENABLED || LEFT_TURN_CAPTURE_PWM <= TURN_SPEED),
               "Invalid left turn capture PWM");
+#if defined(AGV_RIGHT_TURN_CAPTURE_ENABLED) && AGV_RIGHT_TURN_CAPTURE_ENABLED == 1
+constexpr bool RIGHT_TURN_CAPTURE_ENABLED = true;
+#else
+constexpr bool RIGHT_TURN_CAPTURE_ENABLED = false;
+#endif
+#if defined(AGV_RIGHT_TURN_CAPTURE_PWM)
+constexpr int RIGHT_TURN_CAPTURE_PWM = AGV_RIGHT_TURN_CAPTURE_PWM;
+#else
+constexpr int RIGHT_TURN_CAPTURE_PWM = LINE_RECOVERY_PWM;
+#endif
+static_assert(RIGHT_TURN_CAPTURE_PWM > 0 && RIGHT_TURN_CAPTURE_PWM <= 255 &&
+              (!RIGHT_TURN_CAPTURE_ENABLED || RIGHT_TURN_CAPTURE_PWM <= TURN_SPEED),
+              "Invalid right turn capture PWM");
 // Bench values: sampled evidence, then a short capped-speed departure.
 constexpr uint32_t LEFT_CAPTURE_SAMPLE_MS = 05;
 constexpr uint32_t LEFT_CAPTURE_MAX_GAP_MS = 50;
@@ -395,7 +479,7 @@ constexpr std::array<int, 3> SERVO_PINS = {SERVO_1_PIN, SERVO_2_PIN, SERVO_3_PIN
 constexpr std::array<int, 3> SERVO_PWM_CHANNELS = {4, 5, 6};
 constexpr uint32_t SERVO_PWM_HZ = 50;
 constexpr int SERVO_PWM_BITS = 16;
-// Profile01 opts into a single-servo connection test, not calibrated lifting.
+// Single-servo profiles retain their own pulse/angle calibration.
 #if defined(AGV_SINGLE_SERVO_ENABLED) && AGV_SINGLE_SERVO_ENABLED == 1
 constexpr bool SERVO_SINGLE_TEST = true;
 #else
@@ -406,28 +490,54 @@ constexpr int SERVO_SCAN = 0;
 constexpr int SERVO_LIFT = 1;
 constexpr int SERVO_OTHER = 2;
 // Other profiles retain the independently calibrated SERVO_LIFT/OTHER pair.
-// Test convention, not calibrated mechanical endpoints: down0/up45.
-constexpr std::array<int, 2> SERVO_LIFT_UP_ANGLES = {SERVO_SINGLE_TEST ? 45 : -1, -1};
-constexpr std::array<int, 2> SERVO_LIFT_DOWN_ANGLES = {SERVO_SINGLE_TEST ? 0 : -1, -1};
-// Narrow nominal test mapping; verify actual angles/mechanical limits before load.
-constexpr int SERVO_MIN_PULSE_US = SERVO_SINGLE_TEST ? 1000 : 0;
-constexpr int SERVO_MAX_PULSE_US = SERVO_SINGLE_TEST ? 2000 : 0;
+// Defaults preserve profiles without an explicit calibration override.
+#ifndef AGV_SERVO_LIFT_UP_ANGLE
+#define AGV_SERVO_LIFT_UP_ANGLE 45
+#endif
+#ifndef AGV_SERVO_LIFT_DOWN_ANGLE
+#define AGV_SERVO_LIFT_DOWN_ANGLE 0
+#endif
+#ifndef AGV_SERVO_MIN_PULSE_US
+#define AGV_SERVO_MIN_PULSE_US 1000
+#endif
+#ifndef AGV_SERVO_MAX_PULSE_US
+#define AGV_SERVO_MAX_PULSE_US 2000
+#endif
+constexpr std::array<int, 2> SERVO_LIFT_UP_ANGLES = {SERVO_SINGLE_TEST ? AGV_SERVO_LIFT_UP_ANGLE : -1, -1};
+constexpr std::array<int, 2> SERVO_LIFT_DOWN_ANGLES = {SERVO_SINGLE_TEST ? AGV_SERVO_LIFT_DOWN_ANGLE : -1, -1};
+constexpr int SERVO_MIN_PULSE_US = SERVO_SINGLE_TEST ? AGV_SERVO_MIN_PULSE_US : 0;
+constexpr int SERVO_MAX_PULSE_US = SERVO_SINGLE_TEST ? AGV_SERVO_MAX_PULSE_US : 0;
 constexpr uint32_t SERVO_MOVE_TIME_MS = SERVO_SINGLE_TEST ? 5000 : 0;
+static_assert(!SERVO_SINGLE_TEST ||
+              (SERVO_MIN_PULSE_US > 0 && SERVO_MAX_PULSE_US > SERVO_MIN_PULSE_US &&
+               SERVO_MAX_PULSE_US < 1000000 / SERVO_PWM_HZ &&
+               SERVO_LIFT_UP_ANGLES[0] >= 0 && SERVO_LIFT_UP_ANGLES[0] <= 180 &&
+               SERVO_LIFT_DOWN_ANGLES[0] >= 0 && SERVO_LIFT_DOWN_ANGLES[0] <= 180),
+              "Invalid single-servo pulse/angle calibration");
 
-// Initial 2S 18650 estimate from main (1).cpp: 30k/7.5k divider, 6.4-8.4V.
-// Confirm the divider output and calibrate against a multimeter on the robot.
+// Profile 01/02 dung 3S; cac ban khong co profile giu cau hinh 2S cu.
+// Nguong tong ap khong thay the bao ve qua xa/qua sac tung cell cua BMS.
 #if defined(AGV_PROFILE_ID)
+constexpr int BATTERY_SERIES_CELLS = AGV_BENCH_BATTERY_SERIES_CELLS;
 constexpr float BATTERY_VOLTAGE_SCALE = AGV_BENCH_BATTERY_VOLTAGE_SCALE;
 constexpr float BATTERY_VOLTAGE_OFFSET = AGV_BENCH_BATTERY_VOLTAGE_OFFSET;
+constexpr float BATTERY_EMPTY_VOLTAGE = AGV_BENCH_BATTERY_EMPTY_VOLTAGE;
+constexpr float BATTERY_FULL_VOLTAGE = AGV_BENCH_BATTERY_FULL_VOLTAGE;
+constexpr float BENCH_MAX_VOLTAGE = AGV_BENCH_BATTERY_MAX_VOLTAGE;
 #else
+constexpr int BATTERY_SERIES_CELLS = 2;
 constexpr float BATTERY_VOLTAGE_SCALE = 5.0f;
 constexpr float BATTERY_VOLTAGE_OFFSET = 0.0f;
-#endif
 constexpr float BATTERY_EMPTY_VOLTAGE = 6.4f;
 constexpr float BATTERY_FULL_VOLTAGE = 8.4f;
-// The bench build only moves when the ADC-derived 2S pack voltage is plausible.
-// This is a software interlock; the divider still needs a multimeter check.
 constexpr float BENCH_MAX_VOLTAGE = 8.6f;
+#endif
+static_assert((BATTERY_SERIES_CELLS == 2 || BATTERY_SERIES_CELLS == 3) &&
+              BATTERY_VOLTAGE_SCALE > 0.0f && BATTERY_EMPTY_VOLTAGE > 0.0f &&
+              BATTERY_FULL_VOLTAGE > BATTERY_EMPTY_VOLTAGE &&
+              BENCH_MAX_VOLTAGE >= BATTERY_FULL_VOLTAGE,
+              "Invalid battery pack configuration");
+// Khong bo qua chot ap: ADC loi/ngoai khoang van cam chuyen dong.
 inline bool benchVoltageReady(float voltage) {
     return !TWO_ROBOT_BENCH_TRIAL ||
            (voltage >= BATTERY_EMPTY_VOLTAGE && voltage <= BENCH_MAX_VOLTAGE);
@@ -437,6 +547,12 @@ constexpr uint32_t BATTERY_SAMPLE_INTERVAL_MS = 500;
 // Runtime MQTT topics are built from the robot ID using the Core v0 contract.
 #if defined(AGV_PROFILE_ID)
 constexpr const char* AGV_ID = AGV_PROFILE_ID;
+// Chan doi ID trong header xe02 roi nap nhu xe01 (hoac nguoc lai).
+#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+static_assert(AGV_ID[0] == '0' && AGV_ID[1] == '1' && AGV_ID[2] == '\0', "Profile01 must use ID 01");
+#elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
+static_assert(AGV_ID[0] == '0' && AGV_ID[1] == '2' && AGV_ID[2] == '\0', "Profile02 must use ID 02");
+#endif
 #elif (defined(AGV_ROBOT_2_MONITOR) && AGV_ROBOT_2_MONITOR == 1) || \
     (defined(AGV_ROBOT_2_BENCH) && AGV_ROBOT_2_BENCH == 1)
 constexpr const char* AGV_ID = "02";
@@ -474,9 +590,9 @@ constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261019-robot01-side-recovery-v3";
+constexpr const char* FIRMWARE_BUILD = "20261022-robot01-narrow-v12";
 #elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
-constexpr const char* FIRMWARE_BUILD = "20261017-robot02-mutex30-exitfix-v4";
+constexpr const char* FIRMWARE_BUILD = "20261022-robot02-narrow-v12";
 #else
 constexpr const char* FIRMWARE_BUILD = "20261015-battery-smoothing";
 #endif
@@ -510,24 +626,35 @@ static_assert(LINE_LEFT_PIN >= 34 && LINE_CENTER_PIN >= 34 && LINE_RIGHT_PIN >= 
 static_assert(BATTERY_ADC_PIN == 36, "Battery must remain on ADC1 GPIO36");
 static_assert(BUZZER_ACTIVE_STATE == 0 && CARGO_IR_ACTIVE_STATE == 1, "Unexpected buzzer/IR polarity");
 static_assert(CARGO_IR_STABLE_MS > 0 && REVERSE_STOP_MS > 0, "Safety debounce/hold must be nonzero");
-static_assert(BASE_SPEED >= 0 && BASE_SPEED <= 255 && TURN_SPEED >= 0 && TURN_SPEED <= 255 &&
+static_assert(BASE_SPEED >= 0 && BASE_SPEED <= 255 &&
               BASE_SPEED + LEFT_SPEED_TRIM > 0 && BASE_SPEED + LEFT_SPEED_TRIM <= 255 &&
-              BASE_SPEED + RIGHT_SPEED_TRIM > 0 && BASE_SPEED + RIGHT_SPEED_TRIM <= 255 &&
+              BASE_SPEED + RIGHT_SPEED_TRIM > 0 && BASE_SPEED + RIGHT_SPEED_TRIM <= 255,
+              "Forward PWM + trim must be 1..255");
+static_assert(TURN_SPEED >= 0 && TURN_SPEED <= 255 &&
               TURN_SPEED + TURN_LEFT_SPEED_TRIM > 0 && TURN_SPEED + TURN_LEFT_SPEED_TRIM <= 255 &&
-              TURN_SPEED + TURN_RIGHT_SPEED_TRIM > 0 && TURN_SPEED + TURN_RIGHT_SPEED_TRIM <= 255 &&
+              TURN_SPEED + TURN_RIGHT_SPEED_TRIM > 0 && TURN_SPEED + TURN_RIGHT_SPEED_TRIM <= 255,
+              "Turn PWM + trim must be 1..255");
+static_assert(
               CORRECTION_SPEED >= 0 && CORRECTION_SPEED <= 255 &&
               CORRECTION_SPEED + LEFT_SPEED_TRIM > 0 && CORRECTION_SPEED + LEFT_SPEED_TRIM <= 255 &&
-              CORRECTION_SPEED + RIGHT_SPEED_TRIM > 0 && CORRECTION_SPEED + RIGHT_SPEED_TRIM <= 255 &&
+              CORRECTION_SPEED + RIGHT_SPEED_TRIM > 0 && CORRECTION_SPEED + RIGHT_SPEED_TRIM <= 255,
+              "Correction PWM + trim must be 1..255");
+static_assert(
               GENTLE_CORRECTION_SPEED + LEFT_SPEED_TRIM > 0 &&
               GENTLE_CORRECTION_SPEED + LEFT_SPEED_TRIM <= 255 &&
               GENTLE_CORRECTION_SPEED + RIGHT_SPEED_TRIM > 0 &&
               GENTLE_CORRECTION_SPEED + RIGHT_SPEED_TRIM <= 255 &&
               GENTLE_OUTER_SPEED + LEFT_SPEED_TRIM > 0 &&
-              GENTLE_OUTER_SPEED + LEFT_SPEED_TRIM <= BASE_SPEED + LEFT_SPEED_TRIM &&
+              GENTLE_OUTER_SPEED + LEFT_SPEED_TRIM <= 255 &&
               GENTLE_OUTER_SPEED + RIGHT_SPEED_TRIM > 0 &&
-              GENTLE_OUTER_SPEED + RIGHT_SPEED_TRIM <= BASE_SPEED + RIGHT_SPEED_TRIM &&
-              (!GENTLE_FORWARD_CORRECTION ||
-               (GENTLE_OUTER_SPEED + LEFT_SPEED_TRIM > GENTLE_CORRECTION_SPEED + RIGHT_SPEED_TRIM &&
-                GENTLE_OUTER_SPEED + RIGHT_SPEED_TRIM > GENTLE_CORRECTION_SPEED + LEFT_SPEED_TRIM)) &&
-              (!ONE_ROBOT_TRIAL || GENTLE_CORRECTION_SPEED < CORRECTION_SPEED), "Invalid PWM duty");
+              GENTLE_OUTER_SPEED + RIGHT_SPEED_TRIM <= 255,
+              "Gentle PWM + trim must be 1..255");
+// Chi rang buoc quan he toc do gentle khi bang line thuc su dung nhanh nay.
+static_assert(!(ONE_ROBOT_TRIAL || GENTLE_FORWARD_CORRECTION) ||
+              (GENTLE_OUTER_SPEED <= BASE_SPEED &&
+               GENTLE_OUTER_SPEED + LEFT_SPEED_TRIM > GENTLE_CORRECTION_SPEED + RIGHT_SPEED_TRIM &&
+               GENTLE_OUTER_SPEED + RIGHT_SPEED_TRIM > GENTLE_CORRECTION_SPEED + LEFT_SPEED_TRIM),
+              "Active gentle correction: outer must be <= forward and faster than inner after trims");
+static_assert(!ONE_ROBOT_TRIAL || GENTLE_CORRECTION_SPEED < CORRECTION_SPEED,
+              "Trial gentle correction must be slower than strong correction");
 }

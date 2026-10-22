@@ -1,4 +1,4 @@
-param()
+param([switch]$ServoOnly)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $firmwareRoot = Join-Path $projectRoot 'firmware/NCKHAGV/NCKHAGV'
@@ -22,15 +22,24 @@ function Build-Probe($name, $adapter, $sources, $profile) {
 try {
     $fw = 'firmware/NCKHAGV/NCKHAGV/src'
     foreach ($profile in @('01','02')) {
-        Build-Probe "motor_$profile" 'motor-host' @('tests/motor-host/reverse_speed.cpp', "$fw/motion/MovementModule.cpp",
-            "$fw/motion/MotorModule.cpp", "$fw/motion/LineFollowModule.cpp", "$fw/core/ControlLogic.cpp") $profile
+        if (-not $ServoOnly) {
+            Build-Probe "motor_$profile" 'motor-host' @('tests/motor-host/reverse_speed.cpp', "$fw/motion/MovementModule.cpp",
+                "$fw/motion/MotorModule.cpp", "$fw/motion/LineFollowModule.cpp", "$fw/core/ControlLogic.cpp") $profile
+        }
         Build-Probe "servo_$profile" 'servo-host' @('tests/servo-host/test_main.cpp', "$fw/actuators/ServoModule.cpp",
             "$fw/core/CoreProtocol.cpp", "$fw/core/ControlLogic.cpp") $profile
-        Build-Probe "encoder_$profile" 'encoder-host' @('tests/encoder-host/test_main.cpp', "$fw/sensors/EncoderModule.cpp",
-            "$fw/core/CoreProtocol.cpp", "$fw/core/ControlLogic.cpp") $profile
-        Build-Probe "sonar_$profile" 'sonar-host' @('tests/sonar-host/directional_test.cpp', "$fw/sensors/SensorModule.cpp",
-            "$fw/core/CoreNavigator.cpp", "$fw/core/ControlLogic.cpp") $profile
+        if (-not $ServoOnly) {
+            Build-Probe "encoder_$profile" 'encoder-host' @('tests/encoder-host/test_main.cpp', "$fw/sensors/EncoderModule.cpp",
+                "$fw/core/CoreProtocol.cpp", "$fw/core/ControlLogic.cpp") $profile
+            Build-Probe "sonar_$profile" 'sonar-host' @('tests/sonar-host/directional_test.cpp', "$fw/sensors/SensorModule.cpp",
+                "$fw/core/CoreNavigator.cpp", "$fw/core/ControlLogic.cpp") $profile
+        }
     }
-    Build-Probe 'encoder_core' '' @('tests/encoder_core_tests.cpp') ''
+    if ($ServoOnly) {
+        Build-Probe 'servo_disabled' 'servo-host' @('tests/servo-host/test_main.cpp', "$fw/actuators/ServoModule.cpp",
+            "$fw/core/CoreProtocol.cpp", "$fw/core/ControlLogic.cpp") ''
+    } else {
+        Build-Probe 'encoder_core' '' @('tests/encoder_core_tests.cpp') ''
+    }
     Build-Probe 'servo_core' '' @('tests/servo_core.cpp') ''
 } finally { $env:PATH = $previousPath }

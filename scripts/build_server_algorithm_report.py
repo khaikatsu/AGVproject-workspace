@@ -1,4 +1,4 @@
-"""Tạo báo cáo Word và hình minh họa từ mã/tài liệu AGV hiện tại."""
+"""Tạo báo cáo Word kiến trúc và điều phối hệ thống AGV từ mã và tài liệu hiện hành."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Cm, Inches, Pt, RGBColor
+from docx.shared import Cm, Pt, RGBColor
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,512 +21,671 @@ OUT = ROOT / "docs" / "exports" / "Bao_cao_thuat_toan_server_AGV.docx"
 FIG.mkdir(parents=True, exist_ok=True)
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
-NAVY = "#193454"
-TEAL = "#127F7A"
-BLUE = "#3B68A5"
-AMBER = "#D58A2D"
-RED = "#AC4650"
-PALE = "#F3F6F9"
-GRID = "#D8E0E8"
-DARK = "#202B35"
-MUTED = "#596B7A"
+BLACK = "#000000"
+DARK = "#303030"
+MID = "#666666"
+GRID = "#B7B7B7"
+LIGHT = "#F2F2F2"
+PALE = "#FAFAFA"
 WHITE = "#FFFFFF"
-FONT = Path("C:/Windows/Fonts/arial.ttf")
-FONT_BOLD = Path("C:/Windows/Fonts/arialbd.ttf")
+FONT = Path("C:/Windows/Fonts/times.ttf")
+FONT_BOLD = Path("C:/Windows/Fonts/timesbd.ttf")
+FONT_ITALIC = Path("C:/Windows/Fonts/timesi.ttf")
 
 
-def f(size: int, bold: bool = False):
-    return ImageFont.truetype(str(FONT_BOLD if bold else FONT), size)
+def f(size: int, bold: bool = False, italic: bool = False):
+    path = FONT_BOLD if bold else FONT_ITALIC if italic else FONT
+    return ImageFont.truetype(str(path), size)
 
 
 def canvas(width: int, height: int):
-    im = Image.new("RGB", (width, height), WHITE)
-    d = ImageDraw.Draw(im)
-    return im, d
+    image = Image.new("RGB", (width, height), WHITE)
+    return image, ImageDraw.Draw(image)
 
 
-def text_lines(d, xy, value, width, size=28, color=DARK, bold=False, align="center", gap=6):
-    font = f(size, bold)
+def wrapped_lines(draw, value: str, width: int, font):
     words = value.split()
     lines, current = [], ""
     for word in words:
-        test = f"{current} {word}".strip()
-        if current and d.textbbox((0, 0), test, font=font)[2] > width:
+        candidate = f"{current} {word}".strip()
+        if current and draw.textbbox((0, 0), candidate, font=font)[2] > width:
             lines.append(current)
             current = word
         else:
-            current = test
+            current = candidate
     if current:
         lines.append(current)
+    return lines
+
+
+def text_lines(draw, xy, value, width, size=28, color=BLACK, bold=False, align="center", gap=6):
+    font = f(size, bold)
+    lines = wrapped_lines(draw, value, width, font)
     x, y = xy
-    step = size + gap
     for line in lines:
-        box = d.textbbox((0, 0), line, font=font)
-        lw = box[2] - box[0]
-        xx = x - lw / 2 if align == "center" else x
-        d.text((xx, y), line, font=font, fill=color)
-        y += step
+        bbox = draw.textbbox((0, 0), line, font=font)
+        line_width = bbox[2] - bbox[0]
+        xx = x - line_width / 2 if align == "center" else x
+        draw.text((xx, y), line, font=font, fill=color)
+        y += size + gap
     return y
 
 
-def box(d, rect, title, subtitle="", fill=PALE, border=GRID, title_color=DARK, title_size=31, sub_size=23):
+def box(draw, rect, title, subtitle="", fill=PALE, border=GRID, title_size=31, sub_size=23):
     x0, y0, x1, y1 = rect
-    d.rounded_rectangle(rect, radius=20, fill=fill, outline=border, width=3)
+    draw.rounded_rectangle(rect, radius=16, fill=fill, outline=border, width=3)
     if subtitle:
-        text_lines(d, ((x0+x1)/2, y0+24), title, x1-x0-32, title_size, title_color, True)
-        text_lines(d, ((x0+x1)/2, y0+75), subtitle, x1-x0-35, sub_size, MUTED)
+        text_lines(draw, ((x0 + x1) / 2, y0 + 24), title, x1 - x0 - 30, title_size, BLACK, True)
+        text_lines(draw, ((x0 + x1) / 2, y0 + 74), subtitle, x1 - x0 - 34, sub_size, DARK)
     else:
-        lines = len(title.split()) // 4 + 1
-        top = (y0+y1)/2 - (lines * (title_size+4))/2
-        text_lines(d, ((x0+x1)/2, top), title, x1-x0-35, title_size, title_color, True)
+        lines = wrapped_lines(draw, title, x1 - x0 - 34, f(title_size, True))
+        top = (y0 + y1) / 2 - len(lines) * (title_size + 5) / 2
+        text_lines(draw, ((x0 + x1) / 2, top), title, x1 - x0 - 34, title_size, BLACK, True)
 
 
-def arrow(d, start, end, color=NAVY, width=5, head=16):
+def arrow(draw, start, end, color=DARK, width=5, head=16):
     x0, y0 = start
     x1, y1 = end
-    d.line((x0, y0, x1, y1), fill=color, width=width)
-    angle = math.atan2(y1-y0, x1-x0)
-    p1 = (x1 - head*math.cos(angle-0.48), y1 - head*math.sin(angle-0.48))
-    p2 = (x1 - head*math.cos(angle+0.48), y1 - head*math.sin(angle+0.48))
-    d.polygon([(x1, y1), p1, p2], fill=color)
+    draw.line((x0, y0, x1, y1), fill=color, width=width)
+    angle = math.atan2(y1 - y0, x1 - x0)
+    p1 = (x1 - head * math.cos(angle - 0.48), y1 - head * math.sin(angle - 0.48))
+    p2 = (x1 - head * math.cos(angle + 0.48), y1 - head * math.sin(angle + 0.48))
+    draw.polygon([(x1, y1), p1, p2], fill=color)
 
 
-def title(d, value):
-    d.text((65, 35), value, font=f(37, True), fill=NAVY)
-    d.line((65, 93, 1735, 93), fill=GRID, width=3)
+def diagram_title(draw, value):
+    draw.text((65, 35), value, font=f(38, True), fill=BLACK)
 
 
 def architecture():
-    im, d = canvas(1800, 760)
-    title(d, "Kiến trúc điều phối hai robot AGV")
-    y0, y1 = 180, 415
+    image, draw = canvas(1800, 800)
+    diagram_title(draw, "Kiến trúc tổng thể hệ thống AGV")
     blocks = [
-        (85, 330, "Trình duyệt", "Bản đồ, nhiệm vụ, pin, lỗi"),
-        (415, 700, "Gateway Node.js", "HTTP API và WS trình duyệt"),
-        (800, 1100, "Core C++", "Map, Fleet, Mutex, Shift"),
-        (1200, 1450, "MQTT broker", "Pub/sub theo robot"),
-        (1530, 1760, "Hai robot", "ESP32, RFID, cảm biến"),
+        (70, 320, "Người vận hành", "Trình duyệt và dashboard"),
+        (385, 700, "Server web", "Node.js gateway và WebSocket"),
+        (770, 1090, "Server quản lý", "C++ Core điều phối tập trung"),
+        (1160, 1430, "MQTT broker", "Kênh trao đổi với robot"),
+        (1500, 1740, "AGV 01 và 02", "ESP32, RFID, cảm biến, motor"),
     ]
     for x0, x1, a, b in blocks:
-        box(d, (x0, y0, x1, y1), a, b, fill="#F0F5FA", border="#BFCFDE")
-    for (x0, x1, label) in [(330,415,"HTTP / WS"),(700,800,"WS v1"),(1100,1200,"MQTT"),(1450,1530,"MQTT / WiFi")]:
-        arrow(d, (x0+10, 280), (x1-10, 280), TEAL, 5)
-        arrow(d, (x1-10, 318), (x0+10, 318), BLUE, 4)
-        text_lines(d, ((x0+x1)/2, 230), label, x1-x0+55, 18, DARK, True)
-    box(d, (440, 515, 675, 650), "SQLite", "Lịch sử, KPI, snapshot", fill="#FFF9EF", border="#E4CB9E", title_size=27, sub_size=21)
-    arrow(d, (555, 415), (555, 505), AMBER, 5)
-    arrow(d, (595, 505), (595, 415), AMBER, 4)
-    box(d, (825, 515, 1075, 650), "MapGraph", "Dijkstra và trọng số", fill="#EFF7F5", border="#B7D5D1", title_size=27, sub_size=21)
-    arrow(d, (950, 415), (950, 505), TEAL, 5)
-    d.text((90, 694), "Nguồn hình: tổng hợp từ AGVserver.cpp, gateway.js và hợp đồng web/server trong workspace.", font=f(22), fill=MUTED)
-    im.save(FIG / "01-kien-truc.png")
+        box(draw, (x0, 190, x1, 405), a, b, fill=LIGHT, border=MID)
+    links = [(320, 385, "HTTP và WS"), (700, 770, "WS v1"), (1090, 1160, "MQTT"), (1430, 1500, "WiFi")]
+    for x0, x1, label in links:
+        arrow(draw, (x0 + 8, 270), (x1 - 8, 270), DARK, 5)
+        arrow(draw, (x1 - 8, 325), (x0 + 8, 325), MID, 4)
+        text_lines(draw, ((x0 + x1) / 2, 225), label, x1 - x0 + 70, 18, BLACK, True)
+    box(draw, (410, 535, 675, 690), "SQLite", "Đơn hàng, lịch sử, kho và báo cáo", fill=WHITE, border=MID, title_size=29, sub_size=21)
+    arrow(draw, (520, 405), (520, 525), DARK, 5)
+    arrow(draw, (570, 525), (570, 405), MID, 4)
+    box(draw, (795, 535, 1065, 690), "Trạng thái Core", "Bản đồ, task, route, mutex và lift", fill=WHITE, border=MID, title_size=29, sub_size=21)
+    arrow(draw, (930, 405), (930, 525), DARK, 5)
+    draw.text((70, 740), "Sơ đồ khối chức năng; các cổng mặc định là gateway 3000, Core 8080 và MQTT 1883.", font=f(23, italic=True), fill=DARK)
+    image.save(FIG / "01-kien-truc.png")
 
 
-def server_loops():
-    im, d = canvas(1800, 1020)
-    title(d, "Ba luồng làm thay đổi trạng thái Core")
-    lanes = [
-        (140, "Lệnh từ web", BLUE, ["Gateway kiểm tra", "Core xử lý lệnh", "Checkpoint rồi trả result"]),
-        (375, "Bản tin MQTT", TEAL, ["Kiểm tra topic", "Cập nhật Fleet / Mutex", "Checkpoint rồi publish"]),
-        (610, "Vòng lặp chính", NAVY, ["fleet.tick và shift.tick", "Checkpoint rồi publish", "Broadcast state"]),
+def core_modules():
+    image, draw = canvas(1800, 950)
+    diagram_title(draw, "Các module chính của C++ Core")
+    modules = [
+        (90, 175, 500, 360, "WebCommands", "Nhận lệnh WS và trả command_result"),
+        (695, 175, 1105, 360, "FleetManager", "Queue, phân công, route, task và lift"),
+        (1300, 175, 1710, 360, "MQTT callback", "Telemetry, diagnostic, ACK và mutex"),
+        (90, 525, 500, 710, "MapGraph", "Đồ thị có hướng và Dijkstra"),
+        (695, 525, 1105, 710, "MutexArbiter", "Owner, hàng chờ và grant token"),
+        (1300, 525, 1710, 710, "RuntimeStore", "Checkpoint, counter và phục hồi"),
     ]
-    for top, label, c, steps in lanes:
-        d.rounded_rectangle((65, top, 1735, top+170), radius=20, fill="#F7F9FB", outline=GRID, width=3)
-        d.rounded_rectangle((78, top+16, 330, top+154), radius=14, fill=c)
-        text_lines(d, (204, top+62), label, 215, 30, WHITE, True)
-        xs = [410, 805, 1200]
-        for i, step in enumerate(steps):
-            box(d, (xs[i], top+33, xs[i]+310, top+138), step, fill=WHITE, border="#C7D5E2", title_size=30)
-            if i < 2:
-                arrow(d, (xs[i]+315, top+85), (xs[i+1]-10, top+85), c, 4)
-    box(d, (420, 855, 1380, 963), "Quy tắc chung: lưu checkpoint trước command hoặc grant", fill="#FFF9EF", border="#E5CDAA", title_size=30)
-    im.save(FIG / "02-ba-luong-server.png")
+    for x0, y0, x1, y1, title, subtitle in modules:
+        box(draw, (x0, y0, x1, y1), title, subtitle, fill=LIGHT if y0 < 500 else WHITE, border=MID, title_size=30, sub_size=22)
+    arrow(draw, (500, 265), (685, 265), DARK, 5)
+    arrow(draw, (1300, 265), (1115, 265), DARK, 5)
+    arrow(draw, (900, 370), (900, 515), DARK, 5)
+    arrow(draw, (695, 620), (510, 620), MID, 4)
+    arrow(draw, (1105, 620), (1290, 620), MID, 4)
+    box(draw, (455, 805, 1345, 905), "Nguyên tắc phát lệnh", "Lưu checkpoint trước khi phát command hoặc grant", fill=PALE, border=BLACK, title_size=29, sub_size=22)
+    image.save(FIG / "02-ba-luong-server.png")
 
 
-def decision():
-    im, d = canvas(1800, 1000)
-    title(d, "Quyết định giao nhiệm vụ trong Core")
-    main = [
-        (145, "Nhận task_id và priority"),
-        (275, "Kiểm tra ca, MQTT, vị trí, lỗi và pin"),
-        (405, "Lọc AGV rảnh và có thể đi"),
-        (535, "Dijkstra theo tổng trọng số, né vùng bận"),
-        (665, "Chọn xe và route; hòa điểm chọn ID ổn định"),
-        (795, "Checkpoint rồi gửi GOTO có cmd_id"),
+def gateway_modules():
+    image, draw = canvas(1800, 900)
+    diagram_title(draw, "Server web Node.js và SQLite")
+    box(draw, (90, 170, 480, 360), "HTTP API", "Xác thực, kiểm tra dữ liệu và truy vấn", fill=LIGHT, border=MID)
+    box(draw, (705, 170, 1095, 360), "Gateway", "Ghép request_id với kết quả Core", fill=WHITE, border=BLACK)
+    box(draw, (1320, 170, 1710, 360), "WebSocket", "State, state_delta và trạng thái kết nối", fill=LIGHT, border=MID)
+    arrow(draw, (480, 265), (695, 265), DARK, 5)
+    arrow(draw, (1095, 265), (1310, 265), DARK, 5)
+    arrow(draw, (1310, 315), (1105, 315), MID, 4)
+    services = [
+        (95, 510, 470, 710, "Đơn hàng", "Đặt chỗ và vòng đời chuyển kệ"),
+        (520, 510, 895, 710, "Kho", "K1 đến K6, kệ trên xe và đối soát"),
+        (945, 510, 1320, 710, "Lịch sử", "Task, robot, log và KPI"),
+        (1370, 510, 1710, 710, "Báo cáo ca", "Ảnh đầu cuối và sự kiện bất biến"),
     ]
-    for i, (yy, label) in enumerate(main):
-        box(d, (385, yy, 1395, yy+88), label, fill="#F0F5FA", border="#B9CCDD", title_size=31)
-        if i < len(main)-1:
-            arrow(d, (890, yy+92), (890, main[i+1][0]-8), BLUE, 4)
-    box(d, (90, 330, 315, 610), "Không đủ điều kiện", "Giữ pending hoặc từ chối lệnh mới", fill="#FFF8EC", border="#E7D0A8", title_size=25, sub_size=21)
-    arrow(d, (385, 450), (323, 450), AMBER, 4)
-    box(d, (1480, 460, 1730, 730), "Không có đường", "Giữ chờ, thử lại sau khi trạng thái đổi", fill="#FFF8EC", border="#E7D0A8", title_size=25, sub_size=21)
-    arrow(d, (1395, 570), (1470, 570), AMBER, 4)
-    d.text((65, 935), "ACK xác nhận nhận lệnh; nhiệm vụ chỉ hoàn thành khi telemetry RFID hợp lệ xác nhận node đích.", font=f(24), fill=MUTED)
-    im.save(FIG / "03-phan-cong-nhiem-vu.png")
+    for x0, y0, x1, y1, title, subtitle in services:
+        box(draw, (x0, y0, x1, y1), title, subtitle, fill=PALE, border=GRID, title_size=29, sub_size=21)
+        arrow(draw, ((x0 + x1) / 2, 500), ((x0 + x1) / 2, 370), MID, 4)
+    draw.rounded_rectangle((250, 785, 1550, 855), radius=14, fill=LIGHT, outline=MID, width=3)
+    text_lines(draw, (900, 805), "SQLite transaction giữ thay đổi nghiệp vụ và bằng chứng trong cùng một lần ghi", 1200, 26, BLACK, True)
+    image.save(FIG / "03-phan-cong-nhiem-vu.png")
 
 
 def warehouse_map():
-    m = json.loads((ROOT / "data" / "map_layout.json").read_text(encoding="utf-8"))
-    im, d = canvas(1800, 1080)
-    title(d, "Đồ thị kho v3 đang dùng trong Core")
-    pts = {}
-    for n in m["nodes"]:
-        x = 180 + (n["x"] + 20) / 240 * 1450
-        y = 170 + (n["y"] + 20) / 180 * 735
-        pts[n["id"]] = (x, y)
-    # Mỗi cạnh được vẽ theo chiều trong JSON; hai chiều hiện thành hai mũi tên lệch nhẹ.
-    for e in m["edges"]:
-        a, b = pts[e["from"]], pts[e["to"]]
-        vx, vy = b[0]-a[0], b[1]-a[1]
+    data = json.loads((ROOT / "data" / "map_layout.json").read_text(encoding="utf-8"))
+    image, draw = canvas(1800, 1120)
+    diagram_title(draw, "Bản đồ kho")
+    boundary = (85, 115, 1715, 920)
+    draw.rounded_rectangle(boundary, radius=24, fill=WHITE, outline=BLACK, width=4)
+    draw.rectangle((115, 102, 405, 135), fill=WHITE)
+    draw.text((125, 105), "PHẠM VI SƠ ĐỒ KHO", font=f(22, True), fill=BLACK)
+    xs = [float(node["x"]) for node in data["nodes"]]
+    ys = [float(node["y"]) for node in data["nodes"]]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+
+    def map_point(x, y):
+        px = 175 + (float(x) - min_x) / (max_x - min_x) * 1450
+        py = 205 + (float(y) - min_y) / (max_y - min_y) * 625
+        return px, py
+
+    points = {node["id"]: map_point(node["x"], node["y"]) for node in data["nodes"]}
+    for edge in data["edges"]:
+        a, b = points[edge["from"]], points[edge["to"]]
+        via = (edge.get("geometry") or {}).get("via")
+        if isinstance(via, dict) and "x" in via and "y" in via:
+            control = map_point(via["x"], via["y"])
+            curve = []
+            for step in range(30):
+                t = step / 29
+                x = (1 - t) ** 2 * a[0] + 2 * (1 - t) * t * control[0] + t**2 * b[0]
+                y = (1 - t) ** 2 * a[1] + 2 * (1 - t) * t * control[1] + t**2 * b[1]
+                curve.append((x, y))
+            draw.line(curve, fill=GRID, width=4)
+            arrow(draw, curve[-3], curve[-1], MID, 3, 11)
+            continue
+        vx, vy = b[0] - a[0], b[1] - a[1]
         length = max(1, math.hypot(vx, vy))
-        nx, ny = -vy/length*5, vx/length*5
-        s = (a[0]+vx/length*22+nx, a[1]+vy/length*22+ny)
-        t = (b[0]-vx/length*27+nx, b[1]-vy/length*27+ny)
-        arrow(d, s, t, "#A3B3C2", 3, 11)
-    for n in m["nodes"]:
-        x, y = pts[n["id"]]
-        typ = n["type"]
-        c = TEAL if typ == "mutex" else AMBER if typ == "charging" else BLUE if typ == "station" else NAVY
-        radius = 24 if typ in ("mutex", "charging") else 19
-        d.ellipse((x-radius,y-radius,x+radius,y+radius), fill=WHITE, outline=c, width=6)
-        d.text((x, y-10), n["id"], font=f(23, True), fill=c, anchor="mm")
-    legend = [(TEAL,"Mutex M1–M6"),(AMBER,"Trạm sạc S1/S2"),(BLUE,"Kho K1–K6"),(NAVY,"Node nối tuyến")]
-    for i, (c, label) in enumerate(legend):
-        xx = 135 + i*420
-        d.ellipse((xx, 955, xx+25, 980), fill=WHITE, outline=c, width=5)
-        d.text((xx+36, 950), label, font=f(24), fill=DARK)
-    d.text((65, 1015), "Nguồn dữ liệu hình: data/map_layout.json; tọa độ là tọa độ bản đồ, không phải kích thước vật lý đã đo.", font=f(21), fill=MUTED)
-    im.save(FIG / "04-ban-do-kho.png")
+        nx, ny = -vy / length * 5, vx / length * 5
+        start = (a[0] + vx / length * 25 + nx, a[1] + vy / length * 25 + ny)
+        end = (b[0] - vx / length * 29 + nx, b[1] - vy / length * 29 + ny)
+        arrow(draw, start, end, GRID, 3, 11)
+    for node in data["nodes"]:
+        node_id = node["id"]
+        x, y = points[node_id]
+        node_type = node["type"]
+        if node_type == "station":
+            draw.rounded_rectangle((x - 27, y - 21, x + 27, y + 21), radius=7, fill=WHITE, outline=BLACK, width=5)
+        elif node_type == "charging":
+            draw.rectangle((x - 23, y - 23, x + 23, y + 23), fill=WHITE, outline=BLACK, width=5)
+        elif node_type == "mutex":
+            draw.ellipse((x - 25, y - 25, x + 25, y + 25), fill=WHITE, outline=BLACK, width=5)
+            draw.ellipse((x - 19, y - 19, x + 19, y + 19), outline=MID, width=2)
+        else:
+            draw.ellipse((x - 21, y - 21, x + 21, y + 21), fill=WHITE, outline=MID, width=4)
+        draw.text((x, y - 1), node_id, font=f(22, True), fill=BLACK, anchor="mm")
+    legend = [(160, "K", "Vị trí kho K1 đến K6"), (575, "M", "Vùng giao nhau M1 đến M6"), (1050, "S", "Trạm S1 và S2"), (1395, "G", "Node nối tuyến")]
+    for x, symbol, label in legend:
+        draw.rounded_rectangle((x, 970, x + 45, 1015), radius=7, fill=WHITE, outline=BLACK, width=3)
+        draw.text((x + 22, 992), symbol, font=f(22, True), fill=BLACK, anchor="mm")
+        draw.text((x + 60, 975), label, font=f(23), fill=BLACK)
+    draw.text((85, 1060), f"Nguồn: data/map_layout.json, revision {data.get('revision', '?')}, {len(data['nodes'])} node và {len(data['edges'])} cạnh. Tọa độ dùng để minh họa, chưa phải kích thước vật lý đã đo.", font=f(21, italic=True), fill=DARK)
+    image.save(FIG / "04-ban-do-kho.png")
 
 
-def evidence_timeline():
-    im, d = canvas(1800, 690)
-    title(d, "Ba mốc cần phân biệt trong một nhiệm vụ")
-    y = 345
-    arrow(d, (160, y), (1640, y), BLUE, 7, 24)
-    stages = [
-        (250, "HTTP 200", "Core chấp nhận\nlệnh và cấp task_id", BLUE),
-        (730, "ACK cmd_id", "Robot xác nhận\nđã nhận command", AMBER),
-        (1210, "RFID đích", "Telemetry hợp lệ;\nCore ghi completed", TEAL),
+def dashboard_wireframe():
+    image, draw = canvas(1800, 980)
+    diagram_title(draw, "Bố cục dashboard giám sát")
+    draw.rounded_rectangle((75, 125, 1725, 900), radius=20, fill=WHITE, outline=BLACK, width=4)
+    draw.rectangle((75, 125, 1725, 220), fill=LIGHT, outline=BLACK, width=3)
+    draw.text((120, 155), "Web", font=f(28, True), fill=BLACK)
+    for x, label in [(1180, "Core"), (1370, "MQTT"), (1565, "Dữ liệu")]:
+        draw.ellipse((x, 158, x + 22, 180), fill=WHITE, outline=BLACK, width=3)
+        draw.text((x + 35, 152), label, font=f(22), fill=BLACK)
+    for x, label in [(120, "Tổng quan"), (395, "Nhiệm vụ"), (670, "Bản đồ"), (945, "Báo cáo")]:
+        draw.rounded_rectangle((x, 245, x + 230, 305), radius=12, fill=LIGHT if label == "Tổng quan" else WHITE, outline=MID, width=2)
+        draw.text((x + 115, 275), label, font=f(24, True), fill=BLACK, anchor="mm")
+    box(draw, (115, 345, 560, 565), "Đội xe", "RFID, pin, lỗi, tuổi dữ liệu và task", fill=PALE, border=GRID, title_size=30, sub_size=22)
+    box(draw, (600, 345, 1250, 690), "Bản đồ và tuyến", "Node, cạnh, vùng mutex, vật cản và marker robot", fill=WHITE, border=MID, title_size=31, sub_size=23)
+    box(draw, (1290, 345, 1685, 565), "Điều khiển", "Mở đóng ca, giao việc và thao tác kho", fill=PALE, border=GRID, title_size=30, sub_size=22)
+    box(draw, (115, 610, 560, 835), "Trạng thái kho", "Kệ tại K1 đến K6, trên xe và đối soát", fill=PALE, border=GRID, title_size=30, sub_size=22)
+    box(draw, (1290, 610, 1685, 835), "Cảnh báo", "Offline, stale, unknown và needs_attention", fill=PALE, border=GRID, title_size=30, sub_size=22)
+    draw.text((95, 925), "Khung dây minh họa cách phân khu chức năng, không phải ảnh chụp giao diện.", font=f(22, italic=True), fill=DARK)
+    image.save(FIG / "05-ack-va-rfid.png")
+
+
+def sequence_flow():
+    image, draw = canvas(1800, 1250)
+    diagram_title(draw, "Sơ đồ tuần tự một lượt chuyển kệ")
+    lanes = [(180, "Người vận hành"), (510, "Gateway"), (850, "C++ Core"), (1190, "Robot"), (1530, "SQLite")]
+    for x, label in lanes:
+        box(draw, (x - 125, 125, x + 125, 220), label, fill=LIGHT, border=MID, title_size=25)
+        draw.line((x, 220, x, 1170), fill=GRID, width=3)
+    steps = [
+        (285, 180, 510, "Tạo đơn nguồn và đích"), (390, 510, 1530, "Đặt chỗ và lưu đơn"),
+        (495, 510, 850, "add_task với request_id"), (600, 850, 1190, "GOTO có cmd_id qua MQTT"),
+        (705, 1190, 850, "ACK rồi telemetry RFID đích"), (810, 850, 510, "task completed theo task_id"),
+        (915, 510, 850, "warehouse_lift"), (1020, 850, 1190, "LIFT rồi DONE_UP hoặc DONE_DOWN"),
+        (1125, 510, 1530, "Cập nhật sổ kho trong transaction"),
     ]
-    for xx, a, b, c in stages:
-        d.ellipse((xx-22,y-22,xx+22,y+22),fill=WHITE,outline=c,width=7)
-        d.rounded_rectangle((xx-175, 115, xx+175, 255),radius=19,fill="#F6F9FB",outline=GRID,width=3)
-        text_lines(d,(xx,145),a,315,36,c,True)
-        text_lines(d,(xx,195),b.replace("\n"," "),320,27,DARK)
-        d.line((xx,255,xx,y-30),fill=c,width=4)
-    d.rounded_rectangle((290,445,1510,585),radius=17,fill="#FFF8ED",outline="#E8CFA8",width=3)
-    text_lines(d,(900,475),"Chỉ mốc RFID đích là bằng chứng phần mềm về đến node",1120,30,DARK,True)
-    text_lines(d,(900,526),"Không mốc nào tự chứng minh robot đã dừng an toàn hoặc giao hàng vật lý",1120,24,MUTED)
-    im.save(FIG / "05-ack-va-rfid.png")
+    for y, x0, x1, label in steps:
+        arrow(draw, (x0, y), (x1 - 14 if x1 > x0 else x1 + 14, y), DARK, 4, 14)
+        text_lines(draw, ((x0 + x1) / 2, y - 45), label, abs(x1 - x0) - 35, 20, BLACK, True)
+    draw.text((70, 1205), "ACK chỉ xác nhận robot đã nhận lệnh; RFID và kết quả servo tương quan mới cho phép tiến sang bước tiếp theo.", font=f(22, italic=True), fill=DARK)
+    image.save(FIG / "06-phuc-hoi.png")
 
 
-def recovery():
-    im, d = canvas(1800, 760)
-    title(d, "Xử lý mất kết nối và khởi động lại")
-    items = [
-        (80, 180, 530, 355, "Mất MQTT hoặc telemetry", "Gián đoạn task; giữ zone/route chưa xác minh", RED),
-        (670, 180, 1120, 355, "Core khởi động lại", "Nạp queue/mutex; vị trí cũ chưa được xác minh", AMBER),
-        (1260, 180, 1720, 355, "Gateway mất Core", "Đánh dấu state cũ; lệnh chờ có kết quả unknown", BLUE),
+def safety_flow():
+    image, draw = canvas(1800, 900)
+    diagram_title(draw, "Phản ứng khi dữ liệu hoặc liên kết không còn tin cậy")
+    events = [
+        (85, 175, 515, 355, "Mất MQTT hoặc telemetry", "Không kết luận robot đã dừng hoặc rời vùng"),
+        (685, 175, 1115, 355, "Core hoặc gateway khởi động lại", "Khôi phục dữ liệu bền vững nhưng xác minh lại vị trí"),
+        (1285, 175, 1715, 355, "Kết quả lệnh chưa xác định", "Không tự phát lại thao tác có thể đã chạy"),
     ]
-    for x0,y0,x1,y1,a,b,c in items:
-        box(d,(x0,y0,x1,y1),a,b,fill="#F9FAFC",border=c,title_color=c,title_size=26,sub_size=22)
-    for xx in (305,895,1490):
-        arrow(d,(xx,365),(xx,465),NAVY,5)
-    box(d,(390,475,1400,630),"Cần telemetry RFID mới và đối soát người vận hành", "Không suy luận đường đã trống từ ACK, mất tín hiệu hoặc restart",fill="#EFF7F5",border="#A9D2C9",title_size=30,sub_size=24)
-    im.save(FIG / "06-phuc-hoi.png")
+    for x0, y0, x1, y1, title, subtitle in events:
+        box(draw, (x0, y0, x1, y1), title, subtitle, fill=LIGHT, border=MID, title_size=27, sub_size=21)
+        arrow(draw, ((x0 + x1) / 2, 365), ((x0 + x1) / 2, 485), DARK, 5)
+    box(draw, (330, 500, 1470, 665), "Trạng thái an toàn thận trọng", "Giữ task, route hoặc quyền vùng chưa xác minh; khóa điều khiển và yêu cầu đối soát", fill=WHITE, border=BLACK, title_size=31, sub_size=23)
+    for x, label in [(570, "Telemetry RFID mới"), (900, "Đối soát vật lý"), (1230, "Lệnh mới có ID mới")]:
+        arrow(draw, (x, 675), (x, 750), MID, 4)
+        text_lines(draw, (x, 770), label, 280, 23, BLACK, True)
+    image.save(FIG / "07-luong-don-kho.png")
 
 
 def set_repeat_header(row):
-    trPr = row._tr.get_or_add_trPr()
-    e = OxmlElement("w:tblHeader")
-    e.set(qn("w:val"), "true")
-    trPr.append(e)
+    tr_pr = row._tr.get_or_add_trPr()
+    element = OxmlElement("w:tblHeader")
+    element.set(qn("w:val"), "true")
+    tr_pr.append(element)
 
 
 def set_borders(table):
-    tblPr = table._tbl.tblPr
     borders = OxmlElement("w:tblBorders")
     for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
-        el = OxmlElement("w:" + edge)
-        el.set(qn("w:val"), "single")
-        el.set(qn("w:sz"), "5")
-        el.set(qn("w:color"), "D9D9D9")
-        borders.append(el)
-    tblPr.append(borders)
+        element = OxmlElement("w:" + edge)
+        element.set(qn("w:val"), "single")
+        element.set(qn("w:sz"), "5")
+        element.set(qn("w:color"), "B7B7B7")
+        borders.append(element)
+    table._tbl.tblPr.append(borders)
 
 
 def shade(cell, color):
-    tcPr = cell._tc.get_or_add_tcPr()
-    shd = OxmlElement("w:shd")
-    shd.set(qn("w:fill"), color)
-    tcPr.append(shd)
+    tc_pr = cell._tc.get_or_add_tcPr()
+    element = OxmlElement("w:shd")
+    element.set(qn("w:fill"), color)
+    tc_pr.append(element)
 
 
-def cell_margin(cell, top=95, start=115, bottom=95, end=115):
-    tc = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    mar = tcPr.first_child_found_in("w:tcMar")
-    if mar is None:
-        mar = OxmlElement("w:tcMar")
-        tcPr.append(mar)
-    for side, val in (("top",top),("start",start),("bottom",bottom),("end",end)):
+def cell_margin(cell, top=100, start=115, bottom=100, end=115):
+    tc_pr = cell._tc.get_or_add_tcPr()
+    margins = tc_pr.first_child_found_in("w:tcMar")
+    if margins is None:
+        margins = OxmlElement("w:tcMar")
+        tc_pr.append(margins)
+    for side, value in (("top", top), ("start", start), ("bottom", bottom), ("end", end)):
         tag = "w:" + side
-        node = mar.find(qn(tag))
+        node = margins.find(qn(tag))
         if node is None:
             node = OxmlElement(tag)
-            mar.append(node)
-        node.set(qn("w:w"),str(val))
-        node.set(qn("w:type"),"dxa")
+            margins.append(node)
+        node.set(qn("w:w"), str(value))
+        node.set(qn("w:type"), "dxa")
+
+
+def set_run_font(run, size=None, bold=None, italic=None):
+    run.font.name = "Times New Roman"
+    run_properties = run._element.get_or_add_rPr()
+    fonts = run_properties.get_or_add_rFonts()
+    for key in ("w:ascii", "w:hAnsi", "w:eastAsia"):
+        fonts.set(qn(key), "Times New Roman")
+    run.font.color.rgb = RGBColor(0, 0, 0)
+    color = run_properties.get_or_add_color()
+    color.set(qn("w:val"), "000000")
+    for attribute in ("w:themeColor", "w:themeTint", "w:themeShade"):
+        qualified = qn(attribute)
+        if qualified in color.attrib:
+            del color.attrib[qualified]
+    if size is not None:
+        run.font.size = Pt(size)
+    if bold is not None:
+        run.bold = bold
+    if italic is not None:
+        run.italic = italic
 
 
 def add_table(doc, headers, rows, widths=None):
     table = doc.add_table(rows=1, cols=len(headers))
     table.autofit = False
     if widths:
-        tblW=table._tbl.tblPr.find(qn("w:tblW"))
-        if tblW is None:
-            tblW=OxmlElement("w:tblW")
-            table._tbl.tblPr.append(tblW)
-        tblW.set(qn("w:w"),str(int(sum(widths)*567)))
-        tblW.set(qn("w:type"),"dxa")
-        for i,w in enumerate(widths):
-            table.columns[i].width = Cm(w)
-    for i,h in enumerate(headers):
-        cell = table.rows[0].cells[i]
-        if widths: cell.width=Cm(widths[i])
-        cell.text = h
-        shade(cell,"24415D")
+        table_width = table._tbl.tblPr.find(qn("w:tblW"))
+        if table_width is None:
+            table_width = OxmlElement("w:tblW")
+            table._tbl.tblPr.append(table_width)
+        table_width.set(qn("w:w"), str(int(sum(widths) * 567)))
+        table_width.set(qn("w:type"), "dxa")
+        for index, width in enumerate(widths):
+            table.columns[index].width = Cm(width)
+    for index, header in enumerate(headers):
+        cell = table.rows[0].cells[index]
+        if widths:
+            cell.width = Cm(widths[index])
+        cell.text = header
+        shade(cell, "D9D9D9")
         cell_margin(cell)
         cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-        for p in cell.paragraphs:
-            p.paragraph_format.space_after = Pt(0)
-            for run in p.runs:
-                run.bold = True
-                run.font.color.rgb = RGBColor(255,255,255)
-                run.font.size = Pt(9.5)
+        for paragraph in cell.paragraphs:
+            paragraph.paragraph_format.space_after = Pt(0)
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in paragraph.runs:
+                set_run_font(run, 10.5, bold=True)
     set_repeat_header(table.rows[0])
-    for idx, row in enumerate(rows):
-        cells=table.add_row().cells
-        for i,value in enumerate(row):
-            cells[i].text=str(value)
-            if widths: cells[i].width=Cm(widths[i])
-            if idx%2: shade(cells[i],"F1F5F8")
-            cell_margin(cells[i])
-            cells[i].vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER
-            for p in cells[i].paragraphs:
-                p.paragraph_format.space_after = Pt(0)
-                p.paragraph_format.line_spacing = 1.05
-                for run in p.runs:
-                    run.font.size = Pt(9.2)
+    for row_index, row in enumerate(rows):
+        cells = table.add_row().cells
+        for index, value in enumerate(row):
+            cells[index].text = str(value)
+            if widths:
+                cells[index].width = Cm(widths[index])
+            if row_index % 2:
+                shade(cells[index], "F7F7F7")
+            cell_margin(cells[index])
+            cells[index].vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            for paragraph in cells[index].paragraphs:
+                paragraph.paragraph_format.space_after = Pt(0)
+                paragraph.paragraph_format.line_spacing = 1.1
+                for run in paragraph.runs:
+                    set_run_font(run, 10.5)
     set_borders(table)
-    doc.add_paragraph().paragraph_format.space_after=Pt(0)
+    doc.add_paragraph().paragraph_format.space_after = Pt(0)
     return table
 
 
-def add_para(doc, text, bold_lead=None):
-    p=doc.add_paragraph()
-    if bold_lead and text.startswith(bold_lead):
-        p.add_run(bold_lead).bold=True
-        p.add_run(text[len(bold_lead):])
-    else:
-        p.add_run(text)
-    return p
+def add_para(doc, text, indent=True):
+    paragraph = doc.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    paragraph.paragraph_format.line_spacing = 1.3
+    paragraph.paragraph_format.space_after = Pt(5)
+    if indent:
+        paragraph.paragraph_format.first_line_indent = Cm(1.0)
+    run = paragraph.add_run(text)
+    set_run_font(run, 13)
+    return paragraph
 
 
-def add_bullet(doc, text):
-    p=doc.add_paragraph(style="List Bullet")
-    p.add_run(text)
-    return p
+def add_pseudocode(doc, lines):
+    for line in lines:
+        paragraph = doc.add_paragraph()
+        paragraph.paragraph_format.left_indent = Cm(1.2)
+        paragraph.paragraph_format.space_after = Pt(0)
+        paragraph.paragraph_format.line_spacing = 1.0
+        run = paragraph.add_run(line)
+        run.font.name = "Courier New"
+        run.font.size = Pt(10.5)
+        run.font.color.rgb = RGBColor(0, 0, 0)
+        run_properties = run._element.get_or_add_rPr()
+        fonts = run_properties.get_or_add_rFonts()
+        for key in ("w:ascii", "w:hAnsi", "w:eastAsia"):
+            fonts.set(qn(key), "Courier New")
+    spacer = doc.add_paragraph()
+    spacer.paragraph_format.space_after = Pt(2)
 
 
-def add_figure(doc, filename, caption, width=16.3):
-    p=doc.add_paragraph()
-    p.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_before=Pt(8)
-    p.paragraph_format.space_after=Pt(0)
-    p.paragraph_format.keep_with_next=True
-    p.add_run().add_picture(str(FIG/filename),width=Cm(width))
-    c=doc.add_paragraph(style="Caption")
-    c.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    c.add_run(caption)
+def add_figure(doc, filename, caption, width=16.0):
+    paragraph = doc.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    paragraph.paragraph_format.space_before = Pt(7)
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.keep_with_next = True
+    paragraph.add_run().add_picture(str(FIG / filename), width=Cm(width))
+    caption_paragraph = doc.add_paragraph(style="Caption")
+    caption_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    caption_run = caption_paragraph.add_run(caption)
+    set_run_font(caption_run, 11, italic=True)
 
 
-def add_page_num(p):
-    p.add_run("Trang ")
+def add_page_num(paragraph):
     field = OxmlElement("w:fldSimple")
-    field.set(qn("w:instr"),"PAGE")
-    p._p.append(field)
+    field.set(qn("w:instr"), "PAGE")
+    paragraph._p.append(field)
+
+
+def configure_style(style, size, bold=False, italic=False):
+    style.font.name = "Times New Roman"
+    run_properties = style._element.get_or_add_rPr()
+    fonts = run_properties.get_or_add_rFonts()
+    for key in ("w:ascii", "w:hAnsi", "w:eastAsia"):
+        fonts.set(qn(key), "Times New Roman")
+    style.font.size = Pt(size)
+    style.font.bold = bold
+    style.font.italic = italic
+    style.font.color.rgb = RGBColor(0, 0, 0)
+    color = run_properties.get_or_add_color()
+    color.set(qn("w:val"), "000000")
+    for attribute in ("w:themeColor", "w:themeTint", "w:themeShade"):
+        qualified = qn(attribute)
+        if qualified in color.attrib:
+            del color.attrib[qualified]
 
 
 def build_doc():
-    doc=Document()
-    sec=doc.sections[0]
-    sec.page_height=Cm(29.7)
-    sec.page_width=Cm(21)
-    sec.top_margin=Cm(2.0)
-    sec.bottom_margin=Cm(1.8)
-    sec.left_margin=Cm(2.1)
-    sec.right_margin=Cm(2.1)
-    sec.header_distance=Cm(0.9)
-    sec.footer_distance=Cm(0.8)
+    doc = Document()
+    section = doc.sections[0]
+    section.page_height = Cm(29.7)
+    section.page_width = Cm(21)
+    section.top_margin = Cm(2.0)
+    section.bottom_margin = Cm(2.0)
+    section.left_margin = Cm(3.0)
+    section.right_margin = Cm(2.0)
+    section.header_distance = Cm(1.0)
+    section.footer_distance = Cm(1.0)
+    styles = doc.styles
+    configure_style(styles["Normal"], 13)
+    styles["Normal"].paragraph_format.line_spacing = 1.3
+    styles["Normal"].paragraph_format.space_after = Pt(5)
+    configure_style(styles["Title"], 19, bold=True)
+    styles["Title"].paragraph_format.space_after = Pt(10)
+    styles["Title"].paragraph_format.keep_with_next = True
+    title_ppr = styles["Title"]._element.get_or_add_pPr()
+    title_border = title_ppr.find(qn("w:pBdr"))
+    if title_border is not None:
+        title_ppr.remove(title_border)
+    configure_style(styles["Subtitle"], 13, italic=True)
+    styles["Subtitle"].paragraph_format.space_after = Pt(8)
+    configure_style(styles["Heading 1"], 15, bold=True)
+    styles["Heading 1"].paragraph_format.space_before = Pt(15)
+    styles["Heading 1"].paragraph_format.space_after = Pt(7)
+    styles["Heading 1"].paragraph_format.keep_with_next = True
+    configure_style(styles["Heading 2"], 13, bold=True)
+    styles["Heading 2"].paragraph_format.space_before = Pt(10)
+    styles["Heading 2"].paragraph_format.space_after = Pt(4)
+    styles["Heading 2"].paragraph_format.keep_with_next = True
+    configure_style(styles["Caption"], 11, italic=True)
+    styles["Caption"].paragraph_format.space_after = Pt(9)
+    section.footer.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_page_num(section.footer.paragraphs[0])
 
-    styles=doc.styles
-    normal=styles["Normal"]
-    normal.font.name="Arial"; normal.font.size=Pt(10.5); normal.font.color.rgb=RGBColor(32,43,53)
-    normal.paragraph_format.line_spacing=1.18
-    normal.paragraph_format.space_after=Pt(7)
-    for name,size,before,after in (("Title",21,0,14),("Heading 1",15,17,8),("Heading 2",12,12,5)):
-        s=styles[name]
-        s.font.name="Arial";s.font.size=Pt(size);s.font.bold=True;s.font.color.rgb=RGBColor(0,0,0)
-        s.paragraph_format.space_before=Pt(before)
-        s.paragraph_format.space_after=Pt(after)
-        s.paragraph_format.keep_with_next=True
-    title_ppr=styles["Title"]._element.get_or_add_pPr()
-    title_border=title_ppr.find(qn("w:pBdr"))
-    if title_border is not None: title_ppr.remove(title_border)
-    styles["Subtitle"].font.name="Arial";styles["Subtitle"].font.size=Pt(11)
-    styles["Subtitle"].font.color.rgb=RGBColor(0,0,0)
-    styles["Caption"].font.name="Arial";styles["Caption"].font.size=Pt(9)
-    styles["Caption"].font.italic=True;styles["Caption"].font.color.rgb=RGBColor(65,76,88)
-    styles["Caption"].paragraph_format.space_after=Pt(11)
-    styles["List Bullet"].font.name="Arial";styles["List Bullet"].font.size=Pt(10.5)
-    styles["List Bullet"].paragraph_format.space_after=Pt(4)
+    title = doc.add_paragraph(style="Title")
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    set_run_font(title.add_run("BÁO CÁO KIẾN TRÚC VÀ THUẬT TOÁN ĐIỀU PHỐI AGV TRONG KHO"), 19, bold=True)
+    subtitle = doc.add_paragraph(style="Subtitle")
+    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    set_run_font(subtitle.add_run("Phân tích theo mã nguồn và tài liệu hệ thống hiện hành"), 13, italic=True)
+    meta = doc.add_paragraph()
+    meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    set_run_font(meta.add_run("Ngày đối chiếu 20 tháng 10 năm 2026"), 13)
 
-    head=sec.header.paragraphs[0]
-    head.alignment=WD_ALIGN_PARAGRAPH.RIGHT
-    head.add_run("BÁO CÁO KỸ THUẬT  |  HỆ THỐNG AGV").font.size=Pt(8)
-    foot=sec.footer.paragraphs[0]
-    foot.alignment=WD_ALIGN_PARAGRAPH.RIGHT
-    add_page_num(foot)
+    doc.add_heading("Giới thiệu bài toán", level=1)
+    add_para(doc, "Kho sử dụng nhiều robot tự hành cần một điểm điều phối tập trung để phân công nhiệm vụ, chọn tuyến và kiểm soát quyền đi qua khu vực giao nhau. Nếu từng xe tự quyết định độc lập, hai xe có thể cùng tiến vào ngã tư, giữ tuyến chồng lấn hoặc tiếp tục chạy khi trạng thái của xe còn lại không còn được xác minh.")
+    add_para(doc, "Dự án hiện quản lý hai AGV nhưng kiến trúc tách thành Core điều phối, gateway web, cơ sở dữ liệu, dashboard và kênh MQTT. Core sở hữu quyết định chuyển động và mutex; gateway sở hữu nghiệp vụ đơn hàng, sổ kho và báo cáo; giao diện giúp người vận hành theo dõi bản đồ, nhiệm vụ, kết nối và lỗi. Báo cáo phân biệt nội dung đã đối chiếu từ mã, hướng phát triển đề xuất và hạng mục chưa có số đo hoặc chưa nghiệm thu; không xem đề xuất là chức năng đã triển khai.")
 
-    p=doc.add_paragraph(style="Title")
-    p.add_run("Thuật toán và kiến trúc server điều phối hai robot AGV trong kho")
-    p=doc.add_paragraph(style="Subtitle")
-    p.add_run("Báo cáo phân tích từ mã nguồn và lưu đồ hệ thống")
-    add_para(doc,"Ngày đối chiếu: 07/10/2026  |  Phạm vi: web, gateway, Core, MQTT và lưu trữ")
-    add_para(doc,"Báo cáo giải thích cách server nhận nhiệm vụ, chọn đường và điều phối hai xe, sau đó liên hệ từng lựa chọn kỹ thuật với mục tiêu đề tài. Những khẳng định về hoạt động của phần mềm được đối chiếu với mã trong workspace; tài liệu không xem ACK hoặc bản mô phỏng là bằng chứng robot thật đã di chuyển an toàn.")
-    add_figure(doc,"01-kien-truc.png","Hình 1. Các thành phần và kênh trao đổi chính trong hệ thống.")
+    doc.add_heading("1 Kiến trúc tổng thể", level=1)
+    add_para(doc, "Hệ thống dùng mô hình điều phối tập trung. Trình duyệt trao đổi với gateway Node.js qua HTTP và WebSocket. Gateway chuyển lệnh có request_id sang C++ Core qua WebSocket v1. Core quản lý bản đồ, đội xe, nhiệm vụ và mutex, sau đó gửi command JSON tới robot qua MQTT. Robot trả ACK, telemetry RFID, pin, vật cản và diagnostic. SQLite nằm phía gateway để lưu dữ liệu nghiệp vụ và lịch sử.")
+    add_figure(doc, "01-kien-truc.png", "Hình 1. Sơ đồ khối kiến trúc tổng thể của hệ thống AGV.")
+    add_table(doc, ["Thành phần", "Trách nhiệm chính", "Dữ liệu quyết định"], [
+        ("C++ Core", "Tìm đường, phân công, theo dõi task, mutex, lift và phục hồi", "Map đang chạy, task_id, route, owner và grant_id"),
+        ("Node.js gateway", "API web, tương quan kết quả Core và điều phối nghiệp vụ kho", "request_id, đơn hàng, trạng thái đối soát"),
+        ("SQLite", "Lưu history, KPI, đơn hàng, sổ kệ và báo cáo ca", "Bản ghi nghiệp vụ đã xác nhận"),
+        ("Dashboard", "Giám sát và gửi yêu cầu của người vận hành", "State nhận từ gateway cùng tuổi dữ liệu"),
+        ("Robot", "Đọc cảm biến, điều khiển motor và thực hiện command", "RFID, cảm biến, PWM, encoder và trạng thái servo"),
+    ], [3.2, 7.0, 6.8])
 
-    doc.add_heading("1 Mục tiêu và phạm vi",level=1)
-    add_para(doc,"Đề tài đặt ra bốn mục tiêu nguồn: hai robot đi theo lộ trình định trước, web giám sát gần thời gian thực, quản lý bản đồ/lộ trình/pin/lỗi và có dữ liệu phục vụ báo cáo nghiên cứu [P1, P2]. Server được hiểu là cặp gateway Node.js và Core C++; ESP32 là bộ điều khiển trên robot, không nằm trong vòng điều khiển motor của server.")
-    add_para(doc,"Căn cứ phân tích là AGVserver.cpp, FLeetmanager.hpp, MapGraph.hpp, Mutexarbiter.hpp, ShiftController.hpp, gateway.js, hợp đồng mạng và sổ yêu cầu hiện tại [P1–P7]. Trạng thái SOURCE chỉ mục tiêu người dùng nêu; OBSERVED chỉ hành vi đọc được từ mã; OPEN chỉ nội dung cần quyết định hoặc thử nghiệm tiếp. Các số 200 ms, 3 s và 10 s dưới đây là cấu hình trong mã hiện tại, chưa phải chỉ tiêu nghiệm thu.")
-
-    doc.add_heading("2 Các khái niệm cần phân biệt",level=1)
-    add_table(doc,["Thuật ngữ","Định nghĩa trong báo cáo"],[
-        ("AGV","Robot tự hành nhận lệnh di chuyển theo node RFID, tự đọc cảm biến và điều khiển motor tại firmware."),
-        ("Gateway","Dịch vụ Express cung cấp HTTP/WS cho web, chuyển lệnh đến Core và lưu SQLite."),
-        ("Core","Tiến trình C++ sở hữu bản đồ đang chạy, đội xe, nhiệm vụ và quyền vùng chung."),
-        ("Task và task_id","Yêu cầu đi đến node; task_id giúp theo dõi một nhiệm vụ qua pending, dispatched, completed, cancelled hoặc interrupted."),
-        ("Telemetry","Bản tin robot gửi về gồm node RFID, pin và có thể có cờ vật cản. Bản hiện tại dùng chuỗi phân cách dấu |."),
-        ("ACK","Biên nhận đúng cmd_id hoặc grant_id; chưa chứng minh xe đã hoàn tất chuyển động hay rời vùng."),
-        ("Mutex zone","Vùng đường dùng chung chỉ cấp quyền logic cho một robot tại một thời điểm; owner, hàng chờ và grant_id do Core quản lý."),
-        ("Checkpoint","Ảnh trạng thái bền vững của queue/fleet/mutex được lưu trước khi Core phát command hoặc grant."),
-    ],[4.2,12.1])
-    add_para(doc,"HTTP phù hợp với thao tác và truy vấn có phản hồi; WebSocket cho luồng trạng thái hai chiều đang mở [E2, E3]; MQTT dùng publish/subscribe giữa Core và thiết bị robot [E1]. Dùng ba kênh theo vai trò giảm việc suy diễn sai: HTTP thành công là Core chấp nhận yêu cầu, còn hoàn thành chuyển động cần telemetry RFID đích.")
-
-    doc.add_heading("3 Kiến trúc và chủ sở hữu trạng thái",level=1)
-    add_para(doc,"Trình duyệt gửi lệnh qua gateway cổng 3000. Gateway xác thực và kiểm tra dữ liệu, tạo request_id rồi trao đổi với Core qua WebSocket cổng 8080. Core kết nối broker MQTT; robot dùng topic agv/{id}/{action}. SQLite nằm ở gateway để lưu lịch sử, snapshot bản đồ và KPI. Core là nguồn quyết định cho graph đang chạy, task và mutex; snapshot SQLite không tự áp dụng lại khi reconnect [P3, P4].")
-    add_para(doc,"Sự phân quyền này phù hợp với kho có hai xe: cùng một trạng thái điều phối phải được đọc nhất quán khi web gửi lệnh, robot báo RFID và nhịp kiểm tra timeout xảy ra gần nhau. g_stateMtx bảo vệ dữ liệu dùng chung giữa các luồng trong Core. Nó khác mutex zone, vốn là quyền đi qua giao lộ của hai thiết bị vật lý và phải truyền qua MQTT [P3, P5].")
-    doc.add_heading("3.1 Chủ sở hữu dữ liệu",level=2)
-    add_table(doc,["Thành phần","Dữ liệu chịu trách nhiệm"],[
-        ("Robot và firmware","RFID/cảm biến/pin đo được, trạng thái motor và biên nhận lệnh."),
-        ("Core C++","Bản đồ đang chạy, queue, task, đường dự kiến, quyền vùng và kết quả điều phối."),
-        ("Gateway và SQLite","Lịch sử đã nhận, KPI, snapshot lưu theo thao tác và trạng thái liên kết."),
-        ("Dashboard","Hiển thị trạng thái Core cùng tuổi dữ liệu; gửi yêu cầu người vận hành."),
-    ],[4.2,12.1])
-
-    doc.add_heading("4 Luồng hoạt động của server",level=1)
-    add_figure(doc,"02-ba-luong-server.png","Hình 2. Ba nhánh sự kiện cùng tác động đến trạng thái Core; hình giản lược thứ tự hàm.")
-    doc.add_heading("4.1 Khởi động và khôi phục",level=2)
-    add_para(doc,"Core giữ cổng WS trước khi dùng counter và MQTT để ngăn hai Core cùng điều khiển một đội xe. Tiếp theo, Core nạp bản đồ, bộ đếm cmd_id/task_id, runtime_state và trạng thái ca. Nếu checkpoint không khớp map, tiến trình dừng để đối soát. Queue và owner mutex có thể được khôi phục, nhưng vị trí cũ của robot không được xem là vị trí mới; cần RFID/telemetry mới [P3, P6].")
-    doc.add_heading("4.2 Lệnh từ người vận hành",level=2)
-    add_para(doc,"Gateway nhận REST, kiểm tra quyền, kiểu dữ liệu, trạng thái Core và MQTT rồi gửi lệnh có request_id. WebCommands thực hiện thêm/hủy task, GOTO chỉ định xe, sửa bản đồ, quản lý vật cản, ca và xác minh vùng. Core trả command_result kèm core_session_id và state. Nếu liên kết đứt trong lúc chờ, gateway trả unknown để người vận hành đối soát, không tự phát lại lệnh có thể đã được Core xử lý [P3, P4].")
-    doc.add_heading("4.3 Sự kiện MQTT từ robot",level=2)
-    add_para(doc,"Callback on_message kiểm tra topic, ID, độ dài tối đa 4096 byte, retain và cú pháp payload. Từng topic chuyển đến FleetManager hoặc MutexArbiter: telemetry cập nhật RFID/pin/vật cản; ack xác nhận command; mutex_request, mutex_ack và mutex_release điều phối vùng; error/status/offline/charging_done thay đổi trạng thái vận hành [P3, P7]. Bản tin không hợp lệ bị bỏ qua hoặc ghi lỗi; sự kiện vật cản/lỗi có thể gọi requestWake để vòng điều phối chạy sớm.")
-    doc.add_heading("4.4 Nhịp điều phối và phát trạng thái",level=2)
-    add_para(doc,"Trong mỗi vòng, fleet.tick() xử lý timeout telemetry, retry ACK, tuyến BLOCKED, phân công queue và pin. Khi MQTT kết nối, shift.tick() thực hiện logic ca; Core thử lại grant chưa ACK và gửi heartbeat. checkpointAndPublish() lưu trước khi phát bản tin xếp hàng. Sau đó broadcastState() gửi snapshot/delta tối đa 5 lần mỗi giây. Core nhả g_stateMtx trước khi chờ tối đa 200 ms hoặc được requestWake đánh thức [P3].")
-
-    doc.add_heading("5 Thuật toán tìm đường và phân công",level=1)
-    add_figure(doc,"03-phan-cong-nhiem-vu.png","Hình 3. Các điều kiện và quyết định khi Core phân công một nhiệm vụ.")
-    doc.add_heading("5.1 Mô hình đồ thị và Dijkstra",level=2)
-    add_para(doc,"Bản đồ được biểu diễn bằng G = (V, E): V là node như RFID, kho và trạm; E là cạnh có hướng, trọng số không âm. MapGraph tìm đường bằng Dijkstra và so tổng trọng số, không so số node. Với dữ liệu bản đồ hiện tại, đây là cách chọn đường có chi phí nhỏ nhất theo trọng số đã nhập, miễn là các cạnh hợp lệ và không bị chặn [P5, E4]. Tọa độ x/y của hình bản đồ chỉ giúp hiển thị, chưa phải phép đo kích thước vật lý.")
-    add_figure(doc,"04-ban-do-kho.png","Hình 4. Đồ thị 26 node và 39 cạnh từ data/map_layout.json, gồm sáu mutex zone M1–M6.")
-    add_para(doc,"Dijkstra phù hợp vì kho có đồ thị nhỏ, rõ hướng và trọng số; thuật toán không cần giả định một heuristic từ tọa độ pixel. Khi có vật cản hoặc đường/zone chưa xác minh, Core loại các node liên quan khỏi tập ứng viên. Kết quả chỉ là đường trên đồ thị, không tự bảo đảm khoảng cách phanh, độ rộng lối đi hay xe quay không quét vào vùng xe khác.")
-    doc.add_heading("5.2 Chọn xe và giữ tuyến",level=2)
-    add_para(doc,"Task chờ được xét theo priority rồi thứ tự tạo. Core lọc xe rảnh, online, có RFID hợp lệ, không lỗi, có pin đủ và ca cho phép nhận nhiệm vụ. Với mỗi xe phù hợp, Core tính tuyến và tổng trọng số tới đích; nếu bằng nhau dùng ID robot để chọn ổn định. Các node/route đang dùng và vùng chưa xác minh được đưa vào tập cản; task chưa có đường hoặc chưa có xe giữ ở queue để xét lại [P5].")
-    add_para(doc,"Cách này phù hợp mục tiêu có hai AGV vì giảm trường hợp cả hai được giao cùng một đoạn đường ngay trong khâu lập tuyến. Nó không phải tối ưu lịch toàn đội; hai task có thể phải chờ dù một lịch phối hợp khác tốt hơn. Chế độ thử riêng xe 01 có điều kiện khác và không dùng bộ phân công queue hai xe [P5, P6].")
-    doc.add_heading("5.3 Quyền vùng giao nhau",level=2)
-    add_para(doc,"MutexArbiter lưu owner và hàng chờ FIFO cho từng zone. Robot phải request trước khi vào, nhận grant có grant_id, ACK grant và chỉ release bằng đúng token sau khi toàn thân rời vùng. Thiếu ACK grant dẫn đến retry cùng ID, không nhường quyền cho xe khác. Khi robot offline, Core giữ owner để tránh suy luận sai rằng giao lộ đã trống [P3, P7].")
-    add_para(doc,"Đây là lựa chọn phù hợp với hai robot độc lập qua mạng: std::mutex trong Core chỉ bảo vệ bộ nhớ, còn grant là thông điệp quyền đi mà firmware có thể kiểm tra. Mức an toàn vật lý vẫn phụ thuộc vị trí RFID, hình học xe, khoảng dừng và cách firmware xác nhận đã rời hẳn vùng; những điểm này chưa được chứng minh trên hai xe thật.")
-    doc.add_heading("5.4 Pin và ca làm việc",level=2)
-    add_para(doc,"Core theo dõi pin thấp để chuyển nhu cầu sạc và dùng hai ngưỡng thấp/cho phép nhận lại nhằm tránh dao động giao việc quanh một giá trị. ShiftController quản lý mở ca, đóng ca và trạm riêng 01→S1, 02→S2. Kết thúc ca giữ task đang chạy tới khi hoàn thành, dừng nhận task mới rồi đưa xe về trạm theo telemetry, không gán vị trí giả [P6]. Khi pin chưa được hiệu chuẩn, giá trị ? được hiển thị là chưa đo; chính sách thử một xe có ngoại lệ riêng.")
-
-    doc.add_heading("6 Bằng chứng hoàn thành và dữ liệu lưu trữ",level=1)
-    add_figure(doc,"05-ack-va-rfid.png","Hình 5. HTTP, ACK và RFID trả lời ba câu hỏi khác nhau trong vòng đời task.")
-    add_para(doc,"HTTP 200 nói Core đã nhận và chấp nhận thao tác; ACK cmd_id nói robot đã nhận command; telemetry RFID đến đích sau khi đi hết tuyến mới làm Core đặt task completed. Vì vậy giao diện và lịch sử dùng task_id/trạng thái Core, không đoán từ việc target biến mất hoặc một bản ACK [P4, P5].")
-    add_para(doc,"Gateway lưu thay đổi task, vị trí, pin và log vào SQLite; trạng thái mới từ Core được đẩy tới dashboard bằng snapshot và state_delta. Delta theo trường giảm lượng dữ liệu khi bản đồ không đổi. Gateway gắn thời gian nhận để báo dữ liệu cũ; nếu mất Core, nhãn UNKNOWN phản ánh khoảng quan sát thiếu, không chứng minh robot đã dừng. SQLite hỗ trợ transaction cho lịch sử trong cùng một cơ sở dữ liệu [P4, E5].")
-    add_table(doc,["Dữ liệu","Nơi sở hữu","Ý nghĩa khi mất kết nối"],[
-        ("Task đang chạy, queue, owner mutex","Core và runtime_state.json","Giữ để phục hồi/đối soát; task đang chạy thành interrupted sau restart."),
-        ("cmd_id, task_id","Counter riêng của Core","Không rewind hoặc dùng chung giữa hai Core; tránh lặp định danh."),
-        ("History, log, KPI, snapshot map","SQLite ở gateway","Phục vụ tra cứu và báo cáo; không thay bản đồ Core tự động."),
-        ("RFID, pin, lỗi mới","Robot → MQTT → Core","Thiếu telemetry thì vị trí và an toàn vùng không được xác minh."),
-    ],[4.0,4.0,8.3])
-
-    doc.add_heading("7 Lý do kiến trúc phù hợp với đề tài",level=1)
-    add_table(doc,["Mục tiêu nguồn","Cơ chế đáp ứng","Giới hạn cần nêu"],[
-        ("Hai xe đi tuyến định trước","Đồ thị có hướng, Dijkstra, chọn xe, giữ route và mutex zone","Chưa đo tránh va chạm hình học trên hai xe thật."),
-        ("Web giám sát gần thời gian thực","MQTT telemetry, Core snapshot/delta, WebSocket đến dashboard","Chưa có ngưỡng độ trễ nghiệm thu đã chốt."),
-        ("Quản lý bản đồ, tuyến, pin, lỗi","WebCommands, FleetManager, ShiftController, trạng thái đo từ RFID","Pin/sạc/motor thật còn cần hiệu chuẩn và thử bàn."),
-        ("Dữ liệu cho báo cáo nghiên cứu","Task history, log, KPI, map snapshot và kịch bản test","Chưa thay mẫu báo cáo chính thức của học viện."),
-    ],[3.4,6.7,6.2])
-    add_para(doc,"Các thành phần được chọn cũng khớp stack đang có: C++17 cho Core, Node.js/Express cho gateway, HTML/JS cho dashboard, libmosquitto và SQLite cho giao tiếp/lịch sử. Giữ stack hiện hành giúp đối chiếu trực tiếp giữa báo cáo, mã và ca kiểm thử, đồng thời tránh mô tả một hệ thống khác chưa được triển khai [P3, P4].")
-
-    doc.add_heading("8 Sự cố, phục hồi và giới hạn kiểm chứng",level=1)
-    add_figure(doc,"06-phuc-hoi.png","Hình 6. Phản ứng thận trọng khi dữ liệu hoặc liên kết điều khiển bị gián đoạn.")
-    add_para(doc,"Mất telemetry hoặc broker không chứng minh xe rời vùng. Core gián đoạn task, giữ đường/zone chưa xác minh và yêu cầu đối soát trước khi tái giao. Sau restart, pending và quyền vùng có thể khôi phục từ checkpoint nhưng vị trí robot cần RFID mới; ca trở về trạng thái tập kết. Gateway mất Core đánh dấu dữ liệu cũ và kết quả lệnh đang chờ là unknown [P3, P4, P6].")
-    add_para(doc,"MQTT hiện dùng QoS 0, tức cơ chế giao nhận ở mức giao thức là at most once [E1]. ACK ứng dụng, retry cùng cmd_id và chống lệnh trùng giúp xử lý mất/trùng trong một số kịch bản, nhưng không chứng minh motor đã chạy. Checkpoint trước publish ngăn phát lệnh dựa trên trạng thái chưa lưu; nếu ghi checkpoint thất bại, Core dừng phát lệnh [P3, P6].")
-    add_para(doc,"Kết quả mô phỏng và kiểm thử phần mềm trong workspace hỗ trợ đánh giá logic, nhưng không thay phép đo trên phần cứng. Trước nghiệm thu hai robot cần kiểm tra bề rộng lối đi, kích thước và quỹ đạo quay, độ trễ RFID, phanh khi mất mạng, nguồn motor, pin và quá trình release mutex thực tế. Tiêu chí định lượng về độ trễ, số lượt chạy và sai lệch cho phép vẫn OPEN trong sổ yêu cầu [P1, P2].")
-
-    doc.add_heading("9 Kết luận",level=1)
-    add_para(doc,"Server hiện có một chuỗi quyết định nhất quán từ lệnh web đến nhiệm vụ, đường đi, quyền vùng, xác nhận RFID và lịch sử. Dijkstra giải quyết chọn tuyến theo trọng số; FleetManager gán việc và theo dõi pin/timeout; MutexArbiter điều phối giao lộ; gateway cung cấp giao diện và dữ liệu báo cáo. Các lựa chọn này đáp ứng phạm vi phần mềm của đề tài hai AGV và cho phép mô phỏng, đối soát từng trạng thái. Báo cáo không kết luận hệ thống đã đạt an toàn vận hành hai xe thật; phần đó cần thử nghiệm và tiêu chí nghiệm thu đã chốt.")
-
+    doc.add_heading("2 Server quản lý (C++ Core)", level=1)
+    add_para(doc, "Core được xây bằng C++17 và libmosquitto. Một tiến trình thống nhất có thể chạy với phạm vi tham gia (scope) chỉ xe 01, chỉ xe 02 hoặc cả hai; scope là tập ID robot mà tiến trình được phép nhận telemetry và giao nhiệm vụ. Các luồng lệnh web, sự kiện MQTT và nhịp điều phối cùng tác động đến trạng thái dùng chung; khóa nội bộ bảo vệ dữ liệu trong tiến trình, còn mutex zone bảo vệ khu vực giao nhau ngoài thực địa.")
+    add_figure(doc, "02-ba-luong-server.png", "Hình 2. Quan hệ giữa các module chính của C++ Core.", width=14.5)
     doc.add_page_break()
-    doc.add_heading("Tài liệu tham khảo",level=1)
-    references=[
-        ("P1","docs/00-project-brief.md và docs/requirements/register.md, workspace AGVproject, đối chiếu 07/10/2026."),
-        ("P2","docs/19-server-algorithm-flowchart.md, lưu đồ server của workspace, 07/10/2026."),
-        ("P3","src/AGVserver.cpp, src/WebCommands.hpp và src/RuntimeStore.hpp, mã Core của workspace, đối chiếu 07/10/2026."),
-        ("P4","AGVwebserver/gateway.js, AGVwebserver/db.js và contracts/web-server.md, workspace, đối chiếu 07/10/2026."),
-        ("P5","src/FLeetmanager.hpp, src/MapGraph.hpp và docs/05-algorithms.md, workspace, đối chiếu 07/10/2026."),
-        ("P6","src/ShiftController.hpp, docs/17-shifts-and-home-charging.md và docs/18-hardening.md, workspace, đối chiếu 07/10/2026."),
-        ("P7","src/Mutexarbiter.hpp và docs/07-network.md, workspace, đối chiếu 07/10/2026."),
-        ("E1","OASIS Open. MQTT Version 3.1.1, 2014. https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html"),
-        ("E2","Fette, I. và Melnikov, A. RFC 6455 The WebSocket Protocol, IETF, 2011. https://datatracker.ietf.org/doc/html/rfc6455"),
-        ("E3","Fielding, R. và cộng sự. RFC 9110 HTTP Semantics, IETF, 2022. https://www.rfc-editor.org/rfc/rfc9110.html"),
-        ("E4","Dijkstra, E. W. A note on two problems in connexion with graphs. Numerische Mathematik 1, 269–271, 1959. https://doi.org/10.1007/BF01386390"),
-        ("E5","SQLite Consortium. Transaction và SQLite Is Transactional. https://www.sqlite.org/lang_transaction.html ; https://www.sqlite.org/transactional.html"),
-    ]
-    for key, item in references:
-        p=doc.add_paragraph()
-        p.paragraph_format.left_indent=Cm(0.8)
-        p.paragraph_format.first_line_indent=Cm(-0.8)
-        p.paragraph_format.space_after=Pt(4)
-        p.add_run(f"[{key}] ").bold=True
-        p.add_run(item)
+    doc.add_heading("2.1 Tìm đường và phân công", level=2)
+    add_para(doc, "MapGraph biểu diễn bản đồ kho bằng đồ thị có hướng G = (V, E). Bản hiện hành có 22 node và 35 cạnh. Mỗi cạnh e mang trọng số không âm w(e), được dùng như độ dài quy ước của đoạn đường; chi phí tuyến P là C(P) = tổng w(e) trên các cạnh thuộc P. Node có vật cản, node bị chặn bổ sung và cạnh bị khóa bị loại khỏi phép tìm đường. Node hoặc tuyến đang được xe khác giữ cũng được đưa vào tập cấm theo từng lượt xét, thay vì cộng một khoản phạt tắc nghẽn vào trọng số.")
+    add_para(doc, "Dijkstra trả về tuyến khả thi có tổng trọng số nhỏ nhất trong tập cấm tại thời điểm tính. Một lần tìm đường có độ phức tạp O((|V| + |E|) log |V|) với hàng đợi ưu tiên và dùng O(|V| + |E|) bộ nhớ. Tọa độ x, y hiện phục vụ sơ đồ và chưa được hiệu chuẩn thành khoảng cách vật lý bảo đảm, nên chưa có heuristic cùng đơn vị và luôn không vượt chi phí thật để dùng A* một cách chặt chẽ.")
+    add_para(doc, "FleetManager xét task theo priority giảm dần; cùng priority thì task có số thứ tự tạo nhỏ hơn được xét trước, tức FIFO trong cùng mức ưu tiên. Với mỗi task, Core lọc các xe đang thuộc scope, rảnh, còn kết nối, có telemetry mới, vị trí RFID hợp lệ và không ở trạng thái lỗi hoặc nâng hạ. Sau đó Core chạy tối đa hai lượt: lượt đầu tránh toàn bộ node bận và tuyến đang dùng; lượt sau dùng tập chặn cứng để tìm phương án an toàn còn lại. Xe có chi phí tuyến nhỏ nhất được chọn; nếu bằng nhau thì ID xe nhỏ hơn được chọn để kết quả xác định. Đây là phân công tham lam theo từng task, không phải tối ưu đồng thời toàn bộ hàng đợi.")
+    add_para(doc, "Giả mã rút gọn của chu kỳ phân công:", indent=False)
+    add_pseudocode(doc, [
+        "for task theo (priority giảm dần, seq tăng dần):",
+        "    best <- rỗng",
+        "    for pass in [tránh node bận, tập chặn cứng]:",
+        "        for agv in eligible(task):",
+        "            p <- Dijkstra(agv.node, task.target, blocked)",
+        "            nếu p tốt hơn best: best <- (agv, p, cost(p))",
+        "        nếu best khác rỗng: break",
+        "    nếu có best: gán task và tuyến",
+        "    ngược lại: giữ task trong queue",
+    ])
+    add_para(doc, "Với T task đang chờ và R xe hợp lệ, cận trên của một chu kỳ phân công là O(T.R.(|V| + |E|) log |V|); hệ số hai đến từ hai lượt tập chặn được bỏ trong ký hiệu O lớn. Với bản đồ 22 node, 35 cạnh và tối đa hai xe, chi phí tính toán hiện nhỏ; rủi ro chính nằm ở chất lượng mô hình, bằng chứng chiếm dụng và chính sách công bằng.")
+    add_table(doc, ["Phương pháp", "Khả năng", "Lý do chưa dùng hoặc vai trò hiện tại"], [
+        ("Dijkstra hiện tại", "Tối ưu tổng trọng số tĩnh trên đồ thị có cạnh không âm", "Dễ kiểm chứng, xác định và phù hợp bản đồ nhỏ; không tối ưu thời gian chờ hoặc toàn đội xe."),
+        ("A*", "Có thể giảm số node mở rộng khi có heuristic admissible", "Tọa độ hiện là sơ đồ, chưa đủ để suy ra cận dưới theo cùng đơn vị trọng số; cần hiệu chuẩn bản đồ trước."),
+        ("Reservation table", "Đặt chỗ node và cạnh theo thời gian, xử lý tốt xung đột đối đầu", "Cần mô hình thời gian di chuyển, đồng hồ và cam kết lịch đáng tin cậy; các dữ liệu này chưa được nghiệm thu."),
+        ("CBS", "Giải xung đột nhiều robot trong không gian-thời gian và có thể tối ưu theo giả thiết", "Độ phức tạp và yêu cầu mô hình cao hơn nhu cầu hai xe hiện tại; thời lượng chuyển động qua MQTT còn bất định."),
+    ], [3.0, 5.0, 9.0])
+    add_figure(doc, "04-ban-do-kho.png", "Hình 3. Bản đồ kho gồm các vị trí K, trạm S, node nối tuyến và vùng giao nhau M.")
+    doc.add_heading("2.2 Tránh xung đột tại giao lộ", level=2)
+    add_para(doc, "MutexArbiter chỉ cấp một owner cho mỗi vùng M1 đến M6, giữ hàng chờ FIFO riêng cho từng vùng và phát grant_id. ACK grant chỉ xác nhận robot đã nhận quyền. Quyền chỉ được trả khi robot cung cấp đúng token và bằng chứng rời vùng; mất telemetry hoặc MQTT không đủ để kết luận vùng đã trống. Firmware hiện dùng điều kiện encoder và cửa sổ RFID cho bằng chứng này, nhưng ngưỡng vẫn cần đo trên xe thật.")
+    add_para(doc, "Để giảm nguy cơ hai xe giữ-chờ nhau trong hành lang gồm nhiều vùng mutex nối trực tiếp, Core xem toàn bộ thành phần mutex liên thông như một hành lang cần dành trước khi lập tuyến thay thế. Các node thường trên activePath của xe khác cũng được đưa vào tập chặn. Cơ chế này giảm hold-and-wait trong cấu hình hiện tại nhưng chưa tạo thành chứng minh deadlock-free cho mọi bản đồ hoặc mọi chuỗi cấp nhiều vùng rời nhau.")
+    add_table(doc, ["Nguy cơ", "Cơ chế hiện có", "Khoảng trống còn lại"], [
+        ("Deadlock", "Dành trước hành lang mutex liên thông, chặn tuyến đang chạy, giữ owner khi mất bằng chứng", "Chưa có thứ tự toàn cục cho mọi vùng rời nhau hoặc bộ phát hiện chu trình wait-for."),
+        ("Livelock", "Tie-break theo ID, tuyến xác định và xe BLOCKED chỉ thử lại theo tick", "Chưa có bộ phát hiện dao động, backoff hoặc ngưỡng số lần replan."),
+        ("Starvation", "FIFO trong từng priority và FIFO hàng chờ từng mutex", "Không có aging; task priority thấp có thể chờ lâu nếu liên tục xuất hiện task ưu tiên cao."),
+        ("Đối đầu trên cạnh một làn", "Chặn node, activePath, uncertainPath và một phần tuyến hai chiều", "Chưa đặt chỗ cạnh theo thời gian; chưa chứng minh loại trừ mọi edge-swap hoặc xung đột hình học khi quay."),
+    ], [3.0, 6.5, 7.5])
+    add_para(doc, "Trọng số đường là tĩnh và không chứa độ dài hàng chờ mutex. Khi có vật cản, đường bị chặn hoặc xe khác mất kết nối trên tuyến, Core có thể tính lại tuyến; nếu chưa có tuyến thay thế, xe chuyển BLOCKED, nhận WAIT một lần và thử lại ở các tick sau. Vì vậy hệ thống có re-route theo sự kiện, nhưng chưa phải định tuyến nhận biết tắc nghẽn hay tối ưu makespan.")
+    doc.add_heading("2.3 Lưu trạng thái và phục hồi", level=2)
+    add_para(doc, "RuntimeStore lưu queue, fleet và mutex trước khi Core phát command hoặc grant. command_sequence.json và task_sequence.json phải tăng đơn điệu, không xóa hoặc dùng chung cho hai Core. Sau restart, task đang chạy chuyển sang interrupted, quyền vùng được giữ ở trạng thái cần phục hồi và vị trí cũ chưa được xem là vị trí mới cho tới khi có telemetry RFID hợp lệ.")
+    add_para(doc, "Chính sách pin hiện có cấu hình bypass tạm để thử nghiệm và nhóm sạc thủ công. Pin vẫn được đo và hiển thị nhưng chưa chặn task theo ngưỡng trong cấu hình này. Đây là trạng thái thử nghiệm, không phải chính sách nghiệm thu.")
 
-    doc.core_properties.title="Thuật toán và kiến trúc server điều phối hai robot AGV trong kho"
-    doc.core_properties.subject="Báo cáo giải thích định nghĩa, chức năng, lựa chọn kỹ thuật và sự phù hợp với đề tài AGV"
+    doc.add_heading("3 Server web (Node.js gateway và SQLite)", level=1)
+    add_para(doc, "Gateway dùng Node.js CommonJS, Express và thư viện ws. HTTP xử lý truy vấn hoặc thao tác có phản hồi; WebSocket chuyển lệnh sang Core và đẩy trạng thái về trình duyệt. Gateway chờ command_result có cùng request_id và core_session_id. Nếu liên kết đứt trong lúc chờ, kết quả được đánh dấu unknown hoặc needs_attention thay vì tự gửi lại thao tác có thể đã được thực hiện.")
+    add_figure(doc, "03-phan-cong-nhiem-vu.png", "Hình 4. Các module nghiệp vụ của server web và lớp lưu trữ SQLite.")
+    add_para(doc, "SQLite lưu lịch sử robot, task, KPI, snapshot, đơn hàng, trạng thái K1 đến K6, kệ trên xe và báo cáo ca. Quy trình chuyển kệ chỉ cập nhật sổ kho sau DONE_UP hoặc DONE_DOWN đúng command_id, đúng robot, đúng node và cargo tương ứng. Transaction giữ cập nhật vị trí kệ và log bằng chứng trong cùng một lần ghi.")
+    add_table(doc, ["Tình huống", "Phản hồi của gateway"], [
+        ("Core từ chối lệnh", "Trả lỗi theo command_result; không tạo thành công giả."),
+        ("Hết thời gian hoặc mất Core khi chờ", "Trả kết quả chưa xác định; khóa retry tự động và yêu cầu đối soát."),
+        ("Đổi core_session_id", "Đánh dấu khoảng quan sát và xử lý đơn đang chạy theo hướng an toàn."),
+        ("SQLite ghi thất bại", "Rollback transaction; không công bố sổ kho đã đổi."),
+        ("Dữ liệu robot cũ", "Giữ snapshot cuối để tham khảo nhưng gắn stale và khóa thao tác phụ thuộc dữ liệu mới."),
+    ], [5.0, 12.0])
+
+    doc.add_heading("4 Giao diện web (dashboard)", level=1)
+    add_para(doc, "Dashboard hiện chia bốn khu vực Tổng quan, Nhiệm vụ, Bản đồ và Báo cáo. Tổng quan ưu tiên đội xe, trạng thái kết nối, bản đồ, tuyến và thao tác kho. Nhiệm vụ hiển thị task_id và lịch sử xe. Bản đồ quản lý vật cản, snapshot và editor. Báo cáo chứa KPI, nhật ký chuyển kệ và báo cáo đầu cuối ca.")
+    add_figure(doc, "05-ack-va-rfid.png", "Hình 5. Khung chức năng chính của dashboard giám sát.")
+    add_para(doc, "Giao diện hiển thị riêng trạng thái Web, Core và MQTT. Trạng thái agv_connected chỉ phản ánh liên kết gateway với Core; tuổi telemetry mới quyết định dữ liệu từng xe còn tin cậy hay không. Marker nội suy giữa hai RFID là ước lượng hiển thị, trong khi RFID gần nhất mới là mốc rời rạc dùng để xác nhận node và hoàn thành task.")
+    add_para(doc, "Bảng trạng thái kho cho biết kệ tại K1 đến K6, kệ trên xe, vị trí đang được giữ chỗ và mục cần đối soát. Khi dữ liệu cũ, MQTT mất hoặc robot lỗi, dashboard dừng chỉ báo tiến trình đang chạy và khóa form giao việc. Giao diện không diễn giải HTTP 202 hoặc ACK thành robot đã hoàn thành.")
+    add_table(doc, ["Khu vực", "Nội dung ưu tiên"], [
+        ("Tổng quan", "Đội xe, trạng thái kết nối, tuyến đang chạy, kho và thao tác chính."),
+        ("Nhiệm vụ", "Task hiện tại, task_id, lịch sử xe và kết quả hoàn thành hoặc gián đoạn."),
+        ("Bản đồ", "Node, cạnh, vật cản, snapshot và công cụ chỉnh sửa có kiểm tra."),
+        ("Báo cáo", "KPI, nhật ký, trạng thái kệ và báo cáo đầu cuối ca."),
+    ], [4.0, 13.0])
+
+    doc.add_heading("5 Luồng hoạt động tiêu biểu", level=1)
+    add_para(doc, "Một lượt chuyển kệ bắt đầu khi người vận hành chọn vị trí nguồn có kệ và vị trí đích trống. Gateway đặt chỗ, lưu đơn rồi yêu cầu Core tạo task. Core chọn xe và tuyến, phát GOTO có cmd_id. Robot ACK lệnh và di chuyển; telemetry RFID tại đích cùng trạng thái phù hợp mới hoàn thành chặng.")
+    add_figure(doc, "06-phuc-hoi.png", "Hình 6. Sơ đồ tuần tự một lượt chuyển kệ từ yêu cầu đến cập nhật SQLite.", width=15.6)
+    add_para(doc, "Sau khi xe đến kho lấy, gateway gửi warehouse_lift. Chặng giao chỉ bắt đầu khi kết quả DONE_UP đúng lệnh xác nhận chu kỳ nâng đã kết thúc và cargo ảo ở trạng thái có hàng. Tại kho giao, DONE_DOWN tương quan mới cho phép cập nhật kệ sang vị trí đích. Cargo hiện là trạng thái phần mềm của chu kỳ servo, chưa phải bằng chứng có cảm biến tải hoặc ID kệ vật lý.")
+
+    doc.add_heading("6 An toàn, bảo mật và xử lý lỗi", level=1)
+    add_para(doc, "Thiết kế dùng nguyên tắc thất bại an toàn: khi trạng thái chuyển động hoặc quyền vùng không còn được xác minh, hệ thống giữ task, route hoặc owner thay vì giả định tài nguyên đã trống. MQTT đang dùng QoS 0, vì vậy ACK ứng dụng, retry cùng cmd_id, chống trùng và checkpoint giúp xử lý mất hoặc lặp bản tin nhưng không thay thế bằng chứng chuyển động vật lý.")
+    add_figure(doc, "07-luong-don-kho.png", "Hình 7. Luồng xử lý thận trọng khi kết nối hoặc dữ liệu không còn tin cậy.")
+    add_table(doc, ["Rủi ro", "Cơ chế đang có", "Giới hạn cần lưu ý"], [
+        ("Hai xe cùng vào giao lộ", "Owner, hàng chờ, grant_id và release đúng token", "Ngưỡng rời vùng cần đo với thân xe và trượt bánh thật"),
+        ("Mất MQTT hoặc telemetry", "Dừng tin cậy dữ liệu mới, giữ vùng và yêu cầu đối soát", "Không suy ra robot đã dừng chỉ từ mất tín hiệu"),
+        ("Lặp hoặc lệch command ID", "Counter bền vững, dedup và STALE_COMMAND", "Clear error chỉ sau xác minh và dùng ID mới"),
+        ("Lệnh web chưa rõ kết quả", "request_id, command_result và core_session_id", "Không replay tự động thao tác có tác động vật lý"),
+        ("Truy cập trái phép", "Bearer token, kiểm tra Origin, HTTPS WSS và MQTT TLS ACL khi cấu hình", "Cần xác nhận cấu hình triển khai; mặc định phát triển chưa đồng nghĩa đã bật bảo mật"),
+    ], [4.1, 6.7, 6.2])
+    add_para(doc, "Cấu hình hardening hỗ trợ HTTPS hoặc WSS tại gateway và MQTT TLS cổng 8883 với tài khoản, ACL riêng cho Core và từng robot. Nếu Core và gateway chạy khác máy, liên kết Core cần mạng riêng, VPN hoặc TLS proxy vì socket Core hiện không tự cung cấp WSS. Chế độ không token chỉ phù hợp loopback.")
+    add_para(doc, "Mô hình tập trung khiến C++ Core là điểm lỗi đơn đối với quyết định tuyến và quyền vùng. Khi Core ngừng hoạt động, thiết kế hiện ưu tiên giữ task và quyền chưa xác minh thay vì cho robot tự tiếp tục; cách này an toàn hơn nhưng làm giảm tính sẵn sàng. Hướng giảm thiểu gồm giám sát tiến trình, khởi động lại có RuntimeStore bền vững, broker và gateway được health-check, cùng quy trình đối soát trước khi cấp lại quyền. MQTT QoS 0 vẫn có thể làm mất bản tin, nên ACK ứng dụng và retry cùng cmd_id chỉ giảm rủi ro chứ không biến kênh thành exactly-once.")
+
+    doc.add_heading("7 Kiểm thử và kết quả", level=1)
+    add_para(doc, "Bằng chứng hiện có xác nhận logic phần mềm, hợp đồng giao tiếp và khả năng build. Các bài kiểm thử dùng broker, DB, map, counter và cổng riêng để không tác động dữ liệu vận hành. Kết quả dưới đây được đọc từ hồ sơ kiểm thử trong workspace; chúng không thay thế nghiệm thu hai robot thật.")
+    add_table(doc, ["Lớp kiểm thử", "Kết quả đã ghi nhận", "Phạm vi bằng chứng"], [
+        ("C++ Core", "Build và unit PASS; ca STALE_COMMAND, scope thống nhất, mutex và phục hồi có hồi quy", "Logic Core và file trạng thái trong môi trường test"),
+        ("Gateway và SQLite", "npm test PASS 47 trên 47", "Gateway, security, orders, warehouse action và inventory với DB riêng"),
+        ("Trình duyệt", "Edge headless PASS ở desktop 1440 và mobile 390", "Bốn khu vực, kho, stale, reconnect, báo cáo và thao tác form"),
+        ("Bản đồ và route", "PASS 22 node; bốn cạnh cong ngoài; 60 tổ hợp ba node liên tiếp cho mỗi cấu hình firmware xe", "Tính nhất quán map giữa Core và firmware"),
+        ("Firmware native", "Bộ hồi quy gần nhất PASS 107 trên 107", "RFID, line, mutex, safety và profile; chưa chạy xe thật"),
+        ("Mô phỏng", "Các luồng hai xe, lỗi mạng và kho chạy trên S1: môi trường sự kiện rời rạc với robot ảo và MQTT riêng", "Hợp đồng và logic sự kiện; không mô phỏng động học hoặc vật lý"),
+    ], [4.0, 5.2, 7.8])
+    add_para(doc, "Trong bảng trên, bốn cạnh cong ngoài là bốn liên kết bo góc được vẽ ở biên bản đồ. Một tổ hợp ba node liên tiếp biểu diễn ngữ cảnh node trước - node hiện tại - node tiếp theo mà profile firmware dùng để kiểm tra quyết định rẽ. S1 là môi trường cô lập để kích sự kiện và kiểm tra hợp đồng, không phải tên một trạm sạc và không tạo bằng chứng về quãng đường phanh, trượt bánh hoặc tải cơ khí.")
+    add_para(doc, "Kết luận kiểm thử hiện tại là hệ thống đã có bằng chứng phần mềm cho các đường đi chính và nhiều tình huống lỗi. Chưa có số đo nghiệm thu về khoảng phanh, độ trễ RFID, sai số encoder, thời gian rời mutex, độ ổn định bám line, tải servo hoặc xung đột hình học của hai xe trên sàn.")
+    doc.add_heading("7.1 Kế hoạch đánh giá hiệu quả thuật toán", level=2)
+    add_para(doc, "Các bộ PASS hiện chứng minh tính đúng hồi quy, chưa chứng minh chất lượng điều phối. Bộ đo dưới đây được xác định trước để tránh chọn chỉ số sau khi xem kết quả; hiện chưa có số liệu thực nghiệm đủ điều kiện đưa vào kết luận.")
+    add_table(doc, ["Chỉ số", "Định nghĩa và cách thu"], [
+        ("Makespan", "Từ lúc dispatch task đầu tiên đến khi task cuối cùng đạt trạng thái kết thúc trong cùng kịch bản."),
+        ("Chờ mutex trung bình và P95", "Khoảng thời gian từ yêu cầu vùng đến grant; báo cáo trung bình, phân vị 95 và số mẫu."),
+        ("Xung đột bị chặn", "Đếm lần yêu cầu bị xếp hàng, tuyến bị chặn hoặc xe chuyển BLOCKED do chiếm dụng."),
+        ("Replan trên mỗi task", "Số lần Core tính lại tuyến sau vật cản, thay đổi chiếm dụng hoặc mất kết nối."),
+        ("Thông lượng", "Số task hoàn thành trên một đơn vị thời gian với cùng bản đồ và tải nhiệm vụ."),
+    ], [4.5, 12.5])
+    add_para(doc, "Thí nghiệm đề xuất trên S1 gồm: (i) FIFO thuần so với priority hiện hành trên cùng chuỗi task; (ii) mutex hiện hành so với baseline không mutex chỉ trong mô phỏng cô lập để minh họa số xung đột, tuyệt đối không chạy baseline này trên robot thật; và (iii) tải cân bằng so với tải lệch về một khu vực. Mỗi kịch bản cần cùng seed, cùng danh sách task, ít nhất 30 lần lặp và báo cáo trung bình kèm P95. Chỉ sau khi thu log mới điền kết quả và kết luận hiệu quả.")
+
+    doc.add_heading("8 Hạn chế và hướng phát triển", level=1)
+    add_table(doc, ["Nội dung và bằng chứng hoàn thành"], [
+        ("Bản đồ: Đo chiều dài cạnh, bán kính quay, độ rộng lối đi và vùng quét thân xe; cập nhật trọng số map rồi chạy lại route và xung đột.",),
+        ("Pin: Đo điện áp và dung lượng theo tải, xác lập ngưỡng cảnh báo, dừng và sạc; bỏ bypass sau kiểm thử sạc an toàn.",),
+        ("Servo: Thử không tải và có tải, đo góc, chu kỳ, dòng và lỗi; bổ sung cảm biến xác nhận kệ nếu cần.",),
+        ("Nghiệm thu: Thực hiện theo thứ tự kiểm thử bàn, từng xe, hai xe tại giao lộ và chạy có tải; lưu biên bản cùng log truy vết.",),
+        ("Điều phối nâng cao: Đo KPI mục 7.1; bổ sung aging, edge reservation hoặc định tuyến theo tắc nghẽn nếu số liệu cho thấy cần thiết.",),
+        ("Độ sẵn sàng và bảo mật: Health-check Core, broker và gateway; diễn tập restart; bật TLS, ACL, quản lý bí mật và kiểm thử quyền truy cập.",),
+    ], [17.0])
+    add_para(doc, "Bản đồ, pin, servo và nghiệm thu là các nội dung còn thiếu để chuyển từ bằng chứng phần mềm sang bằng chứng vận hành thực tế. Trước khi hoàn thành, bản đồ chỉ là mô hình logic, chính sách pin còn bypass trong cấu hình thử, cargo chỉ là trạng thái phần mềm của chu kỳ servo và kết quả chưa phải nghiệm thu hệ thống trong kho. Điều phối nâng cao, độ sẵn sàng và bảo mật là hướng mở rộng sau khi có số liệu nền, không phải cam kết chức năng đã tồn tại.")
+
+    doc.add_heading("Tài liệu tham khảo", level=1)
+    references = [
+        "[1] README.md, docs/00-project-brief.md, docs/02-current-system.md và docs/requirements/register.md, workspace AGVproject, đối chiếu ngày 20/10/2026.",
+        "[2] docs/03-web.md, docs/04-server.md, docs/05-algorithms.md, docs/07-network.md, docs/09-testing.md và docs/18-hardening.md.",
+        "[3] contracts/web-server.md và các ví dụ hợp đồng MQTT, HTTP, WebSocket trong thư mục contracts.",
+        "[4] src/core/AGVserver.cpp, các header trong include, AGVwebserver/gateway.js, AGVwebserver/db.js và AGVwebserver/public/dashboard.js.",
+        "[5] tests/README.md, hồ sơ kiểm thử phần mềm và các giới hạn bằng chứng, đối chiếu ngày 20/10/2026.",
+        "[6] OASIS. MQTT Version 3.1.1, 2014. https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html.",
+        "[7] IETF. RFC 6455 The WebSocket Protocol, 2011. https://datatracker.ietf.org/doc/html/rfc6455.",
+        "[8] Dijkstra, E. W. A note on two problems in connexion with graphs. Numerische Mathematik, 1959.",
+    ]
+    for item in references:
+        paragraph = doc.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        paragraph.paragraph_format.left_indent = Cm(0.8)
+        paragraph.paragraph_format.first_line_indent = Cm(-0.8)
+        paragraph.paragraph_format.space_after = Pt(3)
+        set_run_font(paragraph.add_run(item), 11)
+    heading_sizes = {"Title": 19, "Subtitle": 13, "Heading 1": 15, "Heading 2": 13}
+    for paragraph in doc.paragraphs:
+        if paragraph.style.name in heading_sizes:
+            for run in paragraph.runs:
+                set_run_font(
+                    run,
+                    heading_sizes[paragraph.style.name],
+                    bold=paragraph.style.name in {"Title", "Heading 1", "Heading 2"},
+                    italic=paragraph.style.name == "Subtitle",
+                )
+
+    doc.core_properties.title = "Báo cáo kiến trúc và điều phối hệ thống AGV trong kho"
+    doc.core_properties.subject = "Kiến trúc Core, gateway, SQLite, dashboard, an toàn, kiểm thử và hướng phát triển"
     doc.save(OUT)
     print(OUT)
 
 
 if __name__ == "__main__":
     architecture()
-    server_loops()
-    decision()
+    core_modules()
+    gateway_modules()
     warehouse_map()
-    evidence_timeline()
-    recovery()
+    dashboard_wireframe()
+    sequence_flow()
+    safety_flow()
     build_doc()

@@ -5,6 +5,7 @@
 #include "core/MutexClearance.h"
 #include <cstring>
 #include <string>
+#include <limits>
 
 void setUp() {}
 void tearDown() {}
@@ -83,9 +84,135 @@ void test_bench_voltage_interlock() {
     if (Config::TWO_ROBOT_BENCH_TRIAL) {
         TEST_ASSERT_FALSE(Config::benchVoltageReady(0.71f));
         TEST_ASSERT_FALSE(Config::benchVoltageReady(5.23f));
+        TEST_ASSERT_TRUE(Config::benchVoltageReady(Config::BATTERY_EMPTY_VOLTAGE));
+        TEST_ASSERT_TRUE(Config::benchVoltageReady(Config::BENCH_MAX_VOLTAGE));
+        TEST_ASSERT_FALSE(Config::benchVoltageReady(Config::BATTERY_EMPTY_VOLTAGE - 0.01f));
+        TEST_ASSERT_FALSE(Config::benchVoltageReady(Config::BENCH_MAX_VOLTAGE + 0.01f));
+        TEST_ASSERT_FALSE(Config::benchVoltageReady(std::numeric_limits<float>::quiet_NaN()));
+        TEST_ASSERT_FALSE(Config::benchVoltageReady(std::numeric_limits<float>::infinity()));
+        TEST_ASSERT_FALSE(Config::benchVoltageReady(-std::numeric_limits<float>::infinity()));
+#if defined(AGV_PROFILE_ID)
+        TEST_ASSERT_EQUAL_INT(3, Config::BATTERY_SERIES_CELLS);
+        TEST_ASSERT_FALSE(Config::benchVoltageReady(7.4f));
+        TEST_ASSERT_FALSE(Config::benchVoltageReady(9.0f));
+        TEST_ASSERT_TRUE(Config::benchVoltageReady(12.5f));
+#else
+        TEST_ASSERT_EQUAL_INT(2, Config::BATTERY_SERIES_CELLS);
         TEST_ASSERT_TRUE(Config::benchVoltageReady(7.4f));
         TEST_ASSERT_FALSE(Config::benchVoltageReady(9.0f));
+        TEST_ASSERT_FALSE(Config::benchVoltageReady(12.5f));
+#endif
     }
+}
+
+void test_motion_lock_reports_actual_condition_and_preserves_fault() {
+    AGVMath::MotionStartConditions in;
+    in.enabled = in.routeAllowed = in.calibrated = in.reverseAllowed = true;
+    in.voltage = Config::BATTERY_FULL_VOLTAGE;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None),
+                          static_cast<int>(AGVMath::motionStartError(in)));
+    if (Config::TWO_ROBOT_BENCH_TRIAL) {
+        for (float bad : {0.0f, -1.0f, std::numeric_limits<float>::quiet_NaN(),
+                          std::numeric_limits<float>::infinity()}) {
+            in.voltage = bad;
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::BatteryNotReady),
+                                  static_cast<int>(AGVMath::motionStartError(in)));
+        }
+        in.voltage = Config::BATTERY_EMPTY_VOLTAGE - 0.1f;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::BatteryUnderVoltage),
+                              static_cast<int>(AGVMath::motionStartError(in)));
+        in.voltage = Config::BENCH_MAX_VOLTAGE + 0.02f;
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::BatteryOverVoltage),
+                              static_cast<int>(AGVMath::motionStartError(in)));
+        for (float boundary : {Config::BATTERY_EMPTY_VOLTAGE, Config::BENCH_MAX_VOLTAGE}) {
+            in.voltage = boundary;
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None),
+                                  static_cast<int>(AGVMath::motionStartError(in)));
+        }
+    }
+    in.voltage = Config::BATTERY_FULL_VOLTAGE;
+    in.enabled = false;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::MotionDisabled),
+                          static_cast<int>(AGVMath::motionStartError(in)));
+    in.enabled = true; in.reverseAllowed = false;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::ReverseSteeringUnconfirmed),
+                          static_cast<int>(AGVMath::motionStartError(in)));
+    in.reverseAllowed = true; in.calibrationRequired = true; in.calibrated = false;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::BatteryCalibrationRequired),
+                          static_cast<int>(AGVMath::motionStartError(in)));
+    in.calibrated = true; in.previousError = ErrorCode::LineLost;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost),
+                          static_cast<int>(AGVMath::motionStartError(in)));
+    in.previousError = ErrorCode::MotionLocked;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::MotionLocked),
+                          static_cast<int>(AGVMath::motionStartError(in)));
+    TEST_ASSERT_EQUAL_STRING("BATTERY_UNDERVOLTAGE", errorName(ErrorCode::BatteryUnderVoltage));
+    TEST_ASSERT_EQUAL_STRING("BATTERY_OVERVOLTAGE", errorName(ErrorCode::BatteryOverVoltage));
+    TEST_ASSERT_EQUAL_STRING("BATTERY_ADC_NOT_READY", errorName(ErrorCode::BatteryNotReady));
+#if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+    TEST_ASSERT_EQUAL_STRING("01", Config::AGV_ID);
+#elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
+    TEST_ASSERT_EQUAL_STRING("02", Config::AGV_ID);
+#endif
+}
+
+void test_battery_adc_to_percentage_and_motion_gate() {
+#if defined(AGV_PROFILE_ID)
+#if defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
+    // Mau ADC nghi thuc te, dong ho cung luc 12.5 V; nguong khoa giu nguyen.
+    constexpr uint32_t referenceAdcMv = 2388;
+    constexpr float referenceVoltage = 12.5f, referencePercentage = 95.8333f;
+    for (uint32_t mv : {2383u, 2388u, 2395u}) {
+        const float measured = AGVMath::batteryVoltage(mv, Config::BATTERY_VOLTAGE_SCALE,
+                                                     Config::BATTERY_VOLTAGE_OFFSET);
+        TEST_ASSERT_FLOAT_WITHIN(0.05f, 12.5f, measured);
+        TEST_ASSERT_TRUE(Config::benchVoltageReady(measured));
+    }
+    TEST_ASSERT_FALSE(Config::benchVoltageReady(AGVMath::batteryVoltage(
+        2500, Config::BATTERY_VOLTAGE_SCALE, Config::BATTERY_VOLTAGE_OFFSET)));
+#elif defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
+    // Xe01: dong ho 11.9 V khi bat; ADC nghi 2416..2427 mV, TB lam tron 2421.
+    constexpr uint32_t referenceAdcMv = 2421;
+    constexpr float referenceVoltage = 11.9f, referencePercentage = 70.8333f;
+    for (uint32_t mv : {2416u, 2421u, 2427u}) {
+        const float measured = AGVMath::batteryVoltage(mv, Config::BATTERY_VOLTAGE_SCALE,
+                                                     Config::BATTERY_VOLTAGE_OFFSET);
+        TEST_ASSERT_FLOAT_WITHIN(0.05f, referenceVoltage, measured);
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None),
+                              static_cast<int>(AGVMath::motionVoltageError(measured)));
+    }
+    // He so cu gay qua ap gia; he so moi van phai chan qua ap that.
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::BatteryOverVoltage),
+                          static_cast<int>(AGVMath::motionVoltageError(
+                              AGVMath::batteryVoltage(referenceAdcMv, 12.5f / 2.3f, 0.0f))));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::BatteryOverVoltage),
+                          static_cast<int>(AGVMath::motionVoltageError(AGVMath::batteryVoltage(
+                              2700, Config::BATTERY_VOLTAGE_SCALE, Config::BATTERY_VOLTAGE_OFFSET))));
+#else
+    // Gia tri du phong cho build khong chon profile 01/02.
+    constexpr uint32_t referenceAdcMv = 2300;
+    constexpr float referenceVoltage = 12.5f, referencePercentage = 95.8333f;
+#endif
+    const float voltage = AGVMath::batteryVoltage(referenceAdcMv, Config::BATTERY_VOLTAGE_SCALE,
+                                                Config::BATTERY_VOLTAGE_OFFSET);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, referenceVoltage, voltage);
+    TEST_ASSERT_TRUE(Config::benchVoltageReady(voltage));
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, referencePercentage, AGVMath::batteryPercentage(
+        voltage, Config::BATTERY_EMPTY_VOLTAGE, Config::BATTERY_FULL_VOLTAGE));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 50.0f, AGVMath::batteryPercentage(
+        11.4f, Config::BATTERY_EMPTY_VOLTAGE, Config::BATTERY_FULL_VOLTAGE));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, AGVMath::batteryPercentage(
+        9.0f, Config::BATTERY_EMPTY_VOLTAGE, Config::BATTERY_FULL_VOLTAGE));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 100.0f, AGVMath::batteryPercentage(
+        12.9f, Config::BATTERY_EMPTY_VOLTAGE, Config::BATTERY_FULL_VOLTAGE));
+    TEST_ASSERT_FALSE(Config::benchVoltageReady(AGVMath::batteryVoltage(
+        0, Config::BATTERY_VOLTAGE_SCALE, Config::BATTERY_VOLTAGE_OFFSET)));
+#else
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 7.4f, AGVMath::batteryVoltage(
+        1480, Config::BATTERY_VOLTAGE_SCALE, Config::BATTERY_VOLTAGE_OFFSET));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 50.0f, AGVMath::batteryPercentage(
+        7.4f, Config::BATTERY_EMPTY_VOLTAGE, Config::BATTERY_FULL_VOLTAGE));
+#endif
 }
 
 void test_mutex_clearance_requires_measured_next_tag() {
@@ -404,6 +531,9 @@ void test_bay_exit_turnaround_counts_map_branches() {
     ControlInput in;in.wifi=in.mqtt=in.motionConfigured=in.lineConfigured=in.distanceValid=true;
     in.now=100+Config::RFID_STOP_DWELL_MS;in.linePattern=2;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotRight),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_EQUAL_INT(Config::G1_TURN_AROUND_PWM > 0, nav.precisionPivot());
+    if (Config::G1_TURN_AROUND_PWM > 0)
+        TEST_ASSERT_EQUAL_INT(Config::G1_TURN_AROUND_PWM, nav.precisionPivotPwm());
     in.linePattern=0;in.now+=Config::TURN_MIN_MS+1;nav.update(in);
     in.linePattern=2;++in.now;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotRight),static_cast<int>(nav.update(in)));
@@ -411,11 +541,13 @@ void test_bay_exit_turnaround_counts_map_branches() {
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotRight),static_cast<int>(nav.update(in)));
     in.linePattern=0;++in.now;nav.update(in);in.linePattern=2;++in.now;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
+    TEST_ASSERT_FALSE(nav.precisionPivot());
     TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":72,"path":["GS1"],"target":"GS1"})",command));
     TEST_ASSERT_TRUE(RoutePlanner::plan("G1","M1",command,route,true));
     TEST_ASSERT_EQUAL_INT(1,route.turnCrossings[0]); // No north branch at M1; the next line is the opposite line.
     CoreNavigator single;TEST_ASSERT_TRUE(single.start("M1",command,route,0));TEST_ASSERT_TRUE(single.grant("M1",127));
     in.now=Config::RFID_STOP_DWELL_MS;in.linePattern=2;single.update(in);
+    TEST_ASSERT_FALSE(single.precisionPivot()); // M1 quay dau van dung PWM cu.
     in.now+=Config::TURN_MIN_MS+1;in.linePattern=0;single.update(in);++in.now;in.linePattern=2;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(single.update(in)));
     CoreNavigator timeout;TEST_ASSERT_TRUE(timeout.start("M1",command,route,0));TEST_ASSERT_TRUE(timeout.grant("M1",128));
@@ -647,7 +779,7 @@ void test_robot01_blank_line_waits_for_rfid_without_moving() {
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward), static_cast<int>(timeout.update(in)));
     in.now = blankAt; in.linePattern = 0;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(timeout.update(in)));
-    in.now = blankAt + Config::LINE_LOSS_CONFIRM_MS;
+    in.now = blankAt + (Config::LINE_LOSS_GRACE_MS ? Config::LINE_LOSS_GRACE_MS : Config::LINE_LOSS_CONFIRM_MS);
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(timeout.update(in)));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost), static_cast<int>(timeout.error()));
     TEST_ASSERT_FALSE(timeout.active());
@@ -817,7 +949,10 @@ void test_reverse_home_turn_translation_and_safety() {
     ControlInput in;in.wifi=in.mqtt=in.motionConfigured=in.lineConfigured=in.distanceValid=true;
     in.linePattern=2;in.now=Config::RFID_STOP_DWELL_MS;turnTimeout.update(in);in.now+=Config::TURN_TIMEOUT_MS;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(turnTimeout.update(in)));
-    if (Config::TURN_RETRY_ENABLED &&
+    const bool captureEnabled =
+        (route.departure[0] == RouteTurn::Left && Config::LEFT_TURN_CAPTURE_ENABLED) ||
+        (route.departure[0] == RouteTurn::Right && Config::RIGHT_TURN_CAPTURE_ENABLED);
+    if (Config::TURN_RETRY_ENABLED && !captureEnabled &&
         (route.departure[0] == RouteTurn::Left || route.departure[0] == RouteTurn::Right)) {
         TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::None),static_cast<int>(turnTimeout.error()));
         TEST_ASSERT_TRUE(turnTimeout.active());
@@ -829,7 +964,8 @@ void test_reverse_home_turn_translation_and_safety() {
         TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(turnTimeout.update(in)));
         TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost),static_cast<int>(turnTimeout.error()));
     } else {
-        TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::TurnTimeout),static_cast<int>(turnTimeout.error()));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(captureEnabled ? ErrorCode::LineLost : ErrorCode::TurnTimeout),
+                              static_cast<int>(turnTimeout.error()));
     }
 }
 
@@ -1374,7 +1510,7 @@ void test_robot02_left_overshoot_countersteers_briefly_then_faults() {
     in.linePattern=7;++in.now; // Wide junction breaks centered stability.
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
     TEST_ASSERT_TRUE(nav.capturingTurnLine());
-    in.linePattern=0;in.now=capturedAt+Config::LINE_RECOVERY_TIMEOUT_MS;
+    in.linePattern=0;in.now=capturedAt+Config::TURN_CAPTURE_CONFIRM_TIMEOUT_MS;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
     TEST_ASSERT_EQUAL_INT(static_cast<int>(ErrorCode::LineLost),static_cast<int>(nav.error()));
     TEST_ASSERT_FALSE(nav.active());
@@ -1422,7 +1558,7 @@ void test_robot02_left_side_center_votes_align_and_settle() {
         if(side==6) nav.update(in); // Direction reversal requires a STOP first.
         in.now+=Config::LINE_RECOVERY_REST_MS;
         const auto expected=side==3 ? MotorAction::PivotRight : MotorAction::PivotLeft;
-        TEST_ASSERT_EQUAL_INT(static_cast<int>(expected),static_cast<int>(nav.update(in)));
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(Config::LINE_RECOVERY_TRACK_CONFIRM ? MotorAction::Stop : expected),static_cast<int>(nav.update(in)));
         TEST_ASSERT_FALSE(nav.following());TEST_ASSERT_FALSE(nav.settlingTurnLine());
         // Mixed side+center votes complete without 010 being held for 100ms.
         in.now+=Config::LEFT_CAPTURE_SAMPLE_MS;in.linePattern=2;
@@ -1517,6 +1653,8 @@ int main() {
     RUN_TEST(test_bad_commands_stay_rejected);
     RUN_TEST(test_core_wire_formats);
     RUN_TEST(test_bench_voltage_interlock);
+    RUN_TEST(test_motion_lock_reports_actual_condition_and_preserves_fault);
+    RUN_TEST(test_battery_adc_to_percentage_and_motion_gate);
     RUN_TEST(test_mutex_clearance_requires_measured_next_tag);
     RUN_TEST(test_mutex_clearance_rejects_unvisited_or_wrong_route);
     RUN_TEST(test_mutex_encoder_release_requires_both_wheels_tag_loss_and_safe_route);

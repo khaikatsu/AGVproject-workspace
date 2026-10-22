@@ -15,6 +15,7 @@ async function main() {
     await page.locator('#simHealth').filter({hasText:'Sẵn sàng'}).waitFor();
     await page.locator('#simTimeScale').selectOption('10');
     await page.locator('#startShiftBtn:enabled').click();
+    await page.locator('#shiftWarehouseVerified').check();await page.locator('#confirmStartShiftBtn').click();
     await page.locator('#simCreateOrder:enabled').waitFor();
     await page.locator('#simOrderPickup').selectOption('K1');
     assert.deepEqual(await page.locator('.sim-order-destination').evaluateAll(nodes=>nodes.map(node=>node.value)),['K2','K4']);

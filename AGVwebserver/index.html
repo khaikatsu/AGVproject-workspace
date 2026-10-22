@@ -594,7 +594,7 @@
     @media(max-width:680px) {#main-container {display:flex;flex-direction:column;} #center-panel {min-height:480px;order:-1;} #topbar input {width:210px;} #mapPreviewSvg {height:350px;} #toastContainer {left:8px;right:8px;bottom:8px;max-width:none;} }
     #headingStatus {flex-basis:100%;}
   </style>
-  <link rel="stylesheet" href="/dashboard-layout.css?v=20261018-warehouse-operations">
+  <link rel="stylesheet" href="/dashboard-layout.css?v=20261021-shift-warehouse">
   <link rel="stylesheet" href="/warehouse-operations.css?v=20261018-hide-resolved">
 </head>
 
@@ -705,7 +705,7 @@
         <div id="shiftStatus" role="status" class="shift-phase">Đang chờ trạng thái ca từ core</div>
         <div id="coreModeStatus" class="field-hint" role="status">Chờ cấu hình Core</div>
         <div id="homeStationList" class="home-list"></div>
-        <div class="row-btn"><button id="startShiftBtn" data-control class="btn" onclick="changeShift('start',this)">Bắt đầu ca</button><button id="endShiftBtn" data-control class="btn btn-outline" onclick="changeShift('end',this)">Kết thúc ca</button></div>
+        <div class="row-btn"><button id="startShiftBtn" data-control class="btn" onclick="changeShift('start',this)">Mở ca</button><button id="endShiftBtn" data-control class="btn btn-outline" onclick="changeShift('end',this)">Kết thúc ca</button></div>
         <p class="card-help">Kết thúc ca: hoàn thành nhiệm vụ đang chạy rồi về trạm riêng. Vị trí chỉ được xác nhận qua RFID.</p>
       </section>
       <section class="card compact panel-card" data-views="overview tasks">
@@ -816,6 +816,20 @@
     </div>
   </div>
 
+  <dialog id="shiftWarehouseDialog" aria-labelledby="shiftWarehouseTitle" oncancel="cancelShiftWarehouse(event)">
+    <form id="shiftWarehouseForm" onsubmit="event.preventDefault();confirmShiftWarehouse()">
+      <h2 id="shiftWarehouseTitle">Mở ca · Kiểm tra vị trí kệ</h2>
+      <p class="card-help">K1–K6 là vị trí cố định; R01, R02… là mã riêng của từng kệ. Nhập mã tại đúng vị trí, để trống ô không có kệ. Dữ liệu đã lưu được điền sẵn để bạn kiểm tra.</p>
+      <div id="shiftWarehouseFields" class="form-grid"></div>
+      <label class="check-label"><input id="shiftWarehouseVerified" type="checkbox" required> Tôi đã kiểm tra vị trí kệ thực tế và các xe đều trống.</label>
+      <p id="shiftWarehouseStatus" class="field-hint" role="status" aria-live="polite"></p>
+      <p id="shiftWarehouseHint" class="field-hint" role="status" aria-live="polite"></p>
+      <div class="row-btn">
+        <button id="cancelStartShiftBtn" class="btn btn-outline" type="button" onclick="cancelShiftWarehouse()">Hủy / Đóng</button>
+        <button id="confirmStartShiftBtn" class="btn" type="submit">Xác nhận và bắt đầu ca</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="loginDialog" aria-labelledby="loginTitle">
     <form id="loginForm">
       <h2 id="loginTitle">Đăng nhập hệ thống AGV</h2>
@@ -825,9 +839,9 @@
       <button class="btn full-width" type="submit">Đăng nhập</button>
     </form>
   </dialog>
-  <script src="/warehouse-ui.js?v=20261018-warehouse-operations"></script>
+  <script src="/warehouse-ui.js?v=20261021-shift-warehouse"></script>
   <script src="/warehouse-operations.js?v=20261018-warehouse-operations"></script>
-  <script src="/dashboard.js?v=20261018-hide-resolved"></script>
+  <script src="/dashboard.js?v=20261021-shift-warehouse"></script>
 </body>
 
 </html>

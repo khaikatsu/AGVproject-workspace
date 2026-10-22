@@ -11,26 +11,22 @@ int main() {
     BuzzerModule buzzer; buzzer.begin();
     MovementModule movement(motor, line, buzzer);
 #if defined(AGV_ROBOT_PROFILE_01)
-    constexpr int forwardLeft = 180, forwardRight = 220;
-    constexpr int reverseLeft = 150, reverseRight = 190, turn = 210;
-    constexpr int correctionLeft = 180, correctionRight = 220;
     static_assert(Config::TURN_TIMEOUT_MS == 2500, "Robot01 turn timeout changed");
 #elif defined(AGV_ROBOT_PROFILE_02)
-    constexpr int forwardLeft = 245, forwardRight = 215;
-    constexpr int reverseLeft = 215, reverseRight = 195, turn = 230;
-    constexpr int correctionLeft = 250, correctionRight = 220;
-    constexpr int reverseCorrectionLeft = 225, reverseCorrectionRight = 205;
-    static_assert(Config::BASE_SPEED == 230 && Config::REVERSE_SPEED == 210,
-                  "Robot02 forward/reverse base PWM changed");
-    static_assert(Config::CORRECTION_SPEED == 235 && Config::GENTLE_CORRECTION_SPEED == 235,
-                  "Robot02 correction PWM changed");
     static_assert(Config::TURN_TIMEOUT_MS == 2500, "Robot02 turn timeout changed");
 #else
 #error "Run the motor adapter with robot profile 01 or 02"
 #endif
-#if defined(AGV_ROBOT_PROFILE_01)
-    constexpr int reverseCorrectionLeft = reverseLeft, reverseCorrectionRight = reverseRight;
-#endif
+    constexpr int forwardLeft = Config::BASE_SPEED + Config::LEFT_SPEED_TRIM;
+    constexpr int forwardRight = Config::BASE_SPEED + Config::RIGHT_SPEED_TRIM;
+    constexpr int reverseLeft = Config::REVERSE_SPEED + Config::REVERSE_LEFT_SPEED_TRIM;
+    constexpr int reverseRight = Config::REVERSE_SPEED + Config::REVERSE_RIGHT_SPEED_TRIM;
+    constexpr int turnLeft = Config::TURN_SPEED + Config::TURN_LEFT_SPEED_TRIM;
+    constexpr int turnRight = Config::TURN_SPEED + Config::TURN_RIGHT_SPEED_TRIM;
+    constexpr int correctionLeft = Config::CORRECTION_SPEED + Config::LEFT_SPEED_TRIM;
+    constexpr int correctionRight = Config::CORRECTION_SPEED + Config::RIGHT_SPEED_TRIM;
+    constexpr int reverseCorrectionLeft = Config::REVERSE_CORRECTION_SPEED + Config::REVERSE_LEFT_SPEED_TRIM;
+    constexpr int reverseCorrectionRight = Config::REVERSE_CORRECTION_SPEED + Config::REVERSE_RIGHT_SPEED_TRIM;
     movement.apply(MotorAction::Forward);
     check(motor.leftDuty() == forwardLeft && motor.rightDuty() == forwardRight, "Forward tuning changed");
     movement.apply(MotorAction::Backward);
@@ -40,30 +36,34 @@ int main() {
     check(MotorIo::pins[Config::BUZZER_PIN] == Config::BUZZER_ACTIVE_STATE, "Reverse buzzer inactive");
     check(buzzer.pinLevel() == LOW, "Reverse GPIO0 readback should be LOW");
     movement.apply(MotorAction::ReverseCorrectLeft);
-    check(motor.leftDuty() == 0 && motor.rightDuty() == -reverseCorrectionRight, "Left reverse correction too fast or wrong sign");
+    check(motor.leftDuty() == -(reverseCorrectionLeft-Config::REVERSE_CORRECTION_DELTA) &&
+          motor.rightDuty() == -reverseCorrectionRight, "Left reverse correction too fast or wrong sign");
     check(buzzer.pinLevel() == LOW, "Left reverse correction silenced buzzer");
     movement.apply(MotorAction::ReverseCorrectRight);
-    check(motor.leftDuty() == -reverseCorrectionLeft && motor.rightDuty() == 0, "Right reverse correction too fast or wrong sign");
+    check(motor.leftDuty() == -reverseCorrectionLeft &&
+          motor.rightDuty() == -(reverseCorrectionRight-Config::REVERSE_CORRECTION_DELTA), "Right reverse correction too fast or wrong sign");
     check(buzzer.pinLevel() == LOW, "Right reverse correction silenced buzzer");
     movement.apply(MotorAction::Backward, false, Config::LINE_RECOVERY_PWM, true);
-    check(motor.leftDuty() == -std::min(reverseLeft, Config::LEFT_TURN_CAPTURE_PWM) &&
-          motor.rightDuty() == -std::min(reverseRight, Config::LEFT_TURN_CAPTURE_PWM),
+    check(motor.leftDuty() == -std::min(reverseLeft, Config::LINE_RECOVERY_PWM) &&
+          motor.rightDuty() == -std::min(reverseRight, Config::LINE_RECOVERY_PWM),
           "Settling reverse did not use reverse-specific balance");
     movement.apply(MotorAction::PivotLeft);
-    check(motor.leftDuty() == turn && motor.rightDuty() == -turn, "Pivot tuning changed");
+    check(motor.leftDuty() == turnLeft && motor.rightDuty() == -turnRight, "Pivot tuning changed");
     check(buzzer.pinLevel() == HIGH, "Pivot did not silence buzzer");
     movement.apply(MotorAction::PivotRight);
-    check(motor.leftDuty() == -turn && motor.rightDuty() == turn, "Right pivot duty/sign incorrect");
-    check(MotorIo::pwm[Config::MOTOR_PWM_CHANNELS[0]] == turn &&
-          MotorIo::pwm[Config::MOTOR_PWM_CHANNELS[1]] == turn, "Pivot PWM not applied to both driver channels");
+    check(motor.leftDuty() == -turnLeft && motor.rightDuty() == turnRight, "Right pivot duty/sign incorrect");
+    check(MotorIo::pwm[Config::MOTOR_PWM_CHANNELS[0]] == turnLeft &&
+          MotorIo::pwm[Config::MOTOR_PWM_CHANNELS[1]] == turnRight, "Pivot PWM not applied to both driver channels");
     movement.apply(MotorAction::CorrectLeft);
     check(motor.leftDuty() == correctionLeft && motor.rightDuty() == 0, "Forward correction tuning changed");
     movement.apply(MotorAction::CorrectRight);
     check(motor.leftDuty() == 0 && motor.rightDuty() == correctionRight, "Right correction tuning changed");
     movement.apply(MotorAction::GentleCorrectLeft);
-    check(motor.leftDuty() == correctionLeft && motor.rightDuty() == correctionRight, "Gentle left correction tuning changed");
+    check(motor.leftDuty() == Config::GENTLE_OUTER_SPEED+Config::LEFT_SPEED_TRIM &&
+          motor.rightDuty() == Config::GENTLE_CORRECTION_SPEED+Config::RIGHT_SPEED_TRIM, "Gentle left correction tuning changed");
     movement.apply(MotorAction::GentleCorrectRight);
-    check(motor.leftDuty() == correctionLeft && motor.rightDuty() == correctionRight, "Gentle right correction tuning changed");
+    check(motor.leftDuty() == Config::GENTLE_CORRECTION_SPEED+Config::LEFT_SPEED_TRIM &&
+          motor.rightDuty() == Config::GENTLE_OUTER_SPEED+Config::RIGHT_SPEED_TRIM, "Gentle right correction tuning changed");
     movement.apply(MotorAction::PivotLeft, true);
     check(motor.leftDuty() == 180 && motor.rightDuty() == -180, "Recovery left pivot duty/sign incorrect");
     check(MotorIo::pwm[Config::MOTOR_PWM_CHANNELS[0]] == 180 &&

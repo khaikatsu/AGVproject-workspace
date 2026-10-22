@@ -10,6 +10,7 @@ void CoreNavigator::resetLineTracking() {
     captureHistory_ = captureCount_ = 0;
     turnSettling_ = false;
     lastLinePattern_ = centerSamples_ = 0;
+    recoveryCandidate_ = 0;
     lastLineMotor_ = lastCorrection_ = searchDirection_ = MotorAction::Stop;
 }
 void CoreNavigator::rememberLine(const ControlInput& in, MotorAction action) {
@@ -64,11 +65,14 @@ MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
         searchMotorChangedMs_ = in.now;
         return MotorAction::Stop;
     }
-    // Forward profile01 may reacquire the same side across 100/110 or 001/011.
-    // Center, left and right are separate evidence; wide junctions are not proof.
+    // Only center-bearing patterns confirm recovery. A single-eye edge can be
+    // another branch during a turn and is not proof that the intended line returned.
     const bool sideConfirm = Config::LINE_RECOVERY_SIDE_CONFIRM && !segmentReverse();
+    const bool trackConfirm = Config::LINE_RECOVERY_TRACK_CONFIRM && !segmentReverse();
     uint8_t candidate = in.linePattern == 2 ? 2 : 0;
-    if (sideConfirm) {
+    if (trackConfirm) {
+        if (in.linePattern == 3 || in.linePattern == 6) candidate = 2;
+    } else if (sideConfirm) {
         if (in.linePattern == 4 || in.linePattern == 6) candidate = 4;
         if (in.linePattern == 1 || in.linePattern == 3) candidate = 1;
     }
@@ -77,11 +81,12 @@ MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
         searchPulse_ = false;
         searchMotorChangedMs_ = in.now;
         if (!centerSamples_ || recoveryCandidate_ != candidate ||
-            (sideConfirm && static_cast<uint32_t>(in.now-centerSampleMs_) > Config::LINE_RECOVERY_SAMPLE_GAP_MS)) {
+            ((sideConfirm || trackConfirm) && static_cast<uint32_t>(in.now-centerSampleMs_) > Config::LINE_RECOVERY_SAMPLE_GAP_MS)) {
             recoveryCandidate_ = candidate;
             centerSamples_ = 1;
             centerSinceMs_ = centerSampleMs_ = in.now;
-        } else if (in.now != centerSampleMs_) {
+        } else if (static_cast<uint32_t>(in.now-centerSampleMs_) >=
+                   (trackConfirm ? Config::LEFT_CAPTURE_SAMPLE_MS : 1u)) {
             if (centerSamples_ < 3) ++centerSamples_;
             centerSampleMs_ = in.now;
         }
@@ -123,35 +128,75 @@ MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
     return searchDirection_;
 }
 
+bool CoreNavigator::confirmTrackedLine(const ControlInput& in) {
+    uint8_t candidate = 0;
+    if (in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6) candidate = 2;
+    if (!candidate) {
+        centerSamples_ = 0;
+        return false;
+    }
+    if (!centerSamples_ || recoveryCandidate_ != candidate ||
+        static_cast<uint32_t>(in.now-centerSampleMs_) > Config::LINE_RECOVERY_SAMPLE_GAP_MS) {
+        recoveryCandidate_ = candidate;
+        centerSamples_ = 1;
+        centerSinceMs_ = centerSampleMs_ = in.now;
+    } else if (static_cast<uint32_t>(in.now-centerSampleMs_) >= Config::LEFT_CAPTURE_SAMPLE_MS) {
+        if (centerSamples_ < 3) ++centerSamples_;
+        centerSampleMs_ = in.now;
+    }
+    return centerSamples_ >= 3 && static_cast<uint32_t>(in.now-centerSinceMs_) >= Config::LINE_RECOVERY_CENTER_MS;
+}
+
 MotorAction CoreNavigator::alignTurnLine(const ControlInput& in) {
-    if (static_cast<uint32_t>(in.now-lineLossStartedMs_) >= Config::LINE_RECOVERY_TIMEOUT_MS) {
+    const uint32_t elapsed = in.now-lineLossStartedMs_;
+    if (elapsed >= Config::TURN_CAPTURE_CONFIRM_TIMEOUT_MS) {
+#if defined(ARDUINO)
+        if (Config::DEBUG_ENABLED) Serial.printf(
+            "[LINE] capture_timeout pattern=%u samples=%u elapsed=%lums node=%s next=%s\n",
+            in.linePattern, centerSamples_, static_cast<unsigned long>(elapsed), current_, nextNode());
+#endif
         fault(ErrorCode::LineLost);
         return MotorAction::Stop;
     }
     if (missingZone()) {
         captureHistory_ = captureCount_ = 0;
+        centerSamples_ = 0;
         searchPulse_ = false;
         searchMotorChangedMs_ = in.now;
         return MotorAction::Stop;
     }
-    const bool narrow = in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6;
+    const bool centerBearing = in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6;
+    const bool stableTrack = Config::LINE_RECOVERY_TRACK_CONFIRM && confirmTrackedLine(in);
     // Samples must be spaced and fresh. Side+center counts as line evidence,
     // not failed centering. A wide junction never authorizes translation.
     if (captureCount_ && static_cast<uint32_t>(in.now-captureSampleMs_) > Config::LEFT_CAPTURE_MAX_GAP_MS)
         captureHistory_ = captureCount_ = 0;
     const bool sampled = !captureCount_ || static_cast<uint32_t>(in.now-captureSampleMs_) >= Config::LEFT_CAPTURE_SAMPLE_MS;
     if (sampled) {
-        captureHistory_ = static_cast<uint8_t>(((captureHistory_ << 1) | (narrow ? 1 : 0)) & 7u);
+        captureHistory_ = static_cast<uint8_t>(((captureHistory_ << 1) | (centerBearing ? 1 : 0)) & 7u);
         if (captureCount_ < 3) ++captureCount_;
         captureSampleMs_ = in.now;
     }
     const unsigned votes = (captureHistory_ & 1u) + ((captureHistory_ >> 1) & 1u) + ((captureHistory_ >> 2) & 1u);
-    if (sampled && in.linePattern == 2 && captureCount_ >= 2 && votes >= 2) {
+    if (stableTrack || (sampled && in.linePattern == 2 && captureCount_ >= 2 && votes >= 2)) {
+#if defined(ARDUINO)
+        if (Config::DEBUG_ENABLED) Serial.printf(
+            "[LINE] capture_recovered pattern=%u stable=%d elapsed=%lums node=%s next=%s\n",
+            in.linePattern, stableTrack, static_cast<unsigned long>(elapsed), current_, nextNode());
+#endif
         phase_ = Phase::Following;
         segmentStartedMs_ = in.now;
         resetLineTracking();
         turnSettling_ = true;
         return MotorAction::Stop; // Rear-sonar handoff still precedes translation.
+    }
+    if (Config::LINE_RECOVERY_TRACK_CONFIRM &&
+        (centerBearing || elapsed >= Config::LINE_RECOVERY_TIMEOUT_MS)) {
+        // Validate a tracked line at rest; never extend pivot pulses
+        // beyond the old 600ms budget, even during the longer confirmation wait.
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
+        return MotorAction::Stop;
     }
     MotorAction direction = MotorAction::Stop;
     if (in.linePattern == 3 || in.linePattern == 1) direction = MotorAction::PivotRight;
@@ -376,22 +421,23 @@ void CoreNavigator::resetGrants() {
     if (active()) fault(ErrorCode::NotConnected);
 }
 bool CoreNavigator::observeTurnLine(const ControlInput& in) {
-    if (!Config::LEFT_TURN_CAPTURE_ENABLED || phase_ != Phase::Turning ||
-        turns_[index_] != RouteTurn::Left) return false;
+    if (phase_ != Phase::Turning || !turnCaptureEnabled()) return false;
     // The center leaving its old stripe is sufficient: the side eyes may
     // overlap the junction throughout, so a fully blank 000 may never occur.
     // 101 still straddles a wide stripe/junction; do not use it as departure.
     if (in.linePattern == 0 || in.linePattern == 1 || in.linePattern == 4) oldLineDeparted_ = true;
-    if (!oldLineDeparted_ || !(in.linePattern & 2u)) return false;
+    const bool centerReturned = (in.linePattern & 2u) != 0;
+    // 001/100 may prove departure but never return; keep turning until center returns.
+    if (!oldLineDeparted_ || !centerReturned) return false;
     phase_ = Phase::TurnCapture;
     captureHistory_ = captureCount_ = 0;
     lineLossPending_ = true;
     lineLossStartedMs_ = searchMotorChangedMs_ = in.now;
     centerSamples_ = 0;
     searchPulse_ = false;
-    // If inertia carries the sensors past the captured stripe, search BACK
-    // briefly, never continue a long left rotation to another branch.
-    searchDirection_ = MotorAction::PivotRight;
+    // If inertia carries the sensors past the captured stripe, briefly countersteer.
+    searchDirection_ = turns_[index_] == RouteTurn::Left
+        ? MotorAction::PivotRight : MotorAction::PivotLeft;
     return true;
 }
 bool CoreNavigator::refreshFollowing(const ControlInput& in, MotorAction& action) {
@@ -441,6 +487,11 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
     }
     if (phase_ == Phase::StationTurning) {
         if (static_cast<uint32_t>(in.now - turnStartedMs_) >= Config::TURN_TIMEOUT_MS) {
+#if defined(ARDUINO)
+            if (Config::DEBUG_ENABLED) Serial.printf(
+                "[LINE] station_turn_timeout pattern=%u departed=%d elapsed=%lums node=%s next=%s\n",
+                in.linePattern, oldLineDeparted_, static_cast<unsigned long>(in.now-turnStartedMs_), current_, nextNode());
+#endif
             fault(ErrorCode::TurnTimeout); return MotorAction::Stop;
         }
         // S is a leaf with one line toward GS. Depart the incoming line and
@@ -483,8 +534,13 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
     if (phase_ == Phase::Turning) {
         if (observeTurnLine(in)) return MotorAction::Stop;
         if (static_cast<uint32_t>(in.now - turnStartedMs_) >= Config::TURN_TIMEOUT_MS) {
+#if defined(ARDUINO)
+            if (Config::DEBUG_ENABLED) Serial.printf(
+                "[LINE] turn_timeout pattern=%u departed=%d elapsed=%lums node=%s next=%s\n",
+                in.linePattern, oldLineDeparted_, static_cast<unsigned long>(in.now-turnStartedMs_), current_, nextNode());
+#endif
             const bool retryable = Config::TURN_RETRY_ENABLED && !turnRetryUsed_ &&
-                !(Config::LEFT_TURN_CAPTURE_ENABLED && turns_[index_] == RouteTurn::Left) &&
+                !turnCaptureEnabled() &&
                 (turns_[index_] == RouteTurn::Left || turns_[index_] == RouteTurn::Right);
             if (retryable) {
                 // One local retry keeps the route and mutex intact. Stop for this
@@ -505,12 +561,12 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
                 "[LINE] turn_retry_failed maneuver=%s node=%s next=%s\n",
                 RoutePlanner::turnName(turns_[index_]), current_, nextNode());
 #endif
-            fault(turnRetryUsed_ || (Config::LEFT_TURN_CAPTURE_ENABLED && turns_[index_] == RouteTurn::Left) ?
+            fault(turnRetryUsed_ || turnCaptureEnabled() ?
                 ErrorCode::LineLost : ErrorCode::TurnTimeout);
             return MotorAction::Stop;
         }
-        if (Config::LEFT_TURN_CAPTURE_ENABLED && turns_[index_] == RouteTurn::Left)
-            return MotorAction::PivotLeft;
+        if (turnCaptureEnabled())
+            return turns_[index_] == RouteTurn::Left ? MotorAction::PivotLeft : MotorAction::PivotRight;
         const bool centered = in.linePattern == 2 || in.linePattern == 5 || in.linePattern == 7;
         // Side-only patterns can occur while the sensors are still over the
         // RFID junction. Require a fully blank sample before accepting a

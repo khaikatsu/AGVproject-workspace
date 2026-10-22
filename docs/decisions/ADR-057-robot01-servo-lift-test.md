@@ -1,5 +1,31 @@
 # ADR-057 — Nhúng servo GPIO17 cho test nâng/hạ xe01
 
+## Mở rộng21/10/2026 — Người dùng xác nhận servo xe02 giống xe01
+
+SOURCE: người dùng xác nhận xe02 cũng dùng hạ/mặc định180°, nâng100° và dải544–2400µs như xe01. IMPLEMENTED thêm bốn macro hiệu chỉnh trong Robot02Config.h, không chép tuning motor/line/mạng giữa hai profile. Cảhai giữ50Hz/16bit/GPIO17/LEDC5/5000ms;100° ra1575µs/duty5160,180° ra2400µs/duty7864. Boot vẫn duty0, không tự quay180°. BuildID02 `20261021-robot02-servo180-100-v8`; buildID01 giữv8. Không đổi giao thức hoặc trình tự Core/nâng/hạ/STOP.
+
+Host cập nhật ca hiệu chỉnh để cảhai profile bắt buộc cùng dải/góc và cùng bảngPWM; profile không servo vẫn tắt. Kết quả kiểm thử/build trong tests/README.md. OPEN nạp/thử phần cứng; các mục xe02 giữ1000–2000µs/0–45° dưới đây là lịch sử đã bị thay thế.
+
+VERIFIED cảhai: hostServoOnly PASS ba cấu hình servo và Core servo01/02; buildESP32 hai env PASS, chưa nạp/thử phần cứng.
+
+## Chốt góc21/10/2026 — Mặc định/hạ180°, nâng100°
+
+SOURCE: sau ảnh thông số, người dùng xác nhận rõ180° là mặc định và100° là nâng. IMPLEMENTED riêng profile01: đích LIFT_DOWN180°/LIFT_UP100°, giữ544–2400µs/50Hz/16bit/GPIO17/LEDC5/chu kỳ5000ms. Phép nội suy số nguyên hiện tại cho100°=1575µs/duty5160 và180°=2400µs/duty7864. Góc mặc định được hiểu là đích khi nhận lệnh hạ; boot vẫn duty0, không tự quay180° hoặc tự khôi phục vị trí sau reset. Không thay xe02, motor/line, mạng, watchdog hoặc vòng đời thao tác Core. BuildID01 `20261021-robot01-servo180-100-v8`.
+
+Thông số0/45 tạm và mụcOPEN chờ góc bên dưới đã được thay bằng xác nhận này. Host kiểm thêm mốc100° độc lập và khẳng định góc thao tác từng profile; kết quả build/kiểm thử tại tests/README.md. OPEN nạp/thử cơ cấu thật; không coi kết quả PWM là đo vị trí hoặc tải vật lý.
+
+VERIFIED180/100: host `scripts/test-robot-parity.ps1 -ServoOnly` PASS cảba cấu hình servo và Core servo01/02, buildESP32 hai env PASS. Chưa upload/thử phần cứng.
+
+## Cập nhật21/10/2026 — Dải xung riêng xe01 theo ảnh người dùng
+
+SOURCE: yêu cầu tích hợp thông số servo đã căn chỉnh, ảnh thấy50Hz/16bit và hai mốc544µs=0°,2400µs=180°. Đây là thông số người dùng cung cấp, không phải phép đo của agent; góc thao tác nâng/hạ mới không xuất hiện trong ảnh, đã hỏi bổ sung.
+
+IMPLEMENTED: `Robot01Config.h` có min/max pulse và góc nâng/hạ riêng. Xe01 dùng544–2400µs, tạm giữ hạ0°/nâng45° cho đến khi người dùng xác nhận số mới; xe02 giữ1000–2000µs/0–45°. GiữGPIO17/LEDC5/50Hz/16bit, begin chỉ ghi duty0, chu kỳ5000ms, không thay luồng Core/lệnh/kiện ảo/STOP hoặc motor/line/watchdog. Config kiểm tra biên góc0…180 và0<min<max<chu kỳPWM khi compile. BuildID01 `20261021-robot01-servo544-2400-v7`; thay riêng phần hiệu chỉnh servo01 trên nền người dùng gửi theo ADR-075.
+
+Với công thức hiện có, góc0/45/90/180° lần lượt ra544/1008/1472/2400µs, duty16bit1782/3302/4823/7864. Mức hạ0° nay phát544µs chứ không phải1000µs như trước: giữ cùng số độ không đồng nghĩa giữ vị trí cơ khí cũ. Không tự nạp hoặc chạy servo; xác nhận hai góc thao tác và giới hạn cơ khí trước thử có tải.
+
+VERIFIED: `scripts/test-robot-parity.ps1 -ServoOnly` PASS servo01, servo02, profile không servo và fixture Core servo cho cảhai xe. Kiểm0/45/90/180°, từ chối góc ngoài biên/kênh tắt, không ghi kênh motor, không phát góc khi boot,5s/ngắt thao tác/rollover; ACK không được coi là hoàn thành. Kết quả build tại tests/README.md. OPEN góc nâng/hạ mới và thử phần cứng. Các mục0/45 với1000–2000µs dưới đây là lịch sử trước cập nhật này cho xe01.
+
 Ngày15/10/2026. Trạng thái: đã triển khai chế độ test kết nối; chưa nạp hoặc chạy servo thật.
 
 ## SOURCE

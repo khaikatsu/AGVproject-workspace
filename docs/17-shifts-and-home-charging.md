@@ -1,5 +1,7 @@
 # Ca làm việc và tự về trạm sạc
 
+21/10/2026: nút **Mở ca** nay mở bước kiểm tra/nhập vị trí kệ, chưa phát lệnh ngay. Người vận hành sửa dữ liệu điền sẵn nếu cần, xác nhận kho/xe trống rồi bấm **Xác nhận và bắt đầu ca**; web lưu kho lúc CLOSED, sau đó mới gửi mở ca. Không thay điều kiện mở ca của Core. Nếu đã lưu nhưng mở ca thất bại/không rõ kết quả, dữ liệu kho vẫn được giữ và phải đối chiếu trạng thái trước khi thử lại. [ADR-074](decisions/ADR-074-warehouse-review-before-shift-start.md).
+
 16/10/2026 — **Ghi đè tạm thời để test:** nhóm sạc thủ công; Core main bỏ chốt pin (giữ mã cũ bằng `//`). Pin thấp/chưa đo không chặn mở ca hoặc task/GOTO; không tự chuyển tuyến đi sạc, không phát CHARGE_START. Kết thúc ca vẫn về trạm riêng và đỗ IDLE. RFID, lỗi, MQTT và mutex vẫn giữ nguyên. Những mô tả ngưỡng20/40 và CHARGING bên dưới là hành vi gốc, hiện không áp dụng; yêu cầu ≤30% sẽ cần triển khai/kiểm chứng trước khi bật chốt lại. [ADR-060](decisions/ADR-060-temporary-battery-bypass-manual-charge.md).
 
 16/10/2026: menu scope `active01`, `active02`, `active-both` dùng cùng quản lý ca và ngưỡng pin như Core thật. Chỉ các xe trong `active_robot_ids` tham gia ca; xe ngoài scope nếu đã xuất hiện phải được xác minh IDLE tại trạm và không giữ task/tuyến/vùng. Chọn scope lúc khởi động không tự gửi GOTO/CHARGE_START; sau khi ca đã RUNNING, kết thúc ca vẫn theo luồng về trạm hiện có. Bộ sạc/CHARGE_START vật lý còn OPEN. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).

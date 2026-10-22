@@ -1,5 +1,7 @@
 # Phát triển web giám sát AGV
 
+21/10/2026, REQ-SHIFT-WAREHOUSE-01: bấm **Mở ca** để nhập/kiểm tra trực tiếp vị trí kệ trước khi ca chạy. Dữ liệu đã lưu được điền sẵn; để trống ô không có kệ, xác nhận đã kiểm tra thực tế và xe trống, rồi bấm **Xác nhận và bắt đầu ca**. Web lưu kho khi CLOSED trước, chỉ mở ca sau khi lưu thành công; lỗi mở ca không xóa lần lưu đã thành công. Hủy trước xác nhận không lưu/mở ca. Không cho chỉnh kho khi RUNNING; vẫn giữ form đối soát riêng. [ADR-074](decisions/ADR-074-warehouse-review-before-shift-start.md).
+
 18/10/2026, bổ sung REQ-WAREHOUSE-UI-01: tiêu đề bảng đổi thành **Trạng thái kho hàng** theo ảnh người dùng. Danh sách lượt và bộ chọn tiến độ mặc định ẩn đơn `closed` (đã đóng sau đối soát); bật **Hiện đơn đã đối soát (N)** để xem lại. Đơn active/cần đối soát vẫn hiện, dữ liệu SQLite và báo cáo không bị xóa.
 
 18/10/2026, REQ-WAREHOUSE-UI-01: bảng **Xe đang đi đâu · Kho đang có gì?** nằm phía trên map ở Tổng quan/Nhiệm vụ. Mỗi xe hiện LẤY TỪ→GIAO ĐẾN, pha hiện tại, RFID, đích lệnh và mã kệ; sáu ô kho hiện trạng thái hiện tại và đầu ca, xe lấy/nhận/giữ chỗ/đối soát. Form chuyển kệ bỏ ô số lượng1, hiện nguồn có kệ/đích trống và lý do nút giao việc chưa sẵn sàng. Tuyến/xe được ưu tiên trong danh sách đơn; mã/chi tiết đường nằm phần mở rộng. Dữ liệu cũ và lỗi không tiếp tục hiển thị bước như đang chạy. [ADR-071](decisions/ADR-071-warehouse-operations-overview.md).

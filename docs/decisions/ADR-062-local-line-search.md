@@ -1,5 +1,19 @@
 # ADR-062 — Tìm lại line tại chỗ, giữ chặng đang chạy
 
+22/10/2026, REQ-DUAL-EDGE-LINE-CONFIRM-01 thay chính sáchv9: cảhai profile nhận thêm001/100 ổn định khi Following tiến, yêu cầu cùng phía100ms/≥3 mẫu/gap≤50ms; đảo trái-phải làm lại bằng chứng. Lùi vẫn010,000/101/111 không xác nhận, quét600ms/grace9s01/7s02 và chốt lỗi giữ nguyên. [ADR-076](ADR-076-dual-narrow-line-confirm.md), [kiểm thử](../../tests/README.md). Chưa nạp/thử xe thật.
+
+21/10/2026, yêu cầu mới REQ-DUAL-NARROW-LINE-CONFIRM-01 thay phần centered-only Following tiến của bảnsource: cảhai profile phục hồi010/011/110 có mắt giữa ổn định100ms/≥3 mẫu/gap≤50ms, không mở side-only100/001. Mấtgrant/vật cản xóa bằng chứng; lùi/blank/wide/lỗi đãchốt vẫn giữ chốt. Quét600ms/grace9s01/7s02 và PWM không đổi; chưa nạp. [ADR-076](ADR-076-dual-narrow-line-confirm.md), [kiểm thử](../../tests/README.md). Ghi chú trạng thái nguyênsource bên dưới là lịch sử trướcv9.
+
+Trạng thái mới nhất21/10/2026: yêu cầu [ghi đè nguyên bản firmware](ADR-075-sync-validated-two-robot-firmware.md) thay thế bản v6 bật side recovery ở mục ngay dưới. Hai profile hiện theo source người dùng gửi, không bật LINE_RECOVERY_SIDE_CONFIRM; phần cài đặt/test bên dưới được giữ làm lịch sử và có backup trước ghi đè.
+
+## Bổ sung 21/10/2026 — Bật lại nhận line bên xe01 trên nền PD đã đồng bộ
+
+`SOURCE`: sau đối chiếu firmware cũ với bản ổn định người dùng gửi, người dùng yêu cầu bật lại nhận line bên cho xe01. `OBSERVED`: profile01 của bản đồng bộ không còn `AGV_LINE_RECOVERY_SIDE_CONFIRM`; ba ca test side recovery cũ còn guard theo `GENTLE_FORWARD_CORRECTION`, nên bị bỏ qua trên nền PD dù runner ghi PASS.
+
+`IMPLEMENTED`: bật `AGV_LINE_RECOVERY_SIDE_CONFIRM=1` riêng profile01. Khi Following tiến mất000, nhóm100/110 hoặc001/011 cùng phía ổn định ít nhất100ms, ít nhất3 mẫu khác timestamp và gap≤50ms được phục hồi trong grace7s; motor STOP trong lúc xác nhận. Quét vẫn tối đa600ms, lùi/xe02 vẫn chỉ xác nhận010; không đổi PD/PWM/trim/capture hoặc bản sửa lastCommandId. BuildID01 `20261021-robot01-side-recovery-v6`, xe02 giữ `20261021-robot02-stale-sync-v5`.
+
+`VERIFIED`: ba test cũ chuyển guard sang đúng `LINE_RECOVERY_SIDE_CONFIRM`, có assert cờ bật ở profile01 và dùng deadline grace7s thay600ms trong ca lỗi latched. Native01/02 PASS54/54 mỗi profile; build ESP32 xe01 PASS. Kiểm nhiễu/đổi nhóm/gap/millis rollover, giữ route/index, lùi, thu hồi grant/vật cản và lỗi không tự xóa. Kết quả/hash tại [tests](../../tests/README.md). `OPEN`: chưa upload hoặc thử trên xe trong lượt bật lại; kiểm thử logic không chứng minh xe đã hết lỗi vật lý.
+
 ## Bổ sung 19/10/2026 — Recovery xe01 sau khôi phục firmware cũ
 
 SOURCE: người dùng kể lại lần thử thấy mắt còn đọc vạch nhưng xe không bám, sau đó server báo mất line; hiện không có xe để lấy trace. OBSERVED từ source đang làm việc sau khôi phục: recovery chỉ nhận010, dù001/011/100/110 hợp lệ khi Following bình thường. Ba ca native mới tái hiện việc vẫn xuất pivot hoặc không thoát recovery khi line bên liên tục. Chưa có bằng chứng runtime xác nhận đây là nguyên nhân duy nhất của lần thử được kể lại.

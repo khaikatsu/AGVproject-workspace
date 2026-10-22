@@ -1,5 +1,6 @@
 'use strict';
 let warehouseFormRevision=null,warehouseLatestReport=null,warehouseReportSelection=null;
+let shiftWarehouseDraft=null;
 const rackStateNames={stored:'Tại kho',on_robot:'Trên xe',needs_attention:'Cần đối soát'};
 function warehouseText(parent,text,tag='p',className='') {
   const element=document.createElement(tag);element.textContent=text;element.className=className;parent.append(element);return element;
@@ -16,7 +17,7 @@ function warehouseRows(inventory) {
 }
 function renderWarehouse(inventory) {
   const box=$('warehouseSummary'),tbody=$('warehouseStateTable').tBodies[0];tbody.replaceChildren();
-  if(!inventory?.initialized)box.textContent='Chưa nhập trạng thái kho. Mở phần nhập vị trí kệ khi ca đã đóng.';
+  if(!inventory?.initialized)box.textContent='Chưa nhập trạng thái kho. Bấm Mở ca để nhập và xác nhận vị trí kệ trước khi bắt đầu.';
   else {
     const onRobot=inventory.racks.filter(rack=>rack.location.type==='robot').length;
     const uncertain=inventory.racks.filter(rack=>rack.status==='needs_attention').length;
@@ -33,28 +34,85 @@ function renderWarehouse(inventory) {
 }
 function updateWarehouseInventoryControls() {
   const enabled=controlsReady()&&lastState?.shift?.phase==='CLOSED';
-  $('saveWarehouseBtn').disabled=!enabled;
+  $('saveWarehouseBtn').disabled=!enabled||!!shiftWarehouseDraft?.busy;
   for(const field of $('warehouseConfigFields').querySelectorAll('input'))field.disabled=!enabled;
+  const dialog=$('shiftWarehouseDialog');
+  if(!dialog.open)return;
+  const busy=!!shiftWarehouseDraft?.busy;
+  const sameContext=shiftWarehouseDraft?.session===lastState?.core_session_id&&shiftWarehouseDraft?.revision===(lastState?.warehouse?.revision??0);
+  $('confirmStartShiftBtn').disabled=!enabled||!lastState?.shift?.can_start||busy||!sameContext;
+  for(const field of dialog.querySelectorAll('input'))field.disabled=!enabled||busy||!sameContext;
+  $('cancelStartShiftBtn').disabled=busy;
+  $('shiftWarehouseHint').textContent=busy?'':!sameContext
+    ? 'Trạng thái kho hoặc phiên Core đã thay đổi. Đóng rồi mở lại để kiểm tra dữ liệu mới; nội dung đang nhập chưa được lưu.'
+    : !enabled?'Chưa thể xác nhận: cần kết nối mới và ca CLOSED.'
+    : !lastState.shift.can_start?'Chờ xe đủ điều kiện mở ca. Xem trạng thái ca và trạm riêng.':'';
 }
-function editWarehouseLayout() {
-  const container=$('warehouseConfigFields');container.replaceChildren();
-  const inventory=lastState?.warehouse;warehouseFormRevision=inventory?.revision??0;$('warehouseVerified').checked=false;
-  const nodes=(lastState?.map.nodes||[]).filter(node=>node.type==='station'&&/^K[1-6]$/.test(node.id)).sort((a,b)=>a.id.localeCompare(b.id));
+function fillWarehouseFields(container,inventory) {
+  container.replaceChildren();
+  const nodes=(lastState?.map?.nodes||[]).filter(node=>node.type==='station'&&/^K[1-6]$/.test(node.id)).sort((a,b)=>a.id.localeCompare(b.id));
   for(const node of nodes) {
     const label=document.createElement('label');label.textContent=node.id;
     const input=document.createElement('input');input.dataset.rackNode=node.id;input.setAttribute('aria-label',`Mã kệ tại ${node.id}`);
     input.placeholder='Trống';input.maxLength=32;input.pattern='[A-Za-z0-9_-]{1,32}';
-    input.value=inventory?.slots.find(slot=>slot.node===node.id)?.rack_id||'';
+    input.value=inventory?.slots?.find(slot=>slot.node===node.id)?.rack_id||'';
     input.disabled=!controlsReady()||lastState?.shift?.phase!=='CLOSED';label.append(input);container.append(label);
   }
 }
+function editWarehouseLayout() {
+  const inventory=lastState?.warehouse;warehouseFormRevision=inventory?.revision??0;$('warehouseVerified').checked=false;
+  fillWarehouseFields($('warehouseConfigFields'),inventory);
+}
+function warehouseSlots(container) {
+  return [...container.querySelectorAll('[data-rack-node]')].map(input=>({node:input.dataset.rackNode,rack_id:input.value.trim()||null}));
+}
 async function saveWarehouseLayout() {
-  const slots=[...$('warehouseConfigFields').querySelectorAll('[data-rack-node]')].map(input=>({node:input.dataset.rackNode,rack_id:input.value.trim()||null}));
+  const slots=warehouseSlots($('warehouseConfigFields'));
   const result=await api('POST','/api/warehouse/configure',{slots,expected_revision:warehouseFormRevision,physically_verified:$('warehouseVerified').checked});
   if(result?.warehouse) {
     lastState.warehouse=result.warehouse;warehouseFormRevision=result.warehouse.revision;renderWarehouse(result.warehouse);
     $('warehouseConfig').open=false;toast('Đã lưu vị trí kệ và nhật ký đối soát.');
   }
+}
+function openShiftWarehouse() {
+  if(!controlsReady()||lastState?.shift?.phase!=='CLOSED'||!lastState.shift.can_start)return;
+  if($('shiftWarehouseDialog').open)return;
+  shiftWarehouseDraft={revision:lastState.warehouse?.revision??0,session:lastState.core_session_id,busy:false};
+  fillWarehouseFields($('shiftWarehouseFields'),lastState.warehouse);
+  $('shiftWarehouseVerified').checked=false;
+  $('shiftWarehouseStatus').textContent=lastState.warehouse?.initialized
+    ? 'Đã điền trạng thái kho đã lưu. Kiểm tra, sửa nếu cần rồi xác nhận; chưa mở ca.'
+    : 'Chưa có dữ liệu kho. Nhập mã kệ tại vị trí thực tế; không tự gán vị trí mặc định.';
+  $('shiftWarehouseDialog').showModal();updateWarehouseInventoryControls();
+}
+function cancelShiftWarehouse(event) {
+  if(shiftWarehouseDraft?.busy){event?.preventDefault();return;}
+  $('shiftWarehouseDialog').close();shiftWarehouseDraft=null;
+}
+async function confirmShiftWarehouse() {
+  const draft=shiftWarehouseDraft,form=$('shiftWarehouseForm'),status=$('shiftWarehouseStatus');
+  if(!draft||draft.busy||!form.reportValidity())return;
+  updateWarehouseInventoryControls();if($('confirmStartShiftBtn').disabled)return;
+  const slots=warehouseSlots($('shiftWarehouseFields'));
+  if(!slots.length){status.textContent='Không có vị trí K1–K6 trên bản đồ để nhập kho; chưa gửi lệnh mở ca.';return;}
+  draft.busy=true;updateWarehouseInventoryControls();
+  try {
+    status.textContent='Đang lưu vị trí kệ; ca vẫn đang đóng…';
+    const saved=await api('POST','/api/warehouse/configure',{slots,expected_revision:draft.revision,physically_verified:true});
+    if(!saved?.warehouse){status.textContent='Chưa xác nhận lưu kho. Chưa gửi lệnh mở ca. Xem thông báo lỗi; đóng rồi mở lại để tải trạng thái mới trước khi thử lại.';return;}
+    if(lastState.warehouse?.revision>saved.warehouse.revision) {
+      status.textContent='Kho đã có thay đổi mới sau lần lưu này. Chưa gửi lệnh mở ca; đóng rồi mở lại để kiểm tra.';return;
+    }
+    draft.revision=saved.warehouse.revision;lastState.warehouse=saved.warehouse;renderWarehouse(saved.warehouse);
+    if(!controlsReady()||lastState.core_session_id!==draft.session||lastState.shift?.phase!=='CLOSED'||!lastState.shift.can_start) {
+      status.textContent='Đã lưu kho nhưng điều kiện mở ca đã thay đổi. Chưa gửi lệnh mở ca; kiểm tra trạng thái xe và kết nối.';return;
+    }
+    status.textContent='Đã lưu kho. Đang chờ Core xác nhận mở ca…';
+    const started=await control('POST','/api/shift/start',{},$('startShiftBtn'));
+    if(!started){status.textContent='Đã lưu kho; chưa xác nhận mở ca. Kiểm tra trạng thái ca và thông báo lỗi trước khi thử lại. Hệ thống không tự gửi lại lệnh.';return;}
+    $('shiftWarehouseDialog').close();shiftWarehouseDraft=null;
+    toast('Đã lưu trạng thái kho và Core đã mở ca làm việc.');
+  } finally {draft.busy=false;updateWarehouseInventoryControls();}
 }
 async function loadWarehouseReports() {
   const rows=await api('GET','/api/warehouse/reports?limit=20',undefined,true);if(!Array.isArray(rows))return;

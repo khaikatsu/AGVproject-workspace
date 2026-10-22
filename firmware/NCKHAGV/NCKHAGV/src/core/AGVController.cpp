@@ -55,6 +55,10 @@ void AGVController::begin() {
             Config::REAR_ULTRASONIC_TRIG_PIN, Config::REAR_ULTRASONIC_ECHO_PIN);
         Serial.printf("[BOOT] xe=%s reset_reason=%d motion=%d bench=%d\n", Config::AGV_ID,
                       static_cast<int>(esp_reset_reason()), Config::ENABLE_CORE_MOTION, Config::TWO_ROBOT_BENCH_TRIAL);
+        Serial.printf("[BATTERY] cells=%d range=%.2f..%.2fV full=%.2fV scale=%.6f offset=%.3fV\n",
+                      Config::BATTERY_SERIES_CELLS, Config::BATTERY_EMPTY_VOLTAGE,
+                      Config::BENCH_MAX_VOLTAGE, Config::BATTERY_FULL_VOLTAGE,
+                      Config::BATTERY_VOLTAGE_SCALE, Config::BATTERY_VOLTAGE_OFFSET);
         Serial.printf("[AGV] Core motion %s; mutex encoder release=%d threshold=%lu pulses/wheel\n",
                       Config::ENABLE_CORE_MOTION ? "configured" : "locked",
                       Config::MUTEX_ENCODER_RELEASE_ENABLED,
@@ -122,6 +126,12 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
     }
     if (command.type == CoreCommandType::ResetFault) {
         const ControlInput current = input();
+        const auto voltageError = AGVMath::motionVoltageError(battery_.readVoltage());
+        if (voltageError != ErrorCode::None) {
+            control_.safeStop(voltageError);
+            mqtt_.publishError(voltageError, millis());
+            return;
+        }
         if (navigator_.active() || !positionConfirmed_ || positionSession_ != mqtt_.session() ||
             !current.motionConfigured || !current.lineConfigured ||
             AGVMath::lineAction(current.linePattern) == MotorAction::Stop ||
@@ -200,17 +210,27 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
         bool reverseRequired = false;
         for (uint8_t i = 0; i < route.count; ++i)
             reverseRequired |= route.departure[i] == RouteTurn::Reverse || route.reverseAfterTurn[i];
-        if (!Config::ENABLE_CORE_MOTION || (Config::ONE_ROBOT_TRIAL && !trialRoute) ||
-            !Config::benchVoltageReady(battery_.readVoltage()) ||
-            (!battery_.calibrated() && !trialRoute && !Config::TWO_ROBOT_BENCH_TRIAL) ||
-            !RoutePlanner::reverseAllowed(control_.currentNode(), command, route) ||
-            control_.state() == AGV_SAFE_STOP || control_.state() == AGV_ERROR) {
+        AGVMath::MotionStartConditions checks;
+        checks.enabled = Config::ENABLE_CORE_MOTION;
+        checks.routeAllowed = !Config::ONE_ROBOT_TRIAL || trialRoute;
+        checks.voltage = battery_.readVoltage();
+        checks.calibrationRequired = !trialRoute && !Config::TWO_ROBOT_BENCH_TRIAL;
+        checks.calibrated = battery_.calibrated();
+        checks.reverseAllowed = RoutePlanner::reverseAllowed(control_.currentNode(), command, route);
+        checks.previousError = control_.state() == AGV_SAFE_STOP || control_.state() == AGV_ERROR
+            ? control_.error() : ErrorCode::None;
+        if ((control_.state() == AGV_SAFE_STOP || control_.state() == AGV_ERROR) &&
+            checks.previousError == ErrorCode::None) checks.previousError = ErrorCode::MotionLocked;
+        const auto lockReason = AGVMath::motionStartError(checks);
+        if (lockReason != ErrorCode::None) {
             if (Config::DEBUG_ENABLED)
-                Serial.printf("[MOTION_LOCK] xe=%s node=%s previous=%s motion=%d voltage=%.2f reverse=%d state=%s\n",
+                Serial.printf("[MOTION_LOCK] xe=%s node=%s previous=%s motion=%d voltage=%.3f adc=%lumV range=%.2f..%.2fV reverse=%d state=%s reason=%s\n",
                               Config::AGV_ID, control_.currentNode(), previousNode_,
-                              Config::ENABLE_CORE_MOTION, battery_.readVoltage(), reverseRequired,
-                              stateName(control_.state()));
-            control_.safeStop(ErrorCode::MotionLocked);
+                              Config::ENABLE_CORE_MOTION, battery_.readVoltage(),
+                              static_cast<unsigned long>(battery_.adcMillivolts()),
+                              Config::BATTERY_EMPTY_VOLTAGE, Config::BENCH_MAX_VOLTAGE, reverseRequired,
+                              stateName(control_.state()), errorName(lockReason));
+            control_.safeStop(lockReason);
             return;
         }
         if (route.count && !navigator_.start(control_.currentNode(), command, route, millis(), trialRoute, true))
@@ -254,7 +274,10 @@ void AGVController::update() {
         control_.state() != AGV_SAFE_STOP && control_.state() != AGV_ERROR &&
         !(Config::ULTRASONIC_MOTION_GUARD && Config::REAR_ULTRASONIC_ECHO_PIN >= 0 && sonars_.acquiring())) {
         MotorAction early = MotorAction::Stop;
-        if (navigator_.refreshFollowing(input(),early)) movement_.apply(early);
+        const ControlInput earlyInput = input();
+        if (navigator_.refreshFollowing(earlyInput,early))
+            movement_.apply(early, false, Config::LINE_RECOVERY_PWM, false,
+                {navigator_.forwardLineTracking(), earlyInput.linePattern, earlyInput.now});
     }
     if (rfid_.readCard()) {
         const RFIDEvent& event = rfid_.event();
@@ -392,8 +415,9 @@ void AGVController::update() {
     }
     const bool sonarAcquiring = Config::ULTRASONIC_MOTION_GUARD &&
         Config::REAR_ULTRASONIC_ECHO_PIN >= 0 && sonars_.acquiring();
+    const ControlInput motionInput = input();
     const MotorAction coreMotor = navigator_.active() && !sonarAcquiring
-        ? navigator_.update(input()) : MotorAction::Stop;
+        ? navigator_.update(motionInput) : MotorAction::Stop;
     if (navigator_.stationOriented()) {
         heading_ = RoutePlanner::bayHeading(control_.currentNode());
         headingBayDefault_ = true;
@@ -406,7 +430,8 @@ void AGVController::update() {
     }
     movement_.apply(navigator_.state() == AGV_SAFE_STOP ? MotorAction::Stop :
                     (navigator_.active() ? coreMotor : output.motor), navigator_.precisionPivot(),
-                    navigator_.precisionPivotPwm(), navigator_.settlingTurnLine());
+                    navigator_.precisionPivotPwm(), navigator_.settlingTurnLine(),
+                    {navigator_.forwardLineTracking(), motionInput.linePattern, motionInput.now});
     if (output.servo != ServoAction::None) {
         movement_.stop();
         const bool moved = output.servo == ServoAction::LiftUp ? servo_.liftUp() : servo_.liftDown();
@@ -523,7 +548,8 @@ void AGVController::publishTelemetry() {
     snapshot.localSession = currentSession;
     snapshot.heading = heading_;
     snapshot.headingBayDefault = headingBayDefault_;
-    snapshot.stationReady = RoutePlanner::station(snapshot.position.node) &&
+    snapshot.stationReady = Config::benchVoltageReady(snapshot.batteryVoltage) &&
+        RoutePlanner::station(snapshot.position.node) &&
         snapshot.heading == RoutePlanner::bayHeading(snapshot.position.node) &&
         !snapshot.taskActive && snapshot.state == AGV_IDLE && snapshot.error == ErrorCode::None &&
         snapshot.motor == MotorAction::Stop && snapshot.leftDuty == 0 && snapshot.rightDuty == 0;

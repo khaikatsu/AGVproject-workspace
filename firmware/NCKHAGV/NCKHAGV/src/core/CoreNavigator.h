@@ -33,17 +33,26 @@ public:
     bool observeTurnLine(const ControlInput& input);
     bool capturingTurnLine() const { return phase_ == Phase::TurnCapture; }
     bool settlingTurnLine() const { return phase_ == Phase::Following && turnSettling_; }
+    bool turnCaptureEnabled() const {
+        return index_ < length_ &&
+            ((turns_[index_] == RouteTurn::Left && Config::LEFT_TURN_CAPTURE_ENABLED) ||
+             (turns_[index_] == RouteTurn::Right && Config::RIGHT_TURN_CAPTURE_ENABLED));
+    }
+    int turnCapturePwm() const {
+        return index_ < length_ && turns_[index_] == RouteTurn::Right
+            ? Config::RIGHT_TURN_CAPTURE_PWM : Config::LEFT_TURN_CAPTURE_PWM;
+    }
     bool precisionPivot() const {
-        return recoveringLine() || (Config::LEFT_TURN_CAPTURE_ENABLED && phase_ == Phase::Turning &&
-            turns_[index_] == RouteTurn::Left && oldLineDeparted_);
+        return g1TurnAroundPrecision() || recoveringLine() ||
+            (turnCaptureEnabled() && phase_ == Phase::Turning && oldLineDeparted_);
     }
     int precisionPivotPwm() const {
-        // Left-turn capture has its own torque setting; ordinary line-loss
-        // recovery must retain the existing bounded search PWM.
-        return Config::LEFT_TURN_CAPTURE_ENABLED &&
-            (phase_ == Phase::TurnCapture || (phase_ == Phase::Turning &&
-             turns_[index_] == RouteTurn::Left && oldLineDeparted_))
-            ? Config::LEFT_TURN_CAPTURE_PWM : Config::LINE_RECOVERY_PWM;
+        if (g1TurnAroundPrecision()) return Config::G1_TURN_AROUND_PWM;
+        // Turn capture uses its direction-specific PWM; line-loss recovery keeps its own limit.
+        return (phase_ == Phase::TurnCapture || (phase_ == Phase::Turning &&
+                turnCaptureEnabled() && oldLineDeparted_) ||
+                (phase_ == Phase::Following && turnSettling_))
+            ? turnCapturePwm() : Config::LINE_RECOVERY_PWM;
     }
     const char* missingZone() const;
     const char* requestedZone() const;
@@ -51,6 +60,9 @@ public:
     bool following() const { return phase_ == Phase::Following && !recoveringLine(); }
     bool recoveringLine() const { return Config::LINE_RECOVERY_ENABLED && lineLossPending_; }
     bool obstaclePaused() const { return obstaclePaused_; }
+    bool forwardLineTracking() const {
+        return following() && !segmentReverse() && !obstaclePaused_ && !missingZone();
+    }
     bool stationOriented() const { return stationOriented_; }
     AGVState state() const;
     ErrorCode error() const { return error_; }
@@ -64,6 +76,10 @@ public:
     }
 private:
     enum class Phase { Idle, WaitingGrant, Turning, TurnCapture, Following, StationDwell, StationTurning, Fault };
+    bool g1TurnAroundPrecision() const {
+        return Config::G1_TURN_AROUND_PWM > 0 && phase_ == Phase::Turning && index_ < length_ &&
+            turns_[index_] == RouteTurn::TurnAround && std::strcmp(current_, "G1") == 0;
+    }
     static int zoneIndex(const char* node);
     bool hasGrant(const char* node) const;
     bool currentZonePermitted() const;
@@ -71,6 +87,7 @@ private:
     void rememberLine(const ControlInput& input, MotorAction action);
     MotorAction recoverLine(const ControlInput& input);
     MotorAction alignTurnLine(const ControlInput& input);
+    bool confirmTrackedLine(const ControlInput& input);
     Phase phase_ = Phase::Idle;
     ErrorCode error_ = ErrorCode::None;
     char current_[NODE_TEXT_SIZE]{};

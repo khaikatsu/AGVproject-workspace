@@ -2,8 +2,8 @@
 #include "core/ControlLogic.h"
 #include <algorithm>
 
-void MovementModule::moveForward() { motor_.setMotorSpeed(Config::BASE_SPEED); motor_.motorForward(); buzzer_.off(); action_ = MotorAction::Forward; }
-void MovementModule::moveBackward() {
+void MovementModule::moveForward() { line_.resetPd(); motor_.setMotorSpeed(Config::BASE_SPEED); motor_.motorForward(); buzzer_.off(); action_ = MotorAction::Forward; }
+void MovementModule::moveBackward() { line_.resetPd();
     motor_.setLeftSpeed(Config::REVERSE_SPEED + Config::REVERSE_LEFT_SPEED_TRIM);
     motor_.setRightSpeed(Config::REVERSE_SPEED + Config::REVERSE_RIGHT_SPEED_TRIM);
     motor_.motorBackward();
@@ -17,6 +17,7 @@ void MovementModule::correctBackwardRight() {
     applyReverseCorrection(MotorAction::ReverseCorrectRight);
 }
 void MovementModule::applyReverseCorrection(MotorAction action, int pwmCap) {
+    line_.resetPd();
     const bool slowLeft = action == MotorAction::ReverseCorrectLeft;
     int left = Config::REVERSE_CORRECTION_SPEED + Config::REVERSE_LEFT_SPEED_TRIM;
     int right = Config::REVERSE_CORRECTION_SPEED + Config::REVERSE_RIGHT_SPEED_TRIM;
@@ -35,22 +36,35 @@ void MovementModule::applyReverseCorrection(MotorAction action, int pwmCap) {
     action_ = action;
     buzzer_.setReverse(AGVMath::reverseBuzzerRequired(action_, motor_.leftDuty(), motor_.rightDuty()));
 }
-void MovementModule::turnLeft() {
+void MovementModule::turnLeft() { line_.resetPd();
     motor_.setLeftSpeed(Config::TURN_SPEED + Config::TURN_LEFT_SPEED_TRIM);
     motor_.setRightSpeed(Config::TURN_SPEED + Config::TURN_RIGHT_SPEED_TRIM);
     motor_.motorLeft(); buzzer_.off(); action_ = MotorAction::PivotLeft;
 }
-void MovementModule::turnRight() {
+void MovementModule::turnRight() { line_.resetPd();
     motor_.setLeftSpeed(Config::TURN_SPEED + Config::TURN_LEFT_SPEED_TRIM);
     motor_.setRightSpeed(Config::TURN_SPEED + Config::TURN_RIGHT_SPEED_TRIM);
     motor_.motorRight(); buzzer_.off(); action_ = MotorAction::PivotRight;
 }
-void MovementModule::stop() { motor_.motorStop(); buzzer_.off(); action_ = MotorAction::Stop; }
+void MovementModule::stop() { line_.resetPd(); motor_.motorStop(); buzzer_.off(); action_ = MotorAction::Stop; }
 void MovementModule::followLine() { apply(AGVMath::lineAction(line_.readSensors().pattern)); }
-void MovementModule::apply(MotorAction action, bool lineRecovery, int precisionPwm, bool settling) {
+void MovementModule::apply(MotorAction action, bool lineRecovery, int precisionPwm, bool settling,
+                           const ForwardLineSample& pd) {
+    const bool forward = action == MotorAction::Forward || action == MotorAction::CorrectLeft ||
+        action == MotorAction::CorrectRight || action == MotorAction::GentleCorrectLeft ||
+        action == MotorAction::GentleCorrectRight;
+    if (Config::LINE_PD_ENABLED && pd.authorized && forward && !lineRecovery) {
+        if (!line_.followPd(pd.pattern, pd.now, settling ? precisionPwm : 255)) {
+            stop(); return;
+        }
+        buzzer_.off(); action_ = action;
+        return;
+    }
+    // Dung/lui/xoay/tim line khong giu sai lech PD cua chang truoc.
+    line_.resetPd();
     if (settling && Config::REVERSE_GENTLE_CORRECTION &&
         (action == MotorAction::ReverseCorrectLeft || action == MotorAction::ReverseCorrectRight)) {
-        applyReverseCorrection(action, Config::LEFT_TURN_CAPTURE_PWM);
+        applyReverseCorrection(action, precisionPwm);
         return;
     }
     if (settling && action != MotorAction::Stop && action != MotorAction::PivotLeft && action != MotorAction::PivotRight) {
@@ -63,8 +77,8 @@ void MovementModule::apply(MotorAction action, bool lineRecovery, int precisionP
         const int base = reverse ? Config::REVERSE_SPEED : Config::BASE_SPEED;
         const int leftTrim = reverse ? Config::REVERSE_LEFT_SPEED_TRIM : Config::LEFT_SPEED_TRIM;
         const int rightTrim = reverse ? Config::REVERSE_RIGHT_SPEED_TRIM : Config::RIGHT_SPEED_TRIM;
-        motor_.setLeftSpeed(rightOnly ? 0 : std::min(base + leftTrim, Config::LEFT_TURN_CAPTURE_PWM));
-        motor_.setRightSpeed(leftOnly ? 0 : std::min(base + rightTrim, Config::LEFT_TURN_CAPTURE_PWM));
+        motor_.setLeftSpeed(rightOnly ? 0 : std::min(base + leftTrim, precisionPwm));
+        motor_.setRightSpeed(leftOnly ? 0 : std::min(base + rightTrim, precisionPwm));
         if (reverse) motor_.motorBackward(); else motor_.motorForward();
         action_ = action;
         buzzer_.setReverse(AGVMath::reverseBuzzerRequired(action_, motor_.leftDuty(), motor_.rightDuty()));

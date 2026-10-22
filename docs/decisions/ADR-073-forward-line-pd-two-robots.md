@@ -2,6 +2,14 @@
 
 Ngày19/10/2026. Trạng thái: IMPLEMENTED trong source; kiểm chứng phần mềm tại tests/README.md, chưa nạp/thử sàn.
 
+## Bổ sung v11 — Sàn/trần PWM chống khựng riêng xe01
+
+`SOURCE` 22/10/2026: người dùng hỏi cách sửa sau khi rà thông số xe01 có thể xung đột làm xe đang chạy bị khựng. `OBSERVED`: với base140, trim+10/0, Kp75/Kd25, đầu ra PD tĩnh cũ là011=75/215,110=225/65 và001/100=0/255. Duty thấp không phải xung đột GPIO nhưng có thể không thắng ma sát/tải; chưa có đo dòng, điện áp tại driver hoặc ngưỡng khởi động bánh nên đây là giả thuyết phần mềm có căn cứ, không phải kết luận phần cứng.
+
+`IMPLEMENTED`: thêm giới hạn compile-time `LINE_PD_MIN_RUNNING_PWM`/`MAX_RUNNING_PWM`; riêng profile01 đặt110/230, profile02 dùng mặc định0/255. Clamp chỉ nằm sau khi `LinePdController` nhận pattern hợp lệ và controller đã cấp quyền Following; `000` làm update thất bại và STOP. Mọi đường STOP, mất mạng/MQTT, mất grant, sonar, fault, recovery pivot và lùi không dùng sàn này. Giữ Kp/Kd/base để không thay độ nhạy/nhịp PD; duty tĩnh xe01 trở thành001=110/230,011=110/215,010=150/140,110=225/110,100=230/110. BuildID01 `20261022-robot01-pd-floor-v11`; buildID/runtime xe02 giữ line-edge-v10.
+
+`OPEN`: thử kê bánh xác minh chiều và STOP trước, sau đó chạy sàn không tải rồi có tải. Nếu vẫn khựng ngay cả010=150/140 và không cóBOOT, cần đo cơ khí/motor/driver/nguồn thay vì tiếp tục tăng sàn. Nếu xe ôm cua thiếu, chỉnh từng10PWM sau trace; không vượt230 trước khi đo dòng.
+
 ## Bổ sung v7 — Trợ bám cua riêng xe01, không sửa quay tại node
 
 `SOURCE` 19/10/2026: người dùng báo xe01 lệch khi100/110/001/011/111, yêu cầu tự chỉnh nhẹ theo cua và nhấn mạnh không sửa code quay trái/phải tại node. `OBSERVED`: các mẫu này đã hợp lệ trong navigator, không phải tất cả đều bị xem là mất line. PDbase01 hiện210; khi110/011 vàD đổi dấu, chênh bánh có thể nhỏ trong khi tốc độ còn cao. Chưa có trace chứng minh ngưỡng cảm biến/chiều dây hoặc lực motor trên xe thật.

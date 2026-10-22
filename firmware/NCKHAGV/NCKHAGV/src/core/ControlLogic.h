@@ -3,6 +3,15 @@
 #include "Types.h"
 
 namespace AGVMath {
+// Moi dieu kien co ma loi rieng; khong doi nguong hoac tu mo khoa motor.
+ErrorCode motionVoltageError(float voltage);
+struct MotionStartConditions {
+    bool enabled = false, routeAllowed = false;
+    float voltage = UNKNOWN_VALUE;
+    bool calibrationRequired = false, calibrated = false, reverseAllowed = false;
+    ErrorCode previousError = ErrorCode::None;
+};
+ErrorCode motionStartError(const MotionStartConditions& conditions);
 float batteryVoltage(uint32_t adcMv, float scale, float offset);
 float batteryPercentage(float voltage, float emptyVoltage, float fullVoltage);
 uint8_t normalizeLine(int left, int center, int right, int activeState);

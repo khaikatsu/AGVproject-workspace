@@ -16,7 +16,8 @@ public:
     void stop();
     void followLine();
     void apply(MotorAction action, bool lineRecovery = false,
-               int precisionPwm = Config::LINE_RECOVERY_PWM, bool settling = false);
+               int precisionPwm = Config::LINE_RECOVERY_PWM, bool settling = false,
+               const ForwardLineSample& pd = {});
     MotorAction action() const { return action_; }
 private:
     void applyReverseCorrection(MotorAction action, int pwmCap = 255);

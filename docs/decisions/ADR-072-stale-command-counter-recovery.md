@@ -1,6 +1,16 @@
 # ADR-072 — Phục hồi lệch bộ đếm command mà không chạy lại lệnh cũ
 
+Trạng thái mới nhất21/10/2026: yêu cầu [ghi đè nguyên bản firmware](ADR-075-sync-validated-two-robot-firmware.md) thay thế bổ sung producer stale-sync-v5 bên dưới. Firmware hiện khớp nguồn người dùng gửi và chưa phát lastCommandId; phần xử lý Core vẫn có. Bản trước được sao lưu, không tự chèn lại field hoặc thay counter/NVS trong lượt ghi đè.
+
 Ngày 19/10/2026. Trạng thái: IMPLEMENTED trong source, chưa triển khai lên Core/robot vận hành.
+
+## Bổ sung 21/10/2026 — Khôi phục producer diagnostic sau đối chiếu firmware ổn định
+
+`SOURCE`: người dùng báo xe01 tại S1 vẫn `STALE_COMMAND`, không xóa được lỗi và yêu cầu sửa. `OBSERVED`: API gateway xác nhận xe01 online, vị trí S1 hợp lệ, Core giữ ERROR/STALE_COMMAND; `MQTTModule::sendTelemetry` hiện thiếu `lastCommandId`, trong khi parser Core và `CommandIds::ensureAbove` vẫn có. Build/native trước đó chưa kiểm luồng producer MQTT này.
+
+`IMPLEMENTED`: thêm `lastCommandId=highwater_` vào diagnostic v1, đọc ngay trong network worker sở hữu counter. Giá trị lấy từ mã đã persist trong NVS, không lấy route ID hoặc số ACK; có cả khi chưa nhận lệnh (0) và khi MCU báo lỗi. Core dùng trường hiện có để tiến allocator; không đổi dedup hoặc điều kiện `RESET_FAULT`. Hai build ID mới là `20261021-robot01-stale-sync-v5` / `20261021-robot02-stale-sync-v5`. PWM/PD/capture/tuning giữ nguyên.
+
+`VERIFIED`: core_tests PASS, gồm đồng bộ high-water5000, giữ ERROR qua diagnostic khỏe, không retry/STOP mã thấp, `clearError` gửi RESET_FAULT>5000 rồi chờ diagnostic mới. Kết quả build ESP32 và hash tại [hồ sơ kiểm thử](../../tests/README.md). `OPEN`: chưa nạp bản v5 trong lượt sửa, chưa quan sát phục hồi trên xe thật; sau nạp phải xác nhận xe dừng tại RFID trạm, chờ diagnostic rồi bấm Xóa lỗi. Không xóa NVS/counter.
 
 ## Nguồn và hiện trạng
 

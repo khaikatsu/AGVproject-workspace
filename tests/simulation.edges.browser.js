@@ -17,7 +17,9 @@ async function main(){
   // A real map edge click selects the segment without dispatching a node task.
   await page.locator('#simObstacleEdge').selectOption('G1|M5');
   await page.locator('[data-sim-edge="M5|M6"] .sim-edge-hit').click();assert.equal(await page.locator('#simObstacleEdge').inputValue(),'M5|M6');
-  await page.locator('#startShiftBtn').click();await page.locator('#submitOrderBtn:enabled').waitFor();
+  await page.locator('#startShiftBtn').click();
+  await page.locator('#shiftWarehouseVerified').check();await page.locator('#confirmStartShiftBtn').click();
+  await page.locator('#submitOrderBtn:enabled').waitFor();
   sim.runtime.configure({timeScale:5,speedCmS:100,drainPerCm:0});
   await page.locator('#orderPickups select').selectOption('K1');await page.getByRole('button',{name:'+ Kho lấy',exact:true}).click();
   await page.locator('#orderPickups select').nth(1).selectOption('K4');

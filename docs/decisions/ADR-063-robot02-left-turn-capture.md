@@ -1,5 +1,9 @@
 # ADR-063 — Xe02 dừng và xác nhận line khi xoay trái
 
+22/10/2026, REQ-DUAL-EDGE-LINE-CONFIRM-01: TurnCapture cảhai profile nhận thêm001/100 sau khi một mẫu trước đã chứng minh rời line cũ; mẫu mép không được làm cảhai việc trong cùng vòng. Sau đó cùng phía ổn định100ms/≥3 mẫu/gap≤50ms mới thoát capture. GiữSTOP khi xác nhận, quét≤600ms/chờ≤1500ms, capPWM/grant/mạng/sonar và fault latched. [ADR-076](ADR-076-dual-narrow-line-confirm.md), [kiểm thử](../../tests/README.md). Chưa nạp/thử xe thật.
+
+21/10/2026, REQ-DUAL-NARROW-LINE-CONFIRM-01: cảhai profileLEFT/RIGHTcapture thêm xác nhận010/011/110 liên tục100ms/≥3 mẫu mới/gap≤50ms, không cần mẫu cuối010 trong nhánh mới; giữ đường2/3phiếu010 cũ. STOP trong xác nhận narrow, tổngchờ1500ms nhưng quétmotor≤600ms, chờcòn lạiSTOP; không nới chốt rời vạch cũ/quyềnzone/mạng/sonar/capPWM. Thay deadline600ms của capture và quy tắc chỉ010cuối trong các mục lịch sử dưới. [ADR-076](ADR-076-dual-narrow-line-confirm.md), [kiểm thử](../../tests/README.md). Chưa nạp/thử xe thật.
+
 Ngày: 16/10/2026. Trạng thái: IMPLEMENTED; đã kiểm chứng phần mềm, nghiệm thu trên xe OPEN.
 
 ## Cập nhật mới nhất — REQ-ROBOT02-LINE-ALIGN-01
