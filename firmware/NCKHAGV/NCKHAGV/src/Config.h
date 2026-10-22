@@ -355,6 +355,15 @@ constexpr float OBSTACLE_CLEAR_CM = 20.0f;
 // is reacquired after leaving the original line; bench calibration is pending.
 constexpr uint32_t TURN_MIN_MS = 100;
 constexpr uint32_t TURN_TIMEOUT_MS = 2500;
+#if defined(AGV_TURN_AROUND_CAPTURE_ENABLED) && AGV_TURN_AROUND_CAPTURE_ENABLED == 1
+constexpr bool TURN_AROUND_CAPTURE_ENABLED = true;
+#else
+constexpr bool TURN_AROUND_CAPTURE_ENABLED = false;
+#endif
+// Target spacing for fresh 180-degree turn observations; not a real-time guarantee.
+constexpr uint32_t TURN_LINE_SAMPLE_MS = 2;
+static_assert(TURN_LINE_SAMPLE_MS > 0 && TURN_LINE_SAMPLE_MS <= 10,
+              "Invalid turn line sample interval");
 #if defined(AGV_G1_TURN_AROUND_PWM)
 constexpr int G1_TURN_AROUND_PWM = AGV_G1_TURN_AROUND_PWM;
 #else
@@ -590,9 +599,9 @@ constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261022-robot01-narrow-v12";
+constexpr const char* FIRMWARE_BUILD = "20261022-robot01-profile02-tuning-v14";
 #elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
-constexpr const char* FIRMWARE_BUILD = "20261022-robot02-narrow-v12";
+constexpr const char* FIRMWARE_BUILD = "20261022-robot02-turn180-v13";
 #else
 constexpr const char* FIRMWARE_BUILD = "20261015-battery-smoothing";
 #endif

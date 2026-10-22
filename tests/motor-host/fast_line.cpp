@@ -7,11 +7,16 @@ int main() {
     try {
         static_assert(Config::FAST_LINE_RESPONSE,"Run with profile 01 or 02");
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-        // The user-supplied PD firmware superseded the old gentle-curve profile.
+        // The user selected the free 0..255 PD range and the supplied robot01 tuning.
         static_assert(Config::LINE_PD_ENABLED && !Config::GENTLE_FORWARD_CORRECTION,"Robot01 must retain its PD baseline");
-        static_assert(Config::LINE_PD_MIN_RUNNING_PWM==110 && Config::LINE_PD_MAX_RUNNING_PWM==230,"Robot01 PD anti-stall limits changed");
+        static_assert(Config::LINE_KP==80.0f && Config::LINE_KD==25.0f && Config::LINE_PD_BASE_SPEED==125,"Robot01 PD tuning changed");
+        static_assert(Config::LINE_PD_MIN_RUNNING_PWM==0 && Config::LINE_PD_MAX_RUNNING_PWM==255,"Robot01 free PD range changed");
         static_assert(Config::LEFT_TURN_CAPTURE_ENABLED && Config::RIGHT_TURN_CAPTURE_ENABLED,"Robot01 capture baseline changed");
-        static_assert(Config::LINE_LOSS_GRACE_MS==AGV_LINE_LOSS_GRACE_MS,"Robot01 must use its own configured grace");
+        static_assert(Config::LEFT_TURN_CAPTURE_PWM==220 && Config::RIGHT_TURN_CAPTURE_PWM==220,"Robot01 capture PWM changed");
+        static_assert(Config::LINE_LOSS_GRACE_MS==7000,"Robot01 seven-second grace changed");
+        static_assert(Config::TURN_SPEED==220 && Config::TURN_LEFT_SPEED_TRIM==0 && Config::TURN_RIGHT_SPEED_TRIM==0,"Robot01 turn tuning changed");
+        static_assert(Config::G1_TURN_AROUND_PWM==190,"Robot01 G1 turn-around PWM changed");
+        static_assert(Config::REVERSE_SPEED==170 && Config::REVERSE_LEFT_SPEED_TRIM==15 && Config::REVERSE_RIGHT_SPEED_TRIM==-40,"Robot01 reverse tuning changed");
         static_assert(Config::REVERSE_GENTLE_CORRECTION,"Robot01 reverse baseline changed");
 #elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
         static_assert(!Config::GENTLE_FORWARD_CORRECTION,"Robot01 rounded-line correction leaked into Robot02");
@@ -39,7 +44,7 @@ int main() {
         // Kiểm riêng mẫu PD đầu tiên (D=0) để khóa duty tĩnh của từng profile.
         struct PdCase { uint8_t pattern; int left; int right; };
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-        const PdCase pdCases[]={{4,230,110},{6,225,110},{2,150,140},{3,110,215},{1,110,230}};
+        const PdCase pdCases[]={{4,255,0},{6,215,45},{2,135,125},{3,55,205},{1,0,255}};
 #else
         const PdCase pdCases[]={{4,255,0},{6,215,45},{2,135,125},{3,55,205},{1,0,255}};
 #endif

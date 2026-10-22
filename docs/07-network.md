@@ -1,5 +1,7 @@
 # Giao thức mạng và hợp đồng MCU với server
 
+22/10/2026, REQ-DUAL-TURN180-FAST-CAPTURE-01: turn180-v13 thêmxácnhậnSTOP100ms khiquay180. Trongxácnhận vẫnAGV_MOVING/taskactive, chưastationReady/hoànthànhtask; sauđó mớihandoffsonar vàbámline/đỗnhưcũ. RFIDđọc lại sauphaquay; khôngtựphátRFIDarrival hayreplaylệnh. MQTTworker/STOP/grant/sonar giữnguyên, khôngđổi topic/payload/QoS/ACK/counter hoặc timeoutoffline. Nhịpđọc mục tiêu2ms/logmaxgap chỉcụcbộ firmware. [ADR-077](decisions/ADR-077-turn180-fast-stop-confirm.md).
+
 22/10/2026, REQ-DUAL-EDGE-LINE-ROLLBACK-01: narrow-v12 bỏ001/100 khỏi xác nhận phục hồi/bắtline sau rẽ của cảhai xe; chỉ010/011/110 xác nhận. Điều chỉnh cục bộ cảm biến/navigator, không đổi topic/QoS/payload/ACK/timeoutoffline/counter hoặc cấu hìnhmạng. Core vẫn nhận lỗi thực từMCU và không tựclear/replay sau lỗi/reset. [ADR-076](decisions/ADR-076-dual-narrow-line-confirm.md).
 
 22/10/2026, REQ-DUAL-EDGE-LINE-CONFIRM-01: firmware line-edge-v10 nhận thêm001/100 ổn định trước khi phátLINE_LOST; đây là policy cảm biến/motor cục bộ. Route/cmd_id/path_index/grant giữ nguyên trong cửa sổ; Core không tự clear/replay sau lỗi/reset. Không đổi topic/QoS/payload/ACK/counter, cấu hình mạng riêng hay timeout offline. [ADR-076](decisions/ADR-076-dual-narrow-line-confirm.md).
