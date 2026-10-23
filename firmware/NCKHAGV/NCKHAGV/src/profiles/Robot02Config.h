@@ -41,9 +41,9 @@
 #define AGV_BENCH_TURN_RIGHT_SPEED_TRIM 0 // kenh ENB khi quay
 
 // Rieng quay dau 180 do tai G1: giam 30 PWM truoc trim.
-#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 0)
+#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 15)
 // Xac nhan line sau quay 180 do; dong bo hai xe.
-#define AGV_TURN_AROUND_CONFIRM_MS 1000
+#define AGV_TURN_AROUND_CONFIRM_MS 300
 
 // 4. BÁM LINE TIẾN:
 // Xe02 không bật AGV_GENTLE_FORWARD_CORRECTION
@@ -53,8 +53,8 @@
 
 // 5. Lui thang: ENA/ENB = 150/95; trim rieng voi di tien.
 #define AGV_REVERSE_LEFT_SPEED_TRIM 0 // kenh ENA
-#define AGV_REVERSE_RIGHT_SPEED_TRIM 0 // kênh ENB
-#define AGV_REVERSE_SPEED 140 // lui thang
+#define AGV_REVERSE_RIGHT_SPEED_TRIM -10 // kênh ENB
+#define AGV_REVERSE_SPEED 180 // lui thang
 #define AGV_REVERSE_CORRECTION_SPEED 140 // chinh lech khi lui con line
 #define AGV_REVERSE_GENTLE_CORRECTION 1 // 0: dừng 1 bánh, 1: cả 2 bánh đều lùi, 1 bánh chậm
-#define AGV_REVERSE_CORRECTION_DELTA 50 // giam PWM kenh cham khi lui chinh lech
+#define AGV_REVERSE_CORRECTION_DELTA 70 // giam PWM kenh cham khi lui chinh lech

@@ -40,9 +40,9 @@
 #define AGV_BENCH_TURN_MIN_MS 200 // thời gian tối thiểu quay tại chỗ (ms) trước khi bắt line mới
 
 // Riêng quay đầu 180 độ tại G1.
-#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 20)
+#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 15)
 // Xac nhan line sau quay 180 do; dong bo hai xe.
-#define AGV_TURN_AROUND_CONFIRM_MS 1000
+#define AGV_TURN_AROUND_CONFIRM_MS 300
 
 // 4. BÁM LINE TIẾN:
 #define AGV_BENCH_CORRECTION_SPEED 170
@@ -50,8 +50,8 @@
 
 // 5. Lùi thẳng: độ lớn duty ENA/ENB = 190/130 sau trim.
 #define AGV_REVERSE_LEFT_SPEED_TRIM 20 // giá trị +20, kênh ENA
-#define AGV_REVERSE_RIGHT_SPEED_TRIM -40 // kênh ENB
-#define AGV_REVERSE_SPEED 170 // lùi thẳng
+#define AGV_REVERSE_RIGHT_SPEED_TRIM -20 // kênh ENB
+#define AGV_REVERSE_SPEED 180 // lùi thẳng
 #define AGV_REVERSE_CORRECTION_SPEED 150 // chỉnh lệch khi còn line; 000 do recovery xử lý
 #define AGV_REVERSE_GENTLE_CORRECTION 1 // 0: dừng 1 bánh, 1: cả 2 bánh đều lùi, 1 bánh chậm
-#define AGV_REVERSE_CORRECTION_DELTA 30 // độ chênh lệnh khi lùi mất line
+#define AGV_REVERSE_CORRECTION_DELTA 50 // độ chênh lệnh khi lùi mất line
