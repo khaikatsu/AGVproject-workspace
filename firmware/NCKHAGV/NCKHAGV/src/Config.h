@@ -376,6 +376,12 @@ constexpr uint32_t TURN_AROUND_CONFIRM_MS = AGV_TURN_AROUND_CONFIRM_MS;
 static_assert(TURN_AROUND_CONFIRM_MS >= 2 * TURN_LINE_SAMPLE_MS &&
               TURN_AROUND_CONFIRM_MS < TURN_TIMEOUT_MS,
               "Invalid turn-around confirmation time");
+#ifndef AGV_TURN_180_MIN_MS
+#define AGV_TURN_180_MIN_MS 350
+#endif
+constexpr uint32_t TURN_180_MIN_MS = AGV_TURN_180_MIN_MS;
+static_assert(TURN_180_MIN_MS >= TURN_MIN_MS && TURN_180_MIN_MS < TURN_TIMEOUT_MS,
+              "Invalid turn-180 minimum duration");
 #if defined(AGV_G1_TURN_AROUND_PWM)
 constexpr int G1_TURN_AROUND_PWM = AGV_G1_TURN_AROUND_PWM;
 #else

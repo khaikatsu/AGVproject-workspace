@@ -180,7 +180,7 @@ MotorAction CoreNavigator::alignTurnLine(const ControlInput& in) {
         captureSampleMs_ = in.now;
     }
     const unsigned votes = (captureHistory_ & 1u) + ((captureHistory_ >> 1) & 1u) + ((captureHistory_ >> 2) & 1u);
-    if (stableTrack || (sampled && centerBearing && captureCount_ >= 2 && votes >= 2)) {
+    if (stableTrack || (sampled && in.linePattern == 2 && captureCount_ >= 2 && votes >= 2)) {
 #if defined(ARDUINO)
         if (Config::DEBUG_ENABLED) Serial.printf(
             "[LINE] capture_recovered pattern=%u stable=%d elapsed=%lums node=%s next=%s\n",
@@ -445,17 +445,29 @@ bool CoreNavigator::observeTurnAroundLine(const ControlInput& in) {
         !in.distanceValid || in.obstacle || obstaclePaused_ || missingZone() ||
         static_cast<uint32_t>(in.now-turnStartedMs_) >= Config::TURN_TIMEOUT_MS || !sampleTurnLine(in))
         return false;
-    // Keep a full blank between branches: a side eye alone is never enough.
-    if (in.linePattern == 0) oldLineDeparted_ = true;
-    const bool narrow = in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6;
-    const uint32_t since = in.now-(station ? turnStartedMs_ : lastCrossingMs_);
-    if (!oldLineDeparted_ || !narrow || since < Config::TURN_MIN_MS) return false;
-    oldLineDeparted_ = false;
-    if (!station) {
-        ++crossedLines_;
-        lastCrossingMs_ = in.now;
-        if (crossedLines_ < turnCrossings_[index_]) return false;
+    const uint32_t elapsed = in.now - turnStartedMs_;
+    // Depart the initial line: saw full blank (000), or after 80ms saw side sensor (1 or 4)
+    if (in.linePattern == 0 || (elapsed >= 80 && (in.linePattern == 1 || in.linePattern == 4))) {
+        oldLineDeparted_ = true;
     }
+    const bool narrow = in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6;
+    if (!oldLineDeparted_ || !narrow || elapsed < 100) return false;
+
+    if (!station) {
+        const uint8_t required = turnCrossings_[index_];
+        if (required > 1 && crossedLines_ < (required - 1)) {
+            if (elapsed < Config::TURN_180_MIN_MS) {
+                ++crossedLines_;
+                lastCrossingMs_ = in.now;
+                oldLineDeparted_ = false;
+                return false;
+            }
+        } else if (crossedLines_ > 0) {
+            if (static_cast<uint32_t>(in.now - lastCrossingMs_) < 60) return false;
+        }
+        if (crossedLines_ < required) ++crossedLines_;
+    }
+    oldLineDeparted_ = false;
     stationTurnCapture_ = station;
     phase_ = Phase::TurnAroundCapture;
     centerSamples_ = 0;
@@ -513,8 +525,8 @@ bool CoreNavigator::observeTurnLine(const ControlInput& in) {
         oldLineDeparted_ = true;
     }
 
-    // 2. Xe phải xoay tối thiểu TURN_MIN_MS VÀ đã rời khỏi line cũ trước khi được phép bắt line mới
-    if (elapsed < Config::TURN_MIN_MS || !oldLineDeparted_) return false;
+    // 2. Xe phải đã rời khỏi line cũ trước khi được phép bắt line mới
+    if (!oldLineDeparted_) return false;
 
     // 3. Đón line mới: mắt giữa chạm line (010, 011, 110, 111)
     const bool centerReturned = (in.linePattern & 2u) != 0;

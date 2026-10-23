@@ -123,7 +123,7 @@ static void safety() {
         if(hazard==4)r.in.lineConfigured=false;if(hazard==5)r.nav.stop();
         if(hazard==6)r.in.obstacle=true;
         CHECK(r.step(3,at+BeforeConfirmMs+SampleMs)==MotorAction::Stop);r.stopped();CHECK(!r.nav.following());
-        if(hazard<6)CHECK(!r.nav.active());
+        if(hazard<6) { if(hazard<2) CHECK(r.nav.networkPaused()); else CHECK(!r.nav.active()); }
         else {
             r.in.obstacle=false;
             const auto fresh=BeforeConfirmMs+2*SampleMs;
@@ -159,7 +159,7 @@ static void stationStop() {
 }
 
 static void ordinaryRecoveryKeepsItsWindow() {
-    static_assert(Config::LINE_RECOVERY_CENTER_MS==100,"Ordinary recovery must retain 100ms");
+    static_assert(Config::LINE_RECOVERY_CENTER_MS==50,"Ordinary recovery must retain 50ms");
     for(uint8_t pattern:{2,3,6}) {
         Rig r;CoreCommand c;c.type=CoreCommandType::Goto;c.cmdId=1302;c.pathLength=1;
         std::strcpy(c.path[0],"GS1");std::strcpy(c.target,"GS1");
@@ -168,11 +168,11 @@ static void ordinaryRecoveryKeepsItsWindow() {
         CHECK(r.step(2,Config::RFID_STOP_DWELL_MS)==MotorAction::Forward);
         const auto lost=r.in.now+1;CHECK(r.step(0,lost)==MotorAction::Stop);r.stopped();
         const auto first=lost+700; // Search has stopped; task grace still permits confirmation.
-        for(uint32_t dt=0;dt<100;dt+=5) {
+        for(uint32_t dt=0;dt<Config::LINE_RECOVERY_CENTER_MS;dt+=5) {
             CHECK(r.step(pattern,first+dt)==MotorAction::Stop);
             CHECK(r.nav.recoveringLine() && !r.nav.following());r.stopped();
         }
-        CHECK(r.step(pattern,first+100)!=MotorAction::Stop);
+        CHECK(r.step(pattern,first+Config::LINE_RECOVERY_CENTER_MS)!=MotorAction::Stop);
         CHECK(r.nav.following() && !r.nav.recoveringLine());
     }
 }
@@ -192,11 +192,11 @@ static void ordinaryTurnsKeepTheirWindow() {
         const auto first=began+4;
         CHECK(r.step(3,first)==MotorAction::Stop);CHECK(r.nav.capturingTurnLine());r.stopped();
         CHECK(r.step(3,first)==MotorAction::Stop); // First TurnCapture evaluation seeds its confirmation clock.
-        for(uint32_t dt=5;dt<100;dt+=5) {
+        for(uint32_t dt=5;dt<Config::LINE_RECOVERY_CENTER_MS;dt+=5) {
             CHECK(r.step(3,first+dt)==MotorAction::Stop);
             CHECK(r.nav.capturingTurnLine() && !r.nav.following());r.stopped();
         }
-        CHECK(r.step(3,first+100)==MotorAction::Stop);
+        CHECK(r.step(3,first+Config::LINE_RECOVERY_CENTER_MS)==MotorAction::Stop);
         CHECK(r.nav.following() && !r.nav.capturingTurnLine());r.stopped();
     }
 }

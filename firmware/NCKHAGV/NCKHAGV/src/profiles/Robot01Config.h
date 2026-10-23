@@ -42,9 +42,9 @@
 #define AGV_BENCH_TURN_MIN_MS 200 // thời gian tối thiểu quay tại chỗ (ms) trước khi bắt line mới
 
 // Riêng quay đầu 180 độ tại G1.
-#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 15)
+#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 20)
 // Xac nhan line sau quay 180 do; dong bo hai xe.
-#define AGV_TURN_AROUND_CONFIRM_MS 300
+#define AGV_TURN_AROUND_CONFIRM_MS 100
 
 // 4. BÁM LINE TIẾN:
 #define AGV_BENCH_CORRECTION_SPEED 170
