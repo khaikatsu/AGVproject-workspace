@@ -1,7 +1,11 @@
-param([switch]$Build, [string]$OutputDirectory = 'build')
+﻿param([switch]$Build, [string]$OutputDirectory = 'build')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$outputRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory))
+$outputRoot = if ([IO.Path]::IsPathRooted($OutputDirectory)) {
+    [IO.Path]::GetFullPath($OutputDirectory)
+} else {
+    [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory))
+}
 $binary = Join-Path $outputRoot 'agv_core.exe'
 if ($Build) { & (Join-Path $PSScriptRoot 'build-core.ps1') -OutputDirectory $outputRoot }
 if (-not (Test-Path -LiteralPath $binary)) {

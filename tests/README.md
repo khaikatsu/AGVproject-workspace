@@ -1,5 +1,9 @@
 # Hồ sơ kiểm thử AGV
 
+## 23/10/2026 — Chuẩn bị push main sau khi chuyển project firmware
+
+OBSERVED project hiện nằm ở `firmware/NCKHAGV`, bỏ một lớp thư mục; cập nhật đường dẫn script sinhroute, probe encoder/line/turn/parity/rounded-map và include host. File mạng riêng, RAR và recovered nằm ngoài Git. Hợp nhất `origin/main` tại b71bec9, giữ sửa G1/quy tắc buildASCII và tuning cục bộ mới nhất01 (trim quayphải−5/G1PWM205/xácnhận180=500ms),02 xácnhận100ms; giữ chống hạcounter/producer proofv16. Bộtest_core_protocol từmain được giữ ở đường dẫn mới, không bỏ bộtest do xung độtmodify/delete. `scripts/test-turn180.ps1` PASS01/02 với500/100ms; route `--check` PASS. Kiểm encoder banđầu không tìm thấy cacheenv01 sau chuyểnthưmục; script nhận thêm -ArduinoJsonInclude và fallbackcacheesp32dev trongRAR. Chạy lại `scripts/test-encoder.ps1 -SkipCoreBuild` PASS đầy đủ: encoder/codec/proof và commandreplay01/02, networkclock, encoderCore và stoppedoccupancy/replan/restart. Không rerun toàn bộ native legacy hoặc buildESP32 trong lượtpush. Các kết quả build/nạp/đoMQTT bên dưới thuộc ảnh ở thời điểm đó, không chứng minh tuning workspace mới đã nạp lên xe; lượtpush không nạp firmware hoặc phát lệnh chuyển động.
+
 ## 23/10/2026 — Nạp xe01 COM6 và xác minh kết nối server máy người dùng
 
 REQ-ROBOT01-LOCAL-NETWORK-RESTORE-02: MACCOM6 `ec:c9:ff:ff:09:dc` đúng01. WinRT xác nhận hotspotOff, SSID/mật khẩu khớp config01backup, băng2,4GHz; broker nghe0.0.0.0:1883, máy192.168.137.1, Core/gateway/storage khỏe. Khôi phục riêng LocalNetworkConfig01.h, hash bằng backup trướcRAR và file vẫngitignored. BảnRAR01 lưu ở recovered/network01-before-local-restore-20261023-181210-882.h; không đổi mạng02/tuning.
@@ -18,6 +22,18 @@ REQ-FIRMWARE-SERVER-SYNC-01: chỉ sửa chống replay/diagnostic high-water v�
 - Fixture `AGV_CORE_BIN=.qa/firmware-server-sync-v16/agv_core.exe node tests/stopped-occupancy.integration.js` PASS tại `.qa/stopped-mqtt-GIztGP`: proof đúng phiên, chặn endpoint, trả mutex ngoài vùng, replan, checkpoint trước command, stale fallback và token cũ. Lượt sandbox đầu không mở được broker; lượt chạy có quyền loopback đã PASS.
 
 Native legacy từ lượt đối chiếu trước sửa có01=39/51PASS và02=40/51PASS, lỗi quay/mấtmạng/deadline do nền RAR khác fixture; không sửa tuning hoặc nới assertion để làm xanh. Không tuyên bố toàn bộ test workspace PASS. Chưa upload, sửa counter/NVS vận hành hoặc phát lệnh tới robot thật. Build/test dùng `.qa` riêng; cache PlatformIO đã cài, override build/libdeps bằng biến môi trường để không dùng đường dẫn D: trong RAR.
+
+## 23/10/2026 — Sửa build đường dẫn có dấu trên Windows
+
+REQ-WINDOWS-ASCII-BUILD-PATH-01 / [ADR-078](../docs/decisions/ADR-078-windows-ascii-platformio-build-path.md). Chỉ thêm `build_dir` và`libdeps_dir` ASCII trong `[platformio]`, dùngchung cho01/02. Kiểm chứng bằng lệnh `platformio run -e esp32dev_two_robot_bench_01 -e esp32dev_two_robot_bench_02` ngay tại projectthật `D:/Nghiên cứu khoa học/AGVproject-workspace-main/firmware/NCKHAGV/NCKHAGV`, không phải bảncopyASCII; bỏ biếnmôitrường ghiđèđườngdẫn trong riêng tiếntrình build để xác nhận fileini có tác dụng.
+
+Cảhai env PASS, không cònInvalidargument/noinputfiles. Build/cácfiletmp ở`D:/AGV-build-cache/AGVproject-workspace-main/build/<env>`, thưviệnở`.../libdeps/<env>`. RAM38548/327680byte mỗi ảnh; flash01=602357/02=602325byte. Giữ toolchain/platform6.13.0 và dependencies hiệncó; sao chép cache, khôngxóa cachecũ. Log/checksum/backup ở workspacechat`output/fix-platformio-ascii-path-20261023`. Kiểmhash nguồn trước/sau: không đổi filetrongsrc, PD/PWM/mạng/MQTT/servo hoặcprofile. Không rerun test điều khiển vì không đổi code/runtime. Chỉbuild, chưaupload hoặc thửxe/kếtnốithật.
+
+## 23/10/2026 — Tích hợp tuning vào thư mục main
+
+REQ-IMPORT-DUAL-TUNING-20261023-01: ghép hai profile theo bộ lưu cuối và tham số xácnhận180=100ms. Helper `test_core_protocol` dùng hằng riêng thay hằngrecovery; probeturn180 nhận thời gian theoConfig và thêm hồiquy recovery/rẽ90 đangbật giữ100ms. Hostturn180 PASS01/02; suite `test_core_protocol` g++/Unity PASS51/51 mỗi profile,102/102 tổng. Bao phủSTOP/nhánh/mẫu hợp lệ/nhiễu/gap/timestamptrùng/rollover/deadline/grant/mạng/sonar/vậtcản/station/capPWM. Không chạy fixturefast-line khóa cứng tuning cũ để rồi sửa kỳ vọng che lỗi.
+
+BuildPlatformIO/espressif32 6.13.0 hai môi trườngESP32 PASS; log/checksum ở workspacechat `output/integrate-main-tuning-20261023`, build ở `D:/AGV-build-checks/integrate-main-tuning-20261023`. Dùng nguyên cấu hìnhmạng mặc định củađích; không mang cấu hìnhmạng thực/secret từ bảnlưu sang. Chỉ có filemẫuLocalNetworkConfig, chưa có filecục bộ thực; build không chứng minh ESP32 sẽ kết nối hotspot/MQTT. Chưa upload, chạyxe hoặc thửmạng thật. Bảnsaotrướcsửa và bảngthôngsố trước→sau nằm trong cùng hồsơ; hash kiểmtrước/sau để tránh ghiđè thayđổi đồngthời.
 
 ## 22/10/2026 — Kiểm tra trước khi đẩy GitHub
 

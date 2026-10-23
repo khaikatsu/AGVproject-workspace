@@ -1,7 +1,13 @@
 ﻿param([string]$Compiler = 'g++', [switch]$Tests, [string]$OutputDirectory = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$outputRoot = if ($OutputDirectory) { [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory)) } else { Join-Path $projectRoot 'build' }
+$outputRoot = if (-not $OutputDirectory) {
+    Join-Path $projectRoot 'build'
+} elseif ([IO.Path]::IsPathRooted($OutputDirectory)) {
+    [IO.Path]::GetFullPath($OutputDirectory)
+} else {
+    [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory))
+}
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $source = Join-Path $projectRoot 'src/core/AGVserver.cpp'
 $binary = Join-Path $outputRoot 'agv_core.exe'
@@ -22,15 +28,24 @@ $compilerPath = $compilerCommand.Source
 $previousPath = $env:PATH
 # Compiler và test đều cần DLL UCRT64 kể cả khi VS Code chưa nhận PATH mới.
 $env:PATH = (Split-Path -Parent $compilerPath) + ';' + $previousPath
+# MinGW linker can reject an absolute output path containing Vietnamese characters.
+# Compile there with ASCII output basenames; run tests from the caller's directory.
 try {
-    & $compilerPath '-I' "$projectRoot/include" '-std=c++17' '-g' $source '-lmosquitto' '-lcrypto' '-lssl' '-lws2_32' '-o' $binary
-    if ($LASTEXITCODE -ne 0) {throw "Build core thất bại (compiler exit $LASTEXITCODE). Xem lỗi GCC/linker phía trên; đầu ra: $binary"}
-    Write-Output "Core: $binary"
+    Push-Location -LiteralPath $outputRoot
+    try {
+        & $compilerPath '-I' "$projectRoot/include" '-std=c++17' '-g' $source '-lmosquitto' '-lcrypto' '-lssl' '-lws2_32' '-o' 'agv_core.exe'
+        if ($LASTEXITCODE -ne 0) {throw "Build core thất bại (compiler exit $LASTEXITCODE). Xem lỗi GCC/linker phía trên; đầu ra: $binary"}
+        Write-Output "Core: $binary"
+        if ($Tests) {
+            $testSource = Join-Path $projectRoot 'tests/core_tests.cpp'
+            $testBinary = Join-Path $outputRoot 'core_tests.exe'
+            & $compilerPath '-I' "$projectRoot/include" '-std=c++17' '-g' $testSource '-o' 'core_tests.exe'
+            if ($LASTEXITCODE -ne 0) {throw 'Build kiểm thử thất bại'}
+        }
+    } finally {
+        Pop-Location
+    }
     if ($Tests) {
-        $testSource = Join-Path $projectRoot 'tests/core_tests.cpp'
-        $testBinary = Join-Path $outputRoot 'core_tests.exe'
-        & $compilerPath '-I' "$projectRoot/include" '-std=c++17' '-g' $testSource '-o' $testBinary
-        if ($LASTEXITCODE -ne 0) {throw 'Build kiểm thử thất bại'}
         & $testBinary
         if ($LASTEXITCODE -ne 0) {throw 'Kiểm thử core thất bại'}
     }

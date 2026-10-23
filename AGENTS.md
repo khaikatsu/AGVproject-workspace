@@ -7,6 +7,11 @@
 - Phân biệt `SOURCE` (nội dung đề tài), `OBSERVED` (đọc được từ mã), `PROPOSED` (đề xuất), `OPEN` (chờ quyết định). Không chuyển đề xuất thành yêu cầu đã duyệt.
 - Giữ yêu cầu mới nhất của người dùng. Khi yêu cầu mới thay đổi thiết kế, cập nhật sổ yêu cầu và ADR phù hợp; hỏi chỉ khi có thiếu sót thật sự ngăn cản phần việc liên quan.
 
+## Đồng bộ chức năng hai xe — yêu cầu người dùng 22/10/2026
+
+- Hàm, lệnh hoặc chức năng firmware mới phải bổ sung và kiểm tra cho cảxe01 vàxe02. Ưu tiên logic chung, khai báo cấu hình cho cả hai profile khi cần.
+- Giữ ID, mạng, hiệu chuẩn pin và thông số riêng từng xe; chỉ thay thông số theo yêu cầu. Nếu có ngoại lệ về chức năng giữa hai xe, hỏi người dùng trước.
+
 ## Chọn kỹ năng
 
 Kỹ năng nằm trong `.agents/skills/`. Chỉ đọc kỹ năng liên quan đến việc đang làm:

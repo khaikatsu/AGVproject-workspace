@@ -1,4 +1,4 @@
-param([switch]$SkipCoreBuild)
+param([switch]$SkipCoreBuild, [string]$ArduinoJsonInclude = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $encoderOutput = Join-Path $projectRoot '.qa/encoder-build'
@@ -7,6 +7,13 @@ $compiler = 'C:/msys64/ucrt64/bin/g++.exe'
 $env:PATH = 'C:/msys64/ucrt64/bin;' + $env:PATH
 $firmwareRoot = Join-Path $projectRoot 'firmware/NCKHAGV'
 $arduinoJson = Join-Path $firmwareRoot '.pio/libdeps/esp32dev_two_robot_bench_01/ArduinoJson/src'
+if ($ArduinoJsonInclude) { $arduinoJson = $ArduinoJsonInclude }
+elseif (-not (Test-Path (Join-Path $arduinoJson 'ArduinoJson.h'))) {
+    $arduinoJson = Join-Path $firmwareRoot '.pio/libdeps/esp32dev/ArduinoJson/src'
+}
+if (-not (Test-Path (Join-Path $arduinoJson 'ArduinoJson.h'))) {
+    throw 'Không tìm thấy ArduinoJson; build PlatformIO trước hoặc truyền -ArduinoJsonInclude.'
+}
 foreach ($profile in @('01','02')) {
     $probe = Join-Path $encoderOutput "encoder_probe_$profile.exe"
     & $compiler '-std=c++17' '-DAGV_TWO_ROBOT_BENCH_TRIAL=1' "-DAGV_ROBOT_PROFILE_$profile=1" `
