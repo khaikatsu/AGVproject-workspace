@@ -97,7 +97,8 @@ private:
     void rememberLine(const ControlInput& input, MotorAction action);
     MotorAction recoverLine(const ControlInput& input);
     MotorAction alignTurnLine(const ControlInput& input);
-    bool confirmTrackedLine(const ControlInput& input, uint32_t sampleMs = Config::LEFT_CAPTURE_SAMPLE_MS);
+    bool confirmTrackedLine(const ControlInput& input, uint32_t sampleMs = Config::LEFT_CAPTURE_SAMPLE_MS,
+                            uint32_t confirmMs = Config::LINE_RECOVERY_CENTER_MS);
     bool sampleTurnLine(const ControlInput& input);
     bool observeTurnAroundLine(const ControlInput& input);
     MotorAction confirmTurnAround(const ControlInput& input);

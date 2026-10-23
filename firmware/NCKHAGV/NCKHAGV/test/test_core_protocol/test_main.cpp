@@ -20,7 +20,7 @@ static MotorAction updateAfterTurnCapture(CoreNavigator& nav, ControlInput& in) 
     if (nav.capturingTurnAroundLine()) {
         TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(action));
         in.linePattern=2;
-        for(uint32_t dt=0;dt<Config::LINE_RECOVERY_CENTER_MS;dt+=Config::TURN_LINE_SAMPLE_MS) {
+        for(uint32_t dt=0;dt<Config::TURN_AROUND_CONFIRM_MS;dt+=Config::TURN_LINE_SAMPLE_MS) {
             in.now+=Config::TURN_LINE_SAMPLE_MS;
             TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
         }

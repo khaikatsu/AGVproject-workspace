@@ -1,5 +1,23 @@
 # Bảng chỉnh thông số xe 01 và xe 02
 
+## 23/10/2026 — Bộ thông số tích hợp vào thư mục main
+
+Nguồn giá trị: bản lưu cuối `output/turn180-confirm-both-20261022/staged` của workspacechat, theo lựa chọn người dùng. Chuyển giá trị hợp lệ; giữservo/ID/mạng/hiệu chuẩn củađích. Xe02 giữ `AGV_BENCH_MOTOR_SPEED=160` và `AGV_RIGHT_TURN_CAPTURE_ENABLED=1` hợp lệ củađích vì bảnlưu thiếu hai khai báo này, có macro `AGV_BENCH_MOTOR_SPEED_ENABLED` khôngđượcđọc và dòngPWMphải trùng. Không sao chép các dòng lỗi đó hoặc vô hiệu hóa chức năng hiệncó.
+
+| Thông số | Xe01 | Xe02 |
+| --- | ---: | ---: |
+| PD Kp / Kd | 60 / 30 | 65 / 25 |
+| PD base / chu kỳ | 125 /10ms | 125 /15ms |
+| Đi thẳng dự phòng / trimENA / trimENB | 255 /0 /0 | 160 /0 /0 |
+| PWM bắtline trái / phải | 220 /220 | 200 /200 |
+| Quay tại node / trimENA / trimENB | 220 /0 /0 | 200 /+5 /+10 |
+| G1 PWM trướctrim | 190 | 170 |
+| Xác nhận line sau quay180 | 100ms | 100ms |
+| Lùi thẳng / trimENA / trimENB | 170 /+20 /−40 | 135 /+15 /−40 |
+| Lùi correction / delta | 150 /30 | 130 /50 |
+
+Đi thẳng dự phòng không phải tốc độPD. ENA/ENB lùi thẳng tương ứng01=190/130,02=150/95; quaynode02=205/210, riêngG1=175/180 sautrim. `TURN_AROUND_CONFIRM_MS=100` là thời gian STOPxácnhận sau khi quay đủnhánh, khôngphải thời gianquay; chỉ thêm khả năng chỉnh riêng, không rútngắn100ms vốn có. Các mục bên dưới là hồ sơ cũ. Chi tiết trước→sau/backup ở báo cáo tích hợp trong workspacechat; chưa nạp/thửxe thật.
+
 Cập nhật22/10/2026 theo source hiện tại: xe01 profile02-tuning-v14 dùng bộ thông số mới người dùng gửi, PD0..255; xe02 giữ turn180-v13 và tuning riêng đang có. Nền firmware do người dùng gửi đã có các ngoại lệ được ghi tại [ADR-075](decisions/ADR-075-sync-validated-two-robot-firmware.md), nên không còn khớp nguyên bản61/61 file. Bảng này không thay thế phép đo trên xe.
 
 ## Mở đúng file

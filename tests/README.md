@@ -1,5 +1,17 @@
 # Hồ sơ kiểm thử AGV
 
+## 23/10/2026 — Sửa build đường dẫn có dấu trên Windows
+
+REQ-WINDOWS-ASCII-BUILD-PATH-01 / [ADR-078](../docs/decisions/ADR-078-windows-ascii-platformio-build-path.md). Chỉ thêm `build_dir` và`libdeps_dir` ASCII trong `[platformio]`, dùngchung cho01/02. Kiểm chứng bằng lệnh `platformio run -e esp32dev_two_robot_bench_01 -e esp32dev_two_robot_bench_02` ngay tại projectthật `D:/Nghiên cứu khoa học/AGVproject-workspace-main/firmware/NCKHAGV/NCKHAGV`, không phải bảncopyASCII; bỏ biếnmôitrường ghiđèđườngdẫn trong riêng tiếntrình build để xác nhận fileini có tác dụng.
+
+Cảhai env PASS, không cònInvalidargument/noinputfiles. Build/cácfiletmp ở`D:/AGV-build-cache/AGVproject-workspace-main/build/<env>`, thưviệnở`.../libdeps/<env>`. RAM38548/327680byte mỗi ảnh; flash01=602357/02=602325byte. Giữ toolchain/platform6.13.0 và dependencies hiệncó; sao chép cache, khôngxóa cachecũ. Log/checksum/backup ở workspacechat`output/fix-platformio-ascii-path-20261023`. Kiểmhash nguồn trước/sau: không đổi filetrongsrc, PD/PWM/mạng/MQTT/servo hoặcprofile. Không rerun test điều khiển vì không đổi code/runtime. Chỉbuild, chưaupload hoặc thửxe/kếtnốithật.
+
+## 23/10/2026 — Tích hợp tuning vào thư mục main
+
+REQ-IMPORT-DUAL-TUNING-20261023-01: ghép hai profile theo bộ lưu cuối và tham số xácnhận180=100ms. Helper `test_core_protocol` dùng hằng riêng thay hằngrecovery; probeturn180 nhận thời gian theoConfig và thêm hồiquy recovery/rẽ90 đangbật giữ100ms. Hostturn180 PASS01/02; suite `test_core_protocol` g++/Unity PASS51/51 mỗi profile,102/102 tổng. Bao phủSTOP/nhánh/mẫu hợp lệ/nhiễu/gap/timestamptrùng/rollover/deadline/grant/mạng/sonar/vậtcản/station/capPWM. Không chạy fixturefast-line khóa cứng tuning cũ để rồi sửa kỳ vọng che lỗi.
+
+BuildPlatformIO/espressif32 6.13.0 hai môi trườngESP32 PASS; log/checksum ở workspacechat `output/integrate-main-tuning-20261023`, build ở `D:/AGV-build-checks/integrate-main-tuning-20261023`. Dùng nguyên cấu hìnhmạng mặc định củađích; không mang cấu hìnhmạng thực/secret từ bảnlưu sang. Chỉ có filemẫuLocalNetworkConfig, chưa có filecục bộ thực; build không chứng minh ESP32 sẽ kết nối hotspot/MQTT. Chưa upload, chạyxe hoặc thửmạng thật. Bảnsaotrướcsửa và bảngthôngsố trước→sau nằm trong cùng hồsơ; hash kiểmtrước/sau để tránh ghiđè thayđổi đồngthời.
+
 ## 22/10/2026 — Kiểm tra trước khi đẩy GitHub
 
 Source tại lượt đẩy có tuning mới hơn các hồ sơ v14 bên dưới: Kp01=65/base125; Kp02=65/base120, capture phải02=190, trim quay02=−15/−30, reverse02=165. Giữ các giá trị workspace này. `scripts/test-turn180.ps1` PASS01/02. `scripts/test-fast-line.ps1` FAIL tại static_assert profile01 do fixture còn khóa Kp80; chưa chạy tới profile02, bảng duty tĩnh của fixture cũng cần đối chiếu lại với tuning mới. Không sửa tuning/test để che kết quả. Build01 PASS ở hồ sơ v14 bên dưới thuộc thời điểm Kp01=80; không coi đó là build đã xác minh cho tuning mới nhất. Lượt đẩy GitHub không upload hoặc điều khiển phần cứng.

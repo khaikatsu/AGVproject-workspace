@@ -130,7 +130,7 @@ MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
     return searchDirection_;
 }
 
-bool CoreNavigator::confirmTrackedLine(const ControlInput& in, uint32_t sampleMs) {
+bool CoreNavigator::confirmTrackedLine(const ControlInput& in, uint32_t sampleMs, uint32_t confirmMs) {
     uint8_t candidate = 0;
     if (in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6) candidate = 2;
     if (!candidate) {
@@ -146,7 +146,7 @@ bool CoreNavigator::confirmTrackedLine(const ControlInput& in, uint32_t sampleMs
         if (centerSamples_ < 3) ++centerSamples_;
         centerSampleMs_ = in.now;
     }
-    return centerSamples_ >= 3 && static_cast<uint32_t>(in.now-centerSinceMs_) >= Config::LINE_RECOVERY_CENTER_MS;
+    return centerSamples_ >= 3 && static_cast<uint32_t>(in.now-centerSinceMs_) >= confirmMs;
 }
 
 MotorAction CoreNavigator::alignTurnLine(const ControlInput& in) {
@@ -455,7 +455,7 @@ bool CoreNavigator::observeTurnAroundLine(const ControlInput& in) {
     stationTurnCapture_ = station;
     phase_ = Phase::TurnAroundCapture;
     centerSamples_ = 0;
-    confirmTrackedLine(in,Config::TURN_LINE_SAMPLE_MS);
+    confirmTrackedLine(in,Config::TURN_LINE_SAMPLE_MS,Config::TURN_AROUND_CONFIRM_MS);
     return true;
 }
 MotorAction CoreNavigator::confirmTurnAround(const ControlInput& in) {
@@ -469,7 +469,7 @@ MotorAction CoreNavigator::confirmTurnAround(const ControlInput& in) {
         turnSampleReady_ = false;
         return MotorAction::Stop;
     }
-    if (!sampleTurnLine(in) || !confirmTrackedLine(in,Config::TURN_LINE_SAMPLE_MS))
+    if (!sampleTurnLine(in) || !confirmTrackedLine(in,Config::TURN_LINE_SAMPLE_MS,Config::TURN_AROUND_CONFIRM_MS))
         return MotorAction::Stop;
 #if defined(ARDUINO)
     if (Config::DEBUG_ENABLED) Serial.printf(

@@ -364,6 +364,14 @@ constexpr bool TURN_AROUND_CAPTURE_ENABLED = false;
 constexpr uint32_t TURN_LINE_SAMPLE_MS = 2;
 static_assert(TURN_LINE_SAMPLE_MS > 0 && TURN_LINE_SAMPLE_MS <= 10,
               "Invalid turn line sample interval");
+#ifndef AGV_TURN_AROUND_CONFIRM_MS
+#define AGV_TURN_AROUND_CONFIRM_MS 100
+#endif
+// Independent of ordinary line recovery and left/right turn confirmation.
+constexpr uint32_t TURN_AROUND_CONFIRM_MS = AGV_TURN_AROUND_CONFIRM_MS;
+static_assert(TURN_AROUND_CONFIRM_MS >= 2 * TURN_LINE_SAMPLE_MS &&
+              TURN_AROUND_CONFIRM_MS < TURN_TIMEOUT_MS,
+              "Invalid turn-around confirmation time");
 #if defined(AGV_G1_TURN_AROUND_PWM)
 constexpr int G1_TURN_AROUND_PWM = AGV_G1_TURN_AROUND_PWM;
 #else

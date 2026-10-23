@@ -12,8 +12,8 @@
 
 // PD tiến theo bộ thông số người dùng cung cấp.
 #define AGV_LINE_PD_ENABLED 1
-#define AGV_BENCH_LINE_KP 65.0f // Khả năng kéo xe trở về line
-#define AGV_BENCH_LINE_KD 25.0f // Điều chỉnh dao động khi bám line
+#define AGV_BENCH_LINE_KP 70.0f // Khả năng kéo xe trở về line
+#define AGV_BENCH_LINE_KD 30.0f // Điều chỉnh dao động khi bám line
 #define AGV_LINE_PD_BASE_SPEED 125 // Tốc độ đi thẳng
 // Không khai báo sàn/trần riêng: dùng mặc định 0..255 để PD có thể hãm một bánh.
 #define AGV_LINE_PD_CONTROL_MS 10
@@ -28,11 +28,11 @@
 #define AGV_LEFT_TURN_CAPTURE_ENABLED 1
 #define AGV_LEFT_TURN_CAPTURE_PWM 220 // PWM bắt lại line sau cua trái
 #define AGV_RIGHT_TURN_CAPTURE_ENABLED 1
-#define AGV_RIGHT_TURN_CAPTURE_PWM 220 // PWM bắt lại line sau cua phải
+#define AGV_RIGHT_TURN_CAPTURE_PWM 200 // PWM bắt lại line sau cua phải
 
 // 2. Đi thẳng dự phòng.
-#define AGV_BENCH_MOTOR_SPEED 160
-#define AGV_BENCH_LEFT_SPEED_TRIM 10 // kênh ENA
+#define AGV_BENCH_MOTOR_SPEED 255
+#define AGV_BENCH_LEFT_SPEED_TRIM 0 // kênh ENA
 #define AGV_BENCH_RIGHT_SPEED_TRIM 0 // kênh ENB
 
 // 3. Quay tại node; cùng áp dụng cho cả quay trái và quay phải.
@@ -41,14 +41,16 @@
 #define AGV_BENCH_TURN_RIGHT_SPEED_TRIM 0 // kênh ENB
 
 // Riêng quay đầu 180 độ tại G1.
-#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 30)
+#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 20)
+// Xac nhan line sau quay 180 do; dong bo hai xe.
+#define AGV_TURN_AROUND_CONFIRM_MS 1000
 
 // 4. BÁM LINE TIẾN:
-#define AGV_BENCH_CORRECTION_SPEED 160
-#define AGV_BENCH_GENTLE_CORRECTION_SPEED 160
+#define AGV_BENCH_CORRECTION_SPEED 170
+#define AGV_BENCH_GENTLE_CORRECTION_SPEED 170
 
-// 5. Lùi thẳng: độ lớn duty ENA/ENB = 185/130 sau trim.
-#define AGV_REVERSE_LEFT_SPEED_TRIM 15 // giá trị +15, kênh ENA
+// 5. Lùi thẳng: độ lớn duty ENA/ENB = 190/130 sau trim.
+#define AGV_REVERSE_LEFT_SPEED_TRIM 20 // giá trị +20, kênh ENA
 #define AGV_REVERSE_RIGHT_SPEED_TRIM -40 // kênh ENB
 #define AGV_REVERSE_SPEED 170 // lùi thẳng
 #define AGV_REVERSE_CORRECTION_SPEED 150 // chỉnh lệch khi còn line; 000 do recovery xử lý
