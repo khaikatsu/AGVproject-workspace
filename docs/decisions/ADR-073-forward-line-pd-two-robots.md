@@ -2,6 +2,10 @@
 
 Ngày19/10/2026. Trạng thái: IMPLEMENTED trong source; kiểm chứng phần mềm tại tests/README.md, chưa nạp/thử sàn.
 
+## Cập nhật v14 — Bộ tuning xe01 do người dùng cung cấp
+
+SOURCE 22/10/2026: người dùng yêu cầu áp dụng PD Kp80/Kd25/base125 và mở dải0..255 cho xe01, cùng bộ PWM/quay/lùi đã gửi. IMPLEMENTED profile01 bỏ override sàn110/trần230, dùng mặc định0/255; thay quyết định giới hạn v11 dưới đây cho source hiện tại. Duty tĩnh ENA/ENB:100=255/0,110=215/45,010=135/125,011=55/205,001=0/255; D khi đổi mẫu có thể thay duty. OPEN kiểm chứng độ mượt/ngưỡng thắng ma sát trên xe; bỏ sàn cho phép một bánh dừng khi lệch mạnh. BuildID01 `20261022-robot01-profile02-tuning-v14`; [ADR-075](ADR-075-sync-validated-two-robot-firmware.md), [kiểm thử](../../tests/README.md).
+
 ## Bổ sung v11 — Sàn/trần PWM chống khựng riêng xe01
 
 `SOURCE` 22/10/2026: người dùng hỏi cách sửa sau khi rà thông số xe01 có thể xung đột làm xe đang chạy bị khựng. `OBSERVED`: với base140, trim+10/0, Kp75/Kd25, đầu ra PD tĩnh cũ là011=75/215,110=225/65 và001/100=0/255. Duty thấp không phải xung đột GPIO nhưng có thể không thắng ma sát/tải; chưa có đo dòng, điện áp tại driver hoặc ngưỡng khởi động bánh nên đây là giả thuyết phần mềm có căn cứ, không phải kết luận phần cứng.

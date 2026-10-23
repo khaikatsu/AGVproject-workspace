@@ -5,6 +5,8 @@
 #include <cstring>
 
 void CoreNavigator::resetLineTracking() {
+    turnSampleReady_ = stationTurnCapture_ = false;
+    turnMaxSampleGapMs_ = 0;
     lineLossPending_ = lineRecoveryUsed_ = false;
     searchPulse_ = false;
     captureHistory_ = captureCount_ = 0;
@@ -128,7 +130,7 @@ MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
     return searchDirection_;
 }
 
-bool CoreNavigator::confirmTrackedLine(const ControlInput& in) {
+bool CoreNavigator::confirmTrackedLine(const ControlInput& in, uint32_t sampleMs, uint32_t confirmMs) {
     uint8_t candidate = 0;
     if (in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6) candidate = 2;
     if (!candidate) {
@@ -140,11 +142,11 @@ bool CoreNavigator::confirmTrackedLine(const ControlInput& in) {
         recoveryCandidate_ = candidate;
         centerSamples_ = 1;
         centerSinceMs_ = centerSampleMs_ = in.now;
-    } else if (static_cast<uint32_t>(in.now-centerSampleMs_) >= Config::LEFT_CAPTURE_SAMPLE_MS) {
+    } else if (static_cast<uint32_t>(in.now-centerSampleMs_) >= sampleMs) {
         if (centerSamples_ < 3) ++centerSamples_;
         centerSampleMs_ = in.now;
     }
-    return centerSamples_ >= 3 && static_cast<uint32_t>(in.now-centerSinceMs_) >= Config::LINE_RECOVERY_CENTER_MS;
+    return centerSamples_ >= 3 && static_cast<uint32_t>(in.now-centerSinceMs_) >= confirmMs;
 }
 
 MotorAction CoreNavigator::alignTurnLine(const ControlInput& in) {
@@ -424,7 +426,81 @@ void CoreNavigator::resetGrants() {
     for (auto& id : grantIds_) id = 0;
     if (active()) fault(ErrorCode::NotConnected);
 }
+bool CoreNavigator::sampleTurnLine(const ControlInput& in) {
+    const uint32_t gap = in.now-turnSampleMs_;
+    if (turnSampleReady_ && gap < Config::TURN_LINE_SAMPLE_MS) return false;
+    if (turnSampleReady_ && gap > turnMaxSampleGapMs_) turnMaxSampleGapMs_ = gap;
+    turnSampleReady_ = true;
+    turnSampleMs_ = in.now;
+    return true;
+}
+bool CoreNavigator::observeTurnAroundLine(const ControlInput& in) {
+    const bool station = phase_ == Phase::StationTurning;
+    if (!Config::TURN_AROUND_CAPTURE_ENABLED ||
+        (!station && (phase_ != Phase::Turning || index_ >= length_ || turns_[index_] != RouteTurn::TurnAround)))
+        return false;
+    // This early observer only latches a STOP candidate. All phase completion
+    // remains behind update() safety, grant, node-order and sonar checks.
+    if (!in.wifi || !in.mqtt || !in.motionConfigured || !in.lineConfigured ||
+        !in.distanceValid || in.obstacle || obstaclePaused_ || missingZone() ||
+        static_cast<uint32_t>(in.now-turnStartedMs_) >= Config::TURN_TIMEOUT_MS || !sampleTurnLine(in))
+        return false;
+    // Keep a full blank between branches: a side eye alone is never enough.
+    if (in.linePattern == 0) oldLineDeparted_ = true;
+    const bool narrow = in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6;
+    const uint32_t since = in.now-(station ? turnStartedMs_ : lastCrossingMs_);
+    if (!oldLineDeparted_ || !narrow || since < Config::TURN_MIN_MS) return false;
+    oldLineDeparted_ = false;
+    if (!station) {
+        ++crossedLines_;
+        lastCrossingMs_ = in.now;
+        if (crossedLines_ < turnCrossings_[index_]) return false;
+    }
+    stationTurnCapture_ = station;
+    phase_ = Phase::TurnAroundCapture;
+    centerSamples_ = 0;
+    confirmTrackedLine(in,Config::TURN_LINE_SAMPLE_MS,Config::TURN_AROUND_CONFIRM_MS);
+    return true;
+}
+MotorAction CoreNavigator::confirmTurnAround(const ControlInput& in) {
+    // The original turn clock includes confirmation; never grant extra rotation time.
+    if (static_cast<uint32_t>(in.now-turnStartedMs_) >= Config::TURN_TIMEOUT_MS) {
+        fault(ErrorCode::TurnTimeout);
+        return MotorAction::Stop;
+    }
+    if (missingZone()) {
+        centerSamples_ = 0;
+        turnSampleReady_ = false;
+        return MotorAction::Stop;
+    }
+    if (!sampleTurnLine(in) || !confirmTrackedLine(in,Config::TURN_LINE_SAMPLE_MS,Config::TURN_AROUND_CONFIRM_MS))
+        return MotorAction::Stop;
+#if defined(ARDUINO)
+    if (Config::DEBUG_ENABLED) Serial.printf(
+        "[TURN180] confirmed node=%s pattern=%u branches=%u station=%d sample_target_ms=%lu max_gap_ms=%lu\n",
+        current_,in.linePattern,crossedLines_,stationTurnCapture_,
+        static_cast<unsigned long>(Config::TURN_LINE_SAMPLE_MS),static_cast<unsigned long>(turnMaxSampleGapMs_));
+#endif
+    if (stationTurnCapture_) {
+        if (index_ == length_) stop();
+        else {
+            phase_ = Phase::WaitingGrant;
+            nodeOrderReceived_ = false;
+            stoppedAtMs_ = segmentStartedMs_ = in.now;
+            oldLineDeparted_ = false;
+            resetLineTracking();
+        }
+        stationOriented_ = true;
+    } else {
+        phase_ = Phase::Following;
+        segmentStartedMs_ = in.now;
+        resetLineTracking();
+        turnSettling_ = true;
+    }
+    return MotorAction::Stop; // Translation/sonar handoff cannot happen on this sample.
+}
 bool CoreNavigator::observeTurnLine(const ControlInput& in) {
+    if (observeTurnAroundLine(in)) return true;
     if (phase_ != Phase::Turning || !turnCaptureEnabled()) return false;
     const uint32_t elapsed = in.now - turnStartedMs_;
 
@@ -491,6 +567,7 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
         if (Config::REAR_ULTRASONIC_ECHO_PIN < 0) { fault(ErrorCode::Obstacle); return MotorAction::Stop; }
         if (!obstaclePaused_) { obstaclePaused_ = true; obstaclePausedAtMs_ = in.now; }
         centerSamples_ = 0;
+        turnSampleReady_ = false;
         captureHistory_ = captureCount_ = 0;
         searchPulse_ = false;
         searchMotorChangedMs_ = in.now;
@@ -511,6 +588,14 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
             fault(ErrorCode::MotionTimeout);
         return MotorAction::Stop;
     }
+    if (phase_ == Phase::TurnAroundCapture) return confirmTurnAround(in);
+    if (fastTurnSampling() && missingZone()) {
+        centerSamples_ = 0;
+        turnSampleReady_ = false;
+        if (static_cast<uint32_t>(in.now-turnStartedMs_) >= Config::TURN_TIMEOUT_MS)
+            fault(ErrorCode::TurnTimeout);
+        return MotorAction::Stop;
+    }
     if (phase_ == Phase::StationDwell) {
         if (static_cast<uint32_t>(in.now - stoppedAtMs_) < Config::RFID_STOP_DWELL_MS)
             return MotorAction::Stop;
@@ -528,6 +613,10 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
                 in.linePattern, oldLineDeparted_, static_cast<unsigned long>(in.now-turnStartedMs_), current_, nextNode());
 #endif
             fault(ErrorCode::TurnTimeout); return MotorAction::Stop;
+        }
+        if (Config::TURN_AROUND_CAPTURE_ENABLED) {
+            if (observeTurnAroundLine(in)) return MotorAction::Stop;
+            return MotorAction::PivotRight;
         }
         // S is a leaf with one line toward GS. Depart the incoming line and
         // reacquire that line after a 180-degree pivot, facing the exit.
@@ -603,6 +692,8 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
         }
         if (turnCaptureEnabled())
             return turns_[index_] == RouteTurn::Left ? MotorAction::PivotLeft : MotorAction::PivotRight;
+        if (Config::TURN_AROUND_CAPTURE_ENABLED && turns_[index_] == RouteTurn::TurnAround)
+            return MotorAction::PivotRight;
         const bool centered = in.linePattern == 2 || in.linePattern == 5 || in.linePattern == 7;
         // Side-only patterns can occur while the sensors are still over the
         // RFID junction. Require a fully blank sample before accepting a
@@ -674,7 +765,8 @@ AGVState CoreNavigator::state() const {
     if (obstaclePaused_ || networkPaused_) return AGV_WAITING;
     if (phase_ == Phase::Fault) return AGV_SAFE_STOP;
     if (phase_ == Phase::WaitingGrant || phase_ == Phase::StationDwell) return AGV_WAITING;
-    if (phase_ == Phase::Turning || phase_ == Phase::TurnCapture || phase_ == Phase::Following || phase_ == Phase::StationTurning) return AGV_MOVING;
+    if (phase_ == Phase::Turning || phase_ == Phase::TurnCapture || phase_ == Phase::TurnAroundCapture ||
+        phase_ == Phase::Following || phase_ == Phase::StationTurning) return AGV_MOVING;
     return AGV_IDLE;
 }
 const char* CoreNavigator::nextNode() const { return active() && index_ < length_ ? path_[index_] : ""; }

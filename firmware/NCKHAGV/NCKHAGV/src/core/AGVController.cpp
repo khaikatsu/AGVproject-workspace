@@ -279,7 +279,9 @@ void AGVController::update() {
             movement_.apply(early, false, Config::LINE_RECOVERY_PWM, false,
                 {navigator_.forwardLineTracking(), earlyInput.linePattern, earlyInput.now});
     }
-    if (rfid_.readCard()) {
+    // A stationary pivot cannot arrive at a new route node. Defer blocking
+    // RC522 transactions until the 180-degree turn and STOP confirmation finish.
+    if (!navigator_.fastTurnSampling() && rfid_.readCard()) {
         const RFIDEvent& event = rfid_.event();
         if (event.node[0]) clearance_.seen(event.node, millis());
         if (!event.node[0]) {
@@ -476,7 +478,7 @@ void AGVController::update() {
         }
     }
     observeState();
-    if (static_cast<uint32_t>(millis() - lastSonarLogMs_) >= 1000) {
+    if (!navigator_.fastTurnSampling() && static_cast<uint32_t>(millis() - lastSonarLogMs_) >= 1000) {
         lastSonarLogMs_ = millis();
         if (!Config::FAST_LINE_RESPONSE || !navigator_.following()) logSonars();
     }

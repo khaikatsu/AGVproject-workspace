@@ -32,6 +32,14 @@ public:
     // when a new center-line candidate is latched. Does not authorize motion.
     bool observeTurnLine(const ControlInput& input);
     bool capturingTurnLine() const { return phase_ == Phase::TurnCapture; }
+    bool capturingTurnAroundLine() const { return phase_ == Phase::TurnAroundCapture; }
+    // Keep blocking RFID work out of a turn; the same controller still owns all safety checks.
+    bool fastTurnSampling() const {
+        return Config::TURN_AROUND_CAPTURE_ENABLED &&
+            (phase_ == Phase::StationTurning || phase_ == Phase::TurnAroundCapture ||
+             (phase_ == Phase::Turning && index_ < length_ && turns_[index_] == RouteTurn::TurnAround));
+    }
+    uint32_t turnMaxSampleGapMs() const { return turnMaxSampleGapMs_; }
     bool settlingTurnLine() const { return phase_ == Phase::Following && turnSettling_; }
     bool turnCaptureEnabled() const {
         return index_ < length_ &&
@@ -39,6 +47,8 @@ public:
              (turns_[index_] == RouteTurn::Right && Config::RIGHT_TURN_CAPTURE_ENABLED));
     }
     int turnCapturePwm() const {
+        if (index_ < length_ && turns_[index_] == RouteTurn::TurnAround)
+            return Config::LINE_RECOVERY_PWM;
         return index_ < length_ && turns_[index_] == RouteTurn::Right
             ? Config::RIGHT_TURN_CAPTURE_PWM : Config::LEFT_TURN_CAPTURE_PWM;
     }
@@ -76,7 +86,7 @@ public:
              (phase_ == Phase::WaitingGrant && turns_[index_] == RouteTurn::Straight))));
     }
 private:
-    enum class Phase { Idle, WaitingGrant, Turning, TurnCapture, Following, StationDwell, StationTurning, Fault };
+    enum class Phase { Idle, WaitingGrant, Turning, TurnCapture, TurnAroundCapture, Following, StationDwell, StationTurning, Fault };
     bool g1TurnAroundPrecision() const {
         return Config::G1_TURN_AROUND_PWM > 0 && phase_ == Phase::Turning && index_ < length_ &&
             turns_[index_] == RouteTurn::TurnAround && std::strcmp(current_, "G1") == 0;
@@ -88,7 +98,11 @@ private:
     void rememberLine(const ControlInput& input, MotorAction action);
     MotorAction recoverLine(const ControlInput& input);
     MotorAction alignTurnLine(const ControlInput& input);
-    bool confirmTrackedLine(const ControlInput& input);
+    bool confirmTrackedLine(const ControlInput& input, uint32_t sampleMs = Config::LEFT_CAPTURE_SAMPLE_MS,
+                            uint32_t confirmMs = Config::LINE_RECOVERY_CENTER_MS);
+    bool sampleTurnLine(const ControlInput& input);
+    bool observeTurnAroundLine(const ControlInput& input);
+    MotorAction confirmTurnAround(const ControlInput& input);
     Phase phase_ = Phase::Idle;
     ErrorCode error_ = ErrorCode::None;
     char current_[NODE_TEXT_SIZE]{};
@@ -100,6 +114,8 @@ private:
     bool stationOriented_ = false;
     uint8_t crossedLines_ = 0;
     uint32_t lastCrossingMs_ = 0;
+    bool turnSampleReady_ = false, stationTurnCapture_ = false;
+    uint32_t turnSampleMs_ = 0, turnMaxSampleGapMs_ = 0;
     int32_t grantIds_[6]{};
     // Scoped to the current outbound segment; never an entry grant.
     bool currentZoneCleared_ = false;

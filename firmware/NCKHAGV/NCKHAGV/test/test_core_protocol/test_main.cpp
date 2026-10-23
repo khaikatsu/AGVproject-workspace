@@ -17,6 +17,17 @@ static bool decode(const char* json, CoreCommand& command) {
 // the subsequent translation. Capture/STOP details have dedicated tests below.
 static MotorAction updateAfterTurnCapture(CoreNavigator& nav, ControlInput& in) {
     auto action = nav.update(in);
+    if (nav.capturingTurnAroundLine()) {
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(action));
+        in.linePattern=2;
+        for(uint32_t dt=0;dt<Config::TURN_AROUND_CONFIRM_MS;dt+=Config::TURN_LINE_SAMPLE_MS) {
+            in.now+=Config::TURN_LINE_SAMPLE_MS;
+            TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop),static_cast<int>(nav.update(in)));
+        }
+        TEST_ASSERT_FALSE(nav.capturingTurnAroundLine());
+        in.now+=Config::TURN_LINE_SAMPLE_MS;
+        return nav.update(in);
+    }
     if (!nav.capturingTurnLine()) return action;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Stop), static_cast<int>(action));
     in.linePattern = 2; in.now += Config::LEFT_CAPTURE_SAMPLE_MS;
@@ -535,12 +546,12 @@ void test_bay_exit_turnaround_counts_map_branches() {
     if (Config::G1_TURN_AROUND_PWM > 0)
         TEST_ASSERT_EQUAL_INT(Config::G1_TURN_AROUND_PWM, nav.precisionPivotPwm());
     in.linePattern=0;in.now+=Config::TURN_MIN_MS+1;nav.update(in);
-    in.linePattern=2;++in.now;
+    in.linePattern=2;in.now+=Config::TURN_LINE_SAMPLE_MS;
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotRight),static_cast<int>(nav.update(in)));
     in.now+=Config::TURN_MIN_MS+1; // One continuous centered patch must not count twice.
     TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::PivotRight),static_cast<int>(nav.update(in)));
-    in.linePattern=0;++in.now;nav.update(in);in.linePattern=2;++in.now;
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(nav.update(in)));
+    in.linePattern=0;in.now+=Config::TURN_LINE_SAMPLE_MS;nav.update(in);in.linePattern=2;in.now+=Config::TURN_LINE_SAMPLE_MS;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(updateAfterTurnCapture(nav,in)));
     TEST_ASSERT_FALSE(nav.precisionPivot());
     TEST_ASSERT_TRUE(decode(R"({"cmd":"GOTO","cmd_id":72,"path":["GS1"],"target":"GS1"})",command));
     TEST_ASSERT_TRUE(RoutePlanner::plan("G1","M1",command,route,true));
@@ -548,8 +559,8 @@ void test_bay_exit_turnaround_counts_map_branches() {
     CoreNavigator single;TEST_ASSERT_TRUE(single.start("M1",command,route,0));TEST_ASSERT_TRUE(single.grant("M1",127));
     in.now=Config::RFID_STOP_DWELL_MS;in.linePattern=2;single.update(in);
     TEST_ASSERT_FALSE(single.precisionPivot()); // M1 quay dau van dung PWM cu.
-    in.now+=Config::TURN_MIN_MS+1;in.linePattern=0;single.update(in);++in.now;in.linePattern=2;
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(single.update(in)));
+    in.now+=Config::TURN_MIN_MS+1;in.linePattern=0;single.update(in);in.now+=Config::TURN_LINE_SAMPLE_MS;in.linePattern=2;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MotorAction::Forward),static_cast<int>(updateAfterTurnCapture(single,in)));
     CoreNavigator timeout;TEST_ASSERT_TRUE(timeout.start("M1",command,route,0));TEST_ASSERT_TRUE(timeout.grant("M1",128));
     in.now=Config::RFID_STOP_DWELL_MS;in.linePattern=0;timeout.update(in);
     in.now+=Config::TURN_TIMEOUT_MS;
@@ -915,7 +926,7 @@ void test_reverse_home_turn_translation_and_safety() {
             TEST_ASSERT_EQUAL_INT(static_cast<int>(pivot),static_cast<int>(nav.update(in))); // Old line cannot finish rotation.
             const unsigned crossings=i==2 ? 2 : 1;
             for (unsigned k=0;k<crossings;++k) {
-                in.linePattern=0;++in.now;nav.update(in);
+                in.linePattern=0;in.now+=Config::TURN_LINE_SAMPLE_MS;nav.update(in);
                 in.linePattern=2;in.now+=Config::TURN_MIN_MS+1;
                 const auto action=nav.update(in);
                 TEST_ASSERT_EQUAL_INT(static_cast<int>(k+1==crossings ? MotorAction::Stop : pivot),static_cast<int>(action));

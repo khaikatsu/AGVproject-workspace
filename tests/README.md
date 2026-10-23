@@ -1,5 +1,35 @@
 # Hồ sơ kiểm thử AGV
 
+## 23/10/2026 — Sửa build đường dẫn có dấu trên Windows
+
+REQ-WINDOWS-ASCII-BUILD-PATH-01 / [ADR-078](../docs/decisions/ADR-078-windows-ascii-platformio-build-path.md). Chỉ thêm `build_dir` và`libdeps_dir` ASCII trong `[platformio]`, dùngchung cho01/02. Kiểm chứng bằng lệnh `platformio run -e esp32dev_two_robot_bench_01 -e esp32dev_two_robot_bench_02` ngay tại projectthật `D:/Nghiên cứu khoa học/AGVproject-workspace-main/firmware/NCKHAGV/NCKHAGV`, không phải bảncopyASCII; bỏ biếnmôitrường ghiđèđườngdẫn trong riêng tiếntrình build để xác nhận fileini có tác dụng.
+
+Cảhai env PASS, không cònInvalidargument/noinputfiles. Build/cácfiletmp ở`D:/AGV-build-cache/AGVproject-workspace-main/build/<env>`, thưviệnở`.../libdeps/<env>`. RAM38548/327680byte mỗi ảnh; flash01=602357/02=602325byte. Giữ toolchain/platform6.13.0 và dependencies hiệncó; sao chép cache, khôngxóa cachecũ. Log/checksum/backup ở workspacechat`output/fix-platformio-ascii-path-20261023`. Kiểmhash nguồn trước/sau: không đổi filetrongsrc, PD/PWM/mạng/MQTT/servo hoặcprofile. Không rerun test điều khiển vì không đổi code/runtime. Chỉbuild, chưaupload hoặc thửxe/kếtnốithật.
+
+## 23/10/2026 — Tích hợp tuning vào thư mục main
+
+REQ-IMPORT-DUAL-TUNING-20261023-01: ghép hai profile theo bộ lưu cuối và tham số xácnhận180=100ms. Helper `test_core_protocol` dùng hằng riêng thay hằngrecovery; probeturn180 nhận thời gian theoConfig và thêm hồiquy recovery/rẽ90 đangbật giữ100ms. Hostturn180 PASS01/02; suite `test_core_protocol` g++/Unity PASS51/51 mỗi profile,102/102 tổng. Bao phủSTOP/nhánh/mẫu hợp lệ/nhiễu/gap/timestamptrùng/rollover/deadline/grant/mạng/sonar/vậtcản/station/capPWM. Không chạy fixturefast-line khóa cứng tuning cũ để rồi sửa kỳ vọng che lỗi.
+
+BuildPlatformIO/espressif32 6.13.0 hai môi trườngESP32 PASS; log/checksum ở workspacechat `output/integrate-main-tuning-20261023`, build ở `D:/AGV-build-checks/integrate-main-tuning-20261023`. Dùng nguyên cấu hìnhmạng mặc định củađích; không mang cấu hìnhmạng thực/secret từ bảnlưu sang. Chỉ có filemẫuLocalNetworkConfig, chưa có filecục bộ thực; build không chứng minh ESP32 sẽ kết nối hotspot/MQTT. Chưa upload, chạyxe hoặc thửmạng thật. Bảnsaotrướcsửa và bảngthôngsố trước→sau nằm trong cùng hồsơ; hash kiểmtrước/sau để tránh ghiđè thayđổi đồngthời.
+
+## 22/10/2026 — Kiểm tra trước khi đẩy GitHub
+
+Source tại lượt đẩy có tuning mới hơn các hồ sơ v14 bên dưới: Kp01=65/base125; Kp02=65/base120, capture phải02=190, trim quay02=−15/−30, reverse02=165. Giữ các giá trị workspace này. `scripts/test-turn180.ps1` PASS01/02. `scripts/test-fast-line.ps1` FAIL tại static_assert profile01 do fixture còn khóa Kp80; chưa chạy tới profile02, bảng duty tĩnh của fixture cũng cần đối chiếu lại với tuning mới. Không sửa tuning/test để che kết quả. Build01 PASS ở hồ sơ v14 bên dưới thuộc thời điểm Kp01=80; không coi đó là build đã xác minh cho tuning mới nhất. Lượt đẩy GitHub không upload hoặc điều khiển phần cứng.
+
+## 22/10/2026 — Bộ thông số nhúng xe01, v14
+
+REQ-ROBOT01-PROFILE-TUNING-01: `scripts/test-fast-line.ps1` PASS01/02 với bảng PD tĩnh01=100:255/0,110:215/45,010:135/125,011:55/205,001:0/255; kiểm đầu ra driver trước RFID, STOP/000/grant/mạng/sonar. Build `esp32dev_two_robot_bench_01` PASS, RAM58108/327680byte, flash966893/1310720byte, buildID `20261022-robot01-profile02-tuning-v14`; SHA256 firmware.bin `0FBEAAAA458F274BC1E3E18200CDFEF63B8E2CC27F3875F21CC293A0CBCEB468`. Không upload hoặc phát lệnh chuyển động trong lượt này.
+
+Đọc GET gateway và subscribe chỉ đọc `agv/01/diagnostic`: xe01 online, firmwareBuild đúngv14, AGV_SAFE_STOP/BATTERY_UNDERVOLTAGE, nodeS1, rfidAgeMs26, batteryAdcMv1590, batteryVoltage7,859603405V, batteryPercentage0, calibratedtrue, motor0/0, Wi-Fi/MQTTtrue. Đây là trạng thái lúc lấy mẫu, chưa xác minh điện áp đồng hồ hoặc nguyên nhân vật lý; ngưỡng cấu hình3S10,2V giữ nguyên. Kết quả parity lượt trước mới qua các probe MCU, chưa ghi nhận toànscript PASS vì lượt chờ bị người dùng ngắt.
+
+## 22/10/2026 — Bắt line sớm khi quay180°, turn180-v13
+
+REQ-DUAL-TURN180-FAST-CAPTURE-01 / [ADR-077](../docs/decisions/ADR-077-turn180-fast-stop-confirm.md). `scripts/test-turn180.ps1` PASS cả01/02 với navigator→Movement→MotorModule thật và adapterGPIO/time. Kiểm ứng viên010/011/110 ở nhánh cuối gâySTOP trước bướcRFID; giữSTOP100ms/≥3 mẫu mới rồi trảSTOP một vòng trước tiến/lùi. Nhánh90° trung gian không kết thúc quay, không đếm trùng một mảngline; loại001/100/101/111, mẫu trùng timestamp, gap cũ, nhiễu, millis rollover. Kiểm capPWM180 khi đi tiếp, stationReady sau xác nhận, timeout2500ms gốc, mấtgrant và xác nhận lại, STOP/mạng/cấu hình/sonar/vật cản. Nhịp2ms trong probe là thời gian mô phỏng, không phải số đo trênESP32. Mãcontroller đã được rà điều kiện hoãnRFID/logsonar theofastTurnSampling; chưa chạy toàncontroller với thiết bị thật.
+
+`scripts/test-line-confirm.ps1` và `scripts/test-fast-line.ps1` PASS01/02. Native `native_robot01_bench`/`native_robot02_bench` PASS102/102 sau cập nhật ba ca tuyếnG1/vềS1/S2: mẫu cách nhau ít nhất2ms và đủ bước xác nhận100ms. Lần đầu sáu lỗi (ba mỗi profile) do các ca này còn dùng mẫu cách1ms/đi tiếp ngay; cập nhật kỳ vọng theo policy mới, không bỏ assertion chốt an toàn. Không rerun parity/servo vì không sửa các module đó.
+
+BuildESP32 hai env PASS: RAM58108/327680byte mỗi ảnh, flash01=966877/02=966885byte. Đã kiểm chuỗi `20261022-robot01-turn180-v13` / `20261022-robot02-turn180-v13`; SHA25601 `688200152C51051271FEAA701B22DB32E0C22D9553D449B27ED28DAE32AF160E`,02 `9A461657136593106A0FF738B8FFCD190B3F950F6DC8A527854A02290DA3E435`. Chưa upload/điều khiển xe, đo khoảng mẫu hoặc quãngtrôi thật. Khi thử xem `[TURN180] confirmed ... sample_target_ms=2 max_gap_ms=...`; không coi mục tiêu2ms là bảo đảm thời gian thực.
+
 ## 22/10/2026 — Bỏ xác nhận mép001/100, narrow-v12
 
 REQ-DUAL-EDGE-LINE-ROLLBACK-01 / [ADR-076](../docs/decisions/ADR-076-dual-narrow-line-confirm.md). Probe hồi quy mới trước sửa thất bại tại `!r.nav.following()` khi001/100 kéo dài sau000, chứng minh policyv10/v11 vẫn nhận mép. Sau sửa `scripts/test-line-confirm.ps1` PASS01/02: chỉ010/011/110 phục hồi;001/100 liên tục trongTurning không khởi độngCapture, liên tục800ms trongCapture không hoàn tất, rẽtrái/phải và rollover; mẫu mép làm lại chuỗi xác nhận mắtgiữa. Kiểm cả timeout, grant, mạng, sonar, STOP, reversecentered-only và capPWM. `scripts/test-fast-line.ps1` PASS01/02, gồm PWM01=110..230 và output xe02 cũ. Native `native_robot01_bench`/`native_robot02_bench` PASS102/102; không rerun parity/servo vì phần đó không thay đổi.

@@ -1,5 +1,9 @@
 # ADR-075 — Đồng bộ firmware hai xe đã chạy ổn vào workspace
 
+22/10/2026, REQ-ROBOT01-PROFILE-TUNING-01: áp dụng bộ cấu hình người dùng gửi cho xe01, buildID `20261022-robot01-profile02-tuning-v14`. PD Kp80/Kd25/base125/dải0..255 thay giới hạn110..230 của v11; grace7s, capture220/220, quay220/G1=190, lùi170/trim+15/−40/correction150/delta30/gentle1. Giữ cơ chế xác nhận line/quay180 hiện có. Chi tiết tại [bảng tuning](../firmware-tuning-01-02.md). Trợ lý đã build/test phần mềm; diagnostic trực tiếp xác nhận xe đang chạyv14 nhưng SAFE_STOP/BATTERY_UNDERVOLTAGE, điện áp 7,8596V so với ngưỡng3S10,2V. Chưa có số đo đồng hồ hiện tại để kết luận pin hoặc hiệu chuẩn; không đổi ngưỡng pin/xóa lỗi dựa trên ảnh. Không upload trong lượt này.
+
+22/10/2026, ngoại lệ mới: người dùng duyệt sửa quay180 bỏlỡline. Cảhai profile turn180-v13 cóSTOPsớm/xácnhận100ms ởnhánhcuối, hoãnRFID vàkhoảngmẫu mục tiêu2ms theo [ADR-077](ADR-077-turn180-fast-stop-confirm.md). GiữPD/PWMquay/servo/mạng; chưa nạp/thửxe thật.
+
 22/10/2026, yêu cầu mới nhất: narrow-v12 bỏ nhận mép001/100 đã thêm ởv10, do người dùng báo bắt nhầm line khi rẽ; chỉ010/011/110 xác nhận phục hồi/capture theo [ADR-076](ADR-076-dual-narrow-line-confirm.md). Giữ sàn/trầnPD01=110..230 đã thêm ởv11, mạng/servo và tuning còn lại. Chưa nạp/thử xe thật.
 
 22/10/2026, ngoại lệ mới theo yêu cầu sửa khựng xe01: profile01 thêm sàn/trần PD110..230 theo [ADR-073](ADR-073-forward-line-pd-two-robots.md); profile02 và các chốt an toàn giữ nguyên. Đây không còn là bản sao tuyệt đối của firmware nguồn; chưa nạp/thử sàn.

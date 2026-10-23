@@ -1,6 +1,8 @@
 #pragma once
 
 // Xe 01, môi trường esp32dev_two_robot_bench_01.
+// Bộ thông số bám line và động cơ do người dùng chốt ngày 22/10/2026.
+// PD giống xe02; PWM quay/lùi dưới đây vẫn là bộ riêng xe01.
 #define AGV_PROFILE_ID "01"
 // Servo xe01: mặc định/hạ 180°, nâng 100°; không phát góc khi boot.
 #define AGV_SERVO_MIN_PULSE_US 544
