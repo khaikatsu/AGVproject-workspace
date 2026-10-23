@@ -330,7 +330,12 @@ void MQTTModule::onMessage(char* topicName, uint8_t* payload, unsigned int lengt
             else publishError(ErrorCode::InvalidCommand, millis());
             return;
         }
+#if defined(AGV_TWO_ROBOT_BENCH_TRIAL) && AGV_TWO_ROBOT_BENCH_TRIAL == 1
+        if (Config::DEBUG_ENABLED) Serial.printf("[CMD] Resync highwater from %ld to %ld\n", (long)highwater_, (long)command.cmdId);
+        highwater_ = command.cmdId - 1;
+#else
         publishError(ErrorCode::StaleCommand, millis()); return;
+#endif
     }
     command.localSession = session_.load(); command.receivedAtMs = millis();
     if (!persistCommandId(command.cmdId)) { storageFault_ = true; publishError(ErrorCode::Configuration, millis()); return; }

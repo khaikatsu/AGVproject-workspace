@@ -178,7 +178,7 @@ MotorAction CoreNavigator::alignTurnLine(const ControlInput& in) {
         captureSampleMs_ = in.now;
     }
     const unsigned votes = (captureHistory_ & 1u) + ((captureHistory_ >> 1) & 1u) + ((captureHistory_ >> 2) & 1u);
-    if (stableTrack || (sampled && in.linePattern == 2 && captureCount_ >= 2 && votes >= 2)) {
+    if (stableTrack || (sampled && centerBearing && captureCount_ >= 2 && votes >= 2)) {
 #if defined(ARDUINO)
         if (Config::DEBUG_ENABLED) Serial.printf(
             "[LINE] capture_recovered pattern=%u stable=%d elapsed=%lums node=%s next=%s\n",
@@ -256,7 +256,7 @@ const char* CoreNavigator::requestedZone() const {
     return nullptr;
 }
 bool CoreNavigator::canPassThrough(const char* node, const ControlInput& in) const {
-    return phase_ == Phase::Following && !obstaclePaused_ && node && index_+1 < length_ &&
+    return phase_ == Phase::Following && !obstaclePaused_ && !networkPaused_ && node && index_+1 < length_ &&
         std::strcmp(node,path_[index_]) == 0 && passThrough_[index_] &&
         !segmentReverse() && turns_[index_+1] == RouteTurn::Straight &&
         !lineLossPending_ && in.wifi && in.mqtt && in.motionConfigured &&
@@ -295,6 +295,7 @@ bool CoreNavigator::start(const char* current, const CoreCommand& command, const
     routeCmdId_ = command.cmdId;
     stationOriented_ = false;
     obstaclePaused_ = false;
+    networkPaused_ = false;
     length_ = route.count;
     segmentStartedMs_ = turnStartedMs_ = now;
     stoppedAtMs_ = now;
@@ -309,6 +310,7 @@ bool CoreNavigator::start(const char* current, const CoreCommand& command, const
 void CoreNavigator::stop() {
     currentZoneCleared_ = false;
     obstaclePaused_ = false;
+    networkPaused_ = false;
     routeCmdId_ = 0; nodeOrderReceived_ = false;
     stationOriented_ = false;
     if (phase_ != Phase::Fault) phase_ = Phase::Idle;
@@ -320,6 +322,7 @@ void CoreNavigator::stop() {
 }
 bool CoreNavigator::clearFault() {
     obstaclePaused_ = false;
+    networkPaused_ = false;
     if (active()) return false;
     currentZoneCleared_ = false;
     phase_ = Phase::Idle;
@@ -335,6 +338,7 @@ bool CoreNavigator::clearFault() {
 void CoreNavigator::fault(ErrorCode reason) {
     currentZoneCleared_ = false;
     obstaclePaused_ = false;
+    networkPaused_ = false;
     stationOriented_ = false;
     phase_ = Phase::Fault;
     error_ = reason;
@@ -422,13 +426,24 @@ void CoreNavigator::resetGrants() {
 }
 bool CoreNavigator::observeTurnLine(const ControlInput& in) {
     if (phase_ != Phase::Turning || !turnCaptureEnabled()) return false;
-    // The center leaving its old stripe is sufficient: the side eyes may
-    // overlap the junction throughout, so a fully blank 000 may never occur.
-    // 101 still straddles a wide stripe/junction; do not use it as departure.
-    if (in.linePattern == 0 || in.linePattern == 1 || in.linePattern == 4) oldLineDeparted_ = true;
+    const uint32_t elapsed = in.now - turnStartedMs_;
+
+    // 1. Cập nhật cờ tách line cũ liên tục:
+    // Thấy khoảng trắng 000 chắc chắn đã hoàn toàn ra khỏi line cũ
+    if (in.linePattern == 0) {
+        oldLineDeparted_ = true;
+    } else if (elapsed >= 80 && (in.linePattern == 1 || in.linePattern == 4)) {
+        // Sau ít nhất 80ms xoay, chỉ còn mắt biên chạm -> đã rời tâm line cũ
+        oldLineDeparted_ = true;
+    }
+
+    // 2. Xe phải xoay tối thiểu TURN_MIN_MS VÀ đã rời khỏi line cũ trước khi được phép bắt line mới
+    if (elapsed < Config::TURN_MIN_MS || !oldLineDeparted_) return false;
+
+    // 3. Đón line mới: mắt giữa chạm line (010, 011, 110, 111)
     const bool centerReturned = (in.linePattern & 2u) != 0;
-    // 001/100 may prove departure but never return; keep turning until center returns.
-    if (!oldLineDeparted_ || !centerReturned) return false;
+    if (!centerReturned) return false;
+
     phase_ = Phase::TurnCapture;
     captureHistory_ = captureCount_ = 0;
     lineLossPending_ = true;
@@ -442,14 +457,34 @@ bool CoreNavigator::observeTurnLine(const ControlInput& in) {
 }
 bool CoreNavigator::refreshFollowing(const ControlInput& in, MotorAction& action) {
     if (!Config::FAST_LINE_RESPONSE || phase_ != Phase::Following || turnSettling_ ||
-        lineLossPending_ || obstaclePaused_) return false;
+        lineLossPending_ || obstaclePaused_ || networkPaused_) return false;
     // A revoked grant must stop immediately, never authorize an early step.
     action = missingZone() ? MotorAction::Stop : update(in);
     return true;
 }
 MotorAction CoreNavigator::update(const ControlInput& in) {
     if (!active()) return MotorAction::Stop;
-    if (!in.wifi || !in.mqtt) { fault(ErrorCode::NotConnected); return MotorAction::Stop; }
+    if (!in.wifi || !in.mqtt) {
+        if (!networkPaused_) { networkPaused_ = true; networkPausedAtMs_ = in.now; }
+        if (static_cast<uint32_t>(in.now - networkPausedAtMs_) >= Config::MQTT_TIMEOUT_MS) {
+            fault(ErrorCode::NotConnected);
+        }
+        centerSamples_ = 0;
+        captureHistory_ = captureCount_ = 0;
+        searchPulse_ = false;
+        searchMotorChangedMs_ = in.now;
+        return MotorAction::Stop;
+    }
+    if (networkPaused_) {
+        const uint32_t held = static_cast<uint32_t>(in.now - networkPausedAtMs_);
+        segmentStartedMs_ += held;
+        turnStartedMs_ += held;
+        stoppedAtMs_ += held;
+        lineLossStartedMs_ += held;
+        lastCorrectionMs_ += held;
+        if (recoveringLine()) searchMotorChangedMs_ = in.now;
+        networkPaused_ = false;
+    }
     if (!in.motionConfigured || !in.lineConfigured) { fault(ErrorCode::Configuration); return MotorAction::Stop; }
     if (!in.distanceValid) { fault(ErrorCode::SensorInvalid); return MotorAction::Stop; }
     if (in.obstacle) {
@@ -524,6 +559,7 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
             }
             phase_ = Phase::Turning;
             turnStartedMs_ = in.now;
+            oldLineDeparted_ = false;
             crossedLines_ = 0;
             lastCrossingMs_ = in.now;
         } else {
@@ -635,7 +671,7 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
     return action;
 }
 AGVState CoreNavigator::state() const {
-    if (obstaclePaused_) return AGV_WAITING;
+    if (obstaclePaused_ || networkPaused_) return AGV_WAITING;
     if (phase_ == Phase::Fault) return AGV_SAFE_STOP;
     if (phase_ == Phase::WaitingGrant || phase_ == Phase::StationDwell) return AGV_WAITING;
     if (phase_ == Phase::Turning || phase_ == Phase::TurnCapture || phase_ == Phase::Following || phase_ == Phase::StationTurning) return AGV_MOVING;

@@ -246,7 +246,7 @@ void AGVController::update() {
         control_.begin(millis());
         controlArmed_ = true;
     }
-    if (!mqtt_.isConnected()) {
+    if (!mqtt_.isConnected() && !navigator_.active()) {
         positionConfirmed_ = false; previousNode_[0] = '\0';
         lastRfidSeenMs_ = 0;
         previousSegmentReverse_ = false;

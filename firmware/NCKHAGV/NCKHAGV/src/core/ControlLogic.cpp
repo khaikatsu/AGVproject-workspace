@@ -422,7 +422,7 @@ ControlOutput ControlLogic::update(const ControlInput& in) {
         const uint32_t elapsed = in.now - phaseStartedMs_;
         if (elapsed >= settings_.turnTimeoutMs) { safeStop(ErrorCode::TurnTimeout); return out; }
         const bool centered = in.linePattern == 2 || in.linePattern == 5 || in.linePattern == 7;
-        if (!centered) turnLineDeparted_ = true;
+        if (in.linePattern == 0) turnLineDeparted_ = true;
         if (turnLineDeparted_ && elapsed >= settings_.turnMinMs && centered) {
             turning_ = false;
             out.motor = MotorAction::Forward;

@@ -60,8 +60,9 @@ public:
     bool following() const { return phase_ == Phase::Following && !recoveringLine(); }
     bool recoveringLine() const { return Config::LINE_RECOVERY_ENABLED && lineLossPending_; }
     bool obstaclePaused() const { return obstaclePaused_; }
+    bool networkPaused() const { return networkPaused_; }
     bool forwardLineTracking() const {
-        return following() && !segmentReverse() && !obstaclePaused_ && !missingZone();
+        return following() && !segmentReverse() && !obstaclePaused_ && !networkPaused_ && !missingZone();
     }
     bool stationOriented() const { return stationOriented_; }
     AGVState state() const;
@@ -123,4 +124,6 @@ private:
     int32_t routeCmdId_ = 0;
     bool obstaclePaused_ = false;
     uint32_t obstaclePausedAtMs_ = 0;
+    bool networkPaused_ = false;
+    uint32_t networkPausedAtMs_ = 0;
 };

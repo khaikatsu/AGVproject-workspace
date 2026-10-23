@@ -317,7 +317,7 @@ constexpr uint32_t LINE_RECOVERY_STOP_MS = 100;
 constexpr uint32_t LINE_RECOVERY_TIMEOUT_MS = 600;
 constexpr uint32_t LINE_RECOVERY_PULSE_MS = 40;
 constexpr uint32_t LINE_RECOVERY_REST_MS = 60;
-constexpr uint32_t LINE_RECOVERY_CENTER_MS = 100;
+constexpr uint32_t LINE_RECOVERY_CENTER_MS = 50;
 constexpr uint32_t LINE_RECOVERY_MEMORY_MS = 750;
 #if defined(AGV_LINE_RECOVERY_SIDE_CONFIRM) && AGV_LINE_RECOVERY_SIDE_CONFIRM == 1
 constexpr bool LINE_RECOVERY_SIDE_CONFIRM = true;
@@ -353,7 +353,11 @@ constexpr float OBSTACLE_DISTANCE_CM = 15.0f;
 constexpr float OBSTACLE_CLEAR_CM = 20.0f;
 // Bounded software trial, not a measured turn time. Pivot exits when a line
 // is reacquired after leaving the original line; bench calibration is pending.
+#if defined(AGV_BENCH_TURN_MIN_MS)
+constexpr uint32_t TURN_MIN_MS = AGV_BENCH_TURN_MIN_MS;
+#else
 constexpr uint32_t TURN_MIN_MS = 100;
+#endif
 constexpr uint32_t TURN_TIMEOUT_MS = 2500;
 #if defined(AGV_G1_TURN_AROUND_PWM)
 constexpr int G1_TURN_AROUND_PWM = AGV_G1_TURN_AROUND_PWM;

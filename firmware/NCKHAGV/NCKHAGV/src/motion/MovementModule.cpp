@@ -85,8 +85,8 @@ void MovementModule::apply(MotorAction action, bool lineRecovery, int precisionP
         return;
     }
     if (lineRecovery && (action == MotorAction::PivotLeft || action == MotorAction::PivotRight)) {
-        motor_.setLeftSpeed(precisionPwm);
-        motor_.setRightSpeed(precisionPwm);
+        motor_.setLeftSpeed(precisionPwm + Config::TURN_LEFT_SPEED_TRIM);
+        motor_.setRightSpeed(precisionPwm + Config::TURN_RIGHT_SPEED_TRIM);
         if (action == MotorAction::PivotLeft) motor_.motorLeft();
         else motor_.motorRight();
         buzzer_.off(); action_ = action;
