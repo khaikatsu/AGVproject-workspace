@@ -1,7 +1,7 @@
 param()
 $ErrorActionPreference = 'Stop'
 $pdRoot = Split-Path -Parent $PSScriptRoot
-$pdFirmware = Join-Path $pdRoot 'firmware/NCKHAGV/NCKHAGV/src'
+$pdFirmware = Join-Path $pdRoot 'firmware/NCKHAGV/src'
 $pdOutput = Join-Path $pdRoot '.qa/forward-pd'
 New-Item -ItemType Directory -Force -Path $pdOutput | Out-Null
 $pdPreviousPath = $env:PATH

@@ -1,5 +1,6 @@
 #include "MQTTModule.h"
 #include "core/CoreProtocol.h"
+#include "core/CommandReplayGuard.h"
 #include "core/ControlLogic.h"
 #include "NetworkHealth.h"
 #include <ArduinoJson.h>
@@ -260,6 +261,7 @@ bool MQTTModule::releaseZone(const char* zone, int32_t grantId) {
 }
 
 bool MQTTModule::persistCommandId(int32_t cmdId) {
+    if (cmdId <= highwater_) return false;
     char text[16];
     if (!CoreProtocol::ack(cmdId, text, sizeof(text))) return false;
     if (commandStore_.putString("last-cmd", text) != std::strlen(text)) return false;
@@ -324,13 +326,12 @@ void MQTTModule::onMessage(char* topicName, uint8_t* payload, unsigned int lengt
     if (command.type != CoreCommandType::Stop && command.type != CoreCommandType::Wait && !isConnected()) {
         publishError(ErrorCode::NotConnected, millis()); return;
     }
-    if (command.cmdId <= highwater_) {
-        for (const CoreCommand& recent : recentCommands_) if (recent.cmdId == command.cmdId) {
-            if (CoreProtocol::sameCommand(recent, command)) sendAck(command.cmdId);
-            else publishError(ErrorCode::InvalidCommand, millis());
-            return;
-        }
-        publishError(ErrorCode::StaleCommand, millis()); return;
+    const auto replay = CommandReplayGuard::classify(command, highwater_, recentCommands_);
+    if (replay != CommandReplayGuard::Result::Fresh) {
+        if (replay == CommandReplayGuard::Result::Duplicate) sendAck(command.cmdId);
+        else publishError(replay == CommandReplayGuard::Result::Conflict
+            ? ErrorCode::InvalidCommand : ErrorCode::StaleCommand, millis());
+        return;
     }
     command.localSession = session_.load(); command.receivedAtMs = millis();
     if (!persistCommandId(command.cmdId)) { storageFault_ = true; publishError(ErrorCode::Configuration, millis()); return; }
@@ -407,6 +408,8 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     object["resetReasonCode"] = static_cast<int>(esp_reset_reason());
     object["firmwareMode"] = Config::TWO_ROBOT_BENCH_TRIAL ? "bench" : Config::ONE_ROBOT_TRIAL ? "solo" : "locked";
     object["firmwareBuild"] = Config::FIRMWARE_BUILD;
+    // Worker-owned value persisted in NVS; Core advances its allocator above it.
+    object["lastCommandId"] = highwater_;
     if (Config::ENCODER_ENABLED) {
         object["encoderSupported"] = true;
         object["encoderBootId"] = encoderBootId_;

@@ -1,5 +1,24 @@
 # Hồ sơ kiểm thử AGV
 
+## 23/10/2026 — Nạp xe01 COM6 và xác minh kết nối server máy người dùng
+
+REQ-ROBOT01-LOCAL-NETWORK-RESTORE-02: MACCOM6 `ec:c9:ff:ff:09:dc` đúng01. WinRT xác nhận hotspotOff, SSID/mật khẩu khớp config01backup, băng2,4GHz; broker nghe0.0.0.0:1883, máy192.168.137.1, Core/gateway/storage khỏe. Khôi phục riêng LocalNetworkConfig01.h, hash bằng backup trướcRAR và file vẫngitignored. BảnRAR01 lưu ở recovered/network01-before-local-restore-20261023-181210-882.h; không đổi mạng02/tuning.
+
+Build01 PASS, nạp `esp32dev_two_robot_bench_01` quaCOM6 PASS/hash flashverified, giữNVS (không erase toànflash). Firmware01 SHA256 `A67F2F831F40547090850D0F76D25F0DDA2EAE4C6EE18D301140110AFFA32EDF`; ảnh02chưa nạp SHA256 `F8B9A3F5E25205858D778FB84A76C8B682F317202FFCE987A0675197AEB41D9D`. Hotspot tựOff trong thời gian build/nạp khôngclient, serial báoreason201NO_AP_FOUND; bật lại sau nạp rồi quan sát20s được16diagnostic sống: buildv16, Wi-Fi/MQTTtrue, lastCommandId129371→129372, motorSTOP/duty0/0/taskinactive. Core nhận01online/UNLOCALIZED khi chưaRFID; chưa gửi lệnh chuyển động/reset/xóa lỗi từ trợ lý.
+
+Lượt người dùng gửi ảnh tiếp theo: CorecaRUNNING,01online/vịtríG6hợp lệ/ERRORCONFIGURATION_INCOMPLETE; diagnosticv16Wi-Fi/MQTTtrue/motorSTOP/PWM0/0/taskinactive, voltage10,2829→10,1944V. Mẫu sau đọcRFIDS1/age26ms/line6, batteryCalibratedtrue/motionEnabledtrue/liftSupportedtrue, ADC2015mV/voltage9,9437V/percentage11. Đây là số firmware, chưa đo đồng hồ: thấp hơn ngưỡng3S10,2V làm benchVoltageReadyfalse và motionConfiguredfalse, trả lỗiConfiguration chung. Phần trăm hiển thị được lọc riêng nên không thay thế chốt điện áp. OPEN số đo pin thực/hiệu chuẩn; không hạ ngưỡng hoặc tựclear lỗi. Kết nối server đã xác minh; chưa thử chuyển động hoặc proof đứng yên trên sàn thật.
+
+## 23/10/2026 — Đồng bộ counter và proof dừng trên nền NCKHAGV.rar, v16
+
+REQ-FIRMWARE-SERVER-SYNC-01: chỉ sửa chống replay/diagnostic high-water và khôi phục producer `stopped_position`. Hai buildID `20261023-robot01-server-sync-v16` / `20261023-robot02-server-sync-v16`. Hash đối chiếu bản RAR giải nén xác nhận giữ nguyên hai profile tuning, BatteryCalibration, mạng riêng01/02, CoreNavigator.cpp/.h, ControlLogic.cpp, LinePdController.h và platformio.ini.
+
+- `scripts/test-encoder.ps1 -SkipCoreBuild` PASS: encoder/codec/proof dừng và command replay guard cho01/02, network clock, encoder Core và stopped occupancy. Guard dùng cùng hàm phân loại với callback MQTT, kiểm retry/payload khác, mất cache/reboot, ID thấp choGOTO/RESET_FAULT/STOP/WAIT, counter phục hồi và INT_MAX. Encoder giữ các ca600ms/rawticks/phiên/RFID/pivot và parse gói codec bằng parser Core thực.
+- `scripts/build-core.ps1 -Tests -OutputDirectory .qa/firmware-server-sync-v16` PASS: build Core và unit, gồm counter tiến bền vững/reset đúngID và occupancy/replan. Không đổi source Core trong lượt này.
+- Build ESP32 `esp32dev_two_robot_bench_01` và `_02` PASS: RAM58204byte mỗi ảnh; flash01=968253byte,02=968245byte. Artifact `.qa/firmware-server-sync-v16/esp32/<env>/firmware.bin`. Sau đó build lại01 với cấu hình hotspot cục bộ đã phục hồi cũng PASS; thông số bộ nhớ giữ nguyên.
+- Fixture `AGV_CORE_BIN=.qa/firmware-server-sync-v16/agv_core.exe node tests/stopped-occupancy.integration.js` PASS tại `.qa/stopped-mqtt-GIztGP`: proof đúng phiên, chặn endpoint, trả mutex ngoài vùng, replan, checkpoint trước command, stale fallback và token cũ. Lượt sandbox đầu không mở được broker; lượt chạy có quyền loopback đã PASS.
+
+Native legacy từ lượt đối chiếu trước sửa có01=39/51PASS và02=40/51PASS, lỗi quay/mấtmạng/deadline do nền RAR khác fixture; không sửa tuning hoặc nới assertion để làm xanh. Không tuyên bố toàn bộ test workspace PASS. Chưa upload, sửa counter/NVS vận hành hoặc phát lệnh tới robot thật. Build/test dùng `.qa` riêng; cache PlatformIO đã cài, override build/libdeps bằng biến môi trường để không dùng đường dẫn D: trong RAR.
+
 ## 22/10/2026 — Kiểm tra trước khi đẩy GitHub
 
 Source tại lượt đẩy có tuning mới hơn các hồ sơ v14 bên dưới: Kp01=65/base125; Kp02=65/base120, capture phải02=190, trim quay02=−15/−30, reverse02=165. Giữ các giá trị workspace này. `scripts/test-turn180.ps1` PASS01/02. `scripts/test-fast-line.ps1` FAIL tại static_assert profile01 do fixture còn khóa Kp80; chưa chạy tới profile02, bảng duty tĩnh của fixture cũng cần đối chiếu lại với tuning mới. Không sửa tuning/test để che kết quả. Build01 PASS ở hồ sơ v14 bên dưới thuộc thời điểm Kp01=80; không coi đó là build đã xác minh cho tuning mới nhất. Lượt đẩy GitHub không upload hoặc điều khiển phần cứng.
@@ -571,3 +590,22 @@ Kiểm thử phần mềm sau REQ-ROBOT01-SONAR-01: native profile01 biên dịc
 `node tests/shift-start.browser.integration.js` (hoặc `npm run test:shift:browser` trong AGVwebserver) PASS Edge headless với Core giả lập, hai xe và SQLite riêng: hủy không ghi, xác nhận thực tế bắt buộc, mã trùng không mở ca, thứ tự lưu/mở, Core từ chối hoặc HTTP504/unknown sau khi lưu vẫn giữ form và không tự retry, prefill, xung đột revision/phiên Core, khóa MQTT, chống submit trùng và ảnh đầu ca đúng dữ liệu vừa lưu. Lần cuối PASS tại `.qa/shift-start-browser-XkbtLd`; desktop1440/mobile390 đã chụp, ảnh mobile đã xem trực tiếp ở lần đầu `.qa/shift-start-browser-54rClT`. Đặt `AGV_PLAYWRIGHT_MODULE`/`AGV_BROWSER_CHANNEL` như hướng dẫn trong tài liệu này. Bốn bài browser mô phỏng dùng nút mở ca được cập nhật thêm bước xác nhận và kiểm tra syntax, chưa chạy lại toàn bộ mô phỏng; không đổi lệnh API hoặc luật mô phỏng.
 
 `npm test` trong AGVwebserver: 47/47 PASS. `tests/browser.integration.js` PASS (`.qa/browser-test-e1zUgc`); `tests/warehouse.browser.integration.js` PASS (`.qa/warehouse-browser-hcVAz1`). Sandbox ban đầu chặn kết nối localhost bằng EACCES; kết quả PASS là lần chạy có quyền localhost phù hợp. Không chạy server/DB vận hành hoặc thử phần cứng.
+
+## Xe lỗi đã dừng chặn một node hoặc một đoạn — 23/10/2026
+
+REQ-STOPPED-OCCUPANCY-01 / [ADR-079](../docs/decisions/ADR-079-stopped-edge-occupancy.md). Bản nguồn/ảnh build, chưa nạp hoặc restart Core vận hành; không thao tác DB/robot thật.
+
+- `scripts/build-core.ps1 -Tests -OutputDirectory .qa/stopped-occupancy`: build và toàn bộ unit Core PASS.
+- `scripts/test-encoder.ps1 -SkipCoreBuild`: host GPIO/encoder/codec cho 01/02, clock mạng, encoder Core và `stopped_occupancy.cpp` PASS. Probe mới kiểm tra giữ cạnh sau fault, hai bánh ổn định 600 ms, xung trôi, RFID node, mất phiên và lỗi sau pivot. Core unit kiểm tra hai proof/seq, giữ mutex endpoint/trả ngoài vùng, xe kia đi tiếp, missing proof/stale/rawtick thay đổi trở lại bảo thủ, checkpoint/restart, sai route và distance vượt cạnh bị từ chối. Xe dùng NODE_ORDER phải chờ STOP/RFID mới trước GOTO thay thế.
+- Với `AGV_CORE_BIN=.qa/stopped-occupancy/agv_core.exe`, `node tests/stopped-occupancy.integration.js` PASS tại `.qa/stopped-mqtt-NeKhW5`: MQTT→Core→WS, reject phiên cũ/một proof, tự trả mutex ngoài S1–B/giữ B, xe02 tiếp tục, checkpoint có vùng chặn trước khi GOTO được nhận, grant endpoint bị chặn, token cũ bị bỏ, proof stale đưa xe02 về BLOCKED và không GOTO đè tuyến MCU active.
+- Cùng binary, `node tests/two-robot-recovery.integration.js` PASS tại `build/recovery-check/mqtt-IRj7ox`: LWT giữ owner, RFID trạm đơn lẻ không trả quyền, diagnostic mới hợp lệ mới tự trả/reset theo policy cũ.
+- PlatformIO `test -e native_robot01_bench -e native_robot02_bench`: 102/102 PASS. `run -e esp32dev_two_robot_bench_01 -e esp32dev_two_robot_bench_02`: hai ảnh PASS, mỗi ảnh RAM58196byte/17,8%, flash967961byte/73,8%. BuildID01/02 `20261023-robot0x-stopped-edge-v15`.
+- `scripts/test-fast-line.ps1` FAIL ngay static_assert Kp80 trong test cũ, trong khi Robot01Config.h ở HEAD đã là Kp65. `git show HEAD` xác minh bất khớp có sẵn; lượt này không sửa profile PD hoặc test đó. Không ghi nhận fast-line PASS.
+
+Bộ build ở `build/stopped-occupancy-v15/` gồm `agv_core.exe`, `robot01-firmware.bin`, `robot02-firmware.bin` và README áp dụng. Firmware v15 cần nạp đúng env/xe và Core mới cần chạy với map/counter/runtime hiện có; không chạy thêm Core thứ hai. Fixture là mô hình đồ thị/loopback, không nghiệm thu quãng dừng hoặc hình học thân xe.
+
+## Replan khi một xe lỗi/offline — 23/10/2026
+
+`scripts/build-core.ps1 -Tests -OutputDirectory .qa/failure-replan-build` PASS. Unit mới kiểm tra giao với `uncertainPath` làm xe còn lại BLOCKED và xóa waiter nhưng không nhả owner; MQTT LWT tại node trên tuyến làm xe kia chọn đường vòng; node khác trong cùng mutex component cũng kích hoạt đường vòng. Toàn bộ hồi quy Core cũ cùng PASS.
+
+Với `AGV_CORE_BIN=.qa/failure-replan-build/agv_core.exe`, `node tests/two-robot-recovery.integration.js` PASS tại `build/recovery-check/mqtt-wPoE0g`: LWT giữ M2, telemetry trạm đơn lẻ chưa trả quyền, diagnostic STOP/RFID mới mới cho tự trả, lỗi mạng reset đúng một lần và lỗi line vẫn chốt. Đây là fixture MQTT loopback/dữ liệu riêng, không phải kiểm thử chuyển động hai robot thật. [ADR-078](../docs/decisions/ADR-078-failure-footprint-replanning.md).

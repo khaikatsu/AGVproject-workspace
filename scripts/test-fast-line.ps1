@@ -1,7 +1,7 @@
 param()
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
-$taskFw = Join-Path $taskRoot 'firmware/NCKHAGV/NCKHAGV'
+$taskFw = Join-Path $taskRoot 'firmware/NCKHAGV'
 $taskOut = Join-Path $taskRoot '.qa/fast-line'
 New-Item -ItemType Directory -Force -Path $taskOut | Out-Null
 $taskPreviousPath = $env:PATH

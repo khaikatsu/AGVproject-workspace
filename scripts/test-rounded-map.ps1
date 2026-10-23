@@ -1,7 +1,7 @@
 param()
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$firmwareRoot = Join-Path $projectRoot 'firmware/NCKHAGV/NCKHAGV/src'
+$firmwareRoot = Join-Path $projectRoot 'firmware/NCKHAGV/src'
 $outputRoot = Join-Path $projectRoot '.qa/rounded-map-v4'
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $previousPath = $env:PATH

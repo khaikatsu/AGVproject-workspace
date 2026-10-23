@@ -1,4 +1,4 @@
-#include "../firmware/NCKHAGV/NCKHAGV/src/Config.h"
+#include "../firmware/NCKHAGV/src/Config.h"
 #include <string_view>
 
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1

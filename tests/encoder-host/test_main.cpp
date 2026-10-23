@@ -1,5 +1,6 @@
 #include "sensors/EncoderModule.h"
 #include "core/CoreProtocol.h"
+#include "core/StoppedPosition.h"
 #include "core/EncoderOdometry.hpp"
 #include <cmath>
 #include <iostream>
@@ -49,6 +50,30 @@ int main() {
         OdometryTracker wrap;wrap.begin(UINT32_MAX-2,UINT32_MAX-2,UINT32_MAX-100);
         wrap.context("C4","M4",42,0,1,true,true,false);wrap.update(2,2,100);
         near(wrap.snapshot(1).distanceCm,500.0/161);near(wrap.snapshot(1).speedCmS,500000.0/161/201);
+        StoppedPosition stopped;
+        auto segmentProof=reverse;segmentProof.uptimeMs=1000;
+        stopped.update(segmentProof,"K5",1,true,false,false,false,UINT32_MAX);
+        stopped.update(segmentProof,"K5",1,true,true,true,false,UINT32_MAX);
+        auto faultSample=segmentProof;faultSample.tracking=faultSample.translating=faultSample.reverse=false;
+        faultSample.routeCmdId=0;faultSample.toNode[0]=0;faultSample.distanceCm=faultSample.speedCmS=0;
+        faultSample.uptimeMs=1599;stopped.attach(faultSample);CHECK(!faultSample.stopPositionValid);
+        faultSample.uptimeMs=1600;stopped.attach(faultSample);CHECK(faultSample.stopPositionValid);
+        CHECK(std::string(faultSample.stopFrom)=="K5" && std::string(faultSample.stopTo)=="G5");
+        CHECK(CoreProtocol::odometry(faultSample,1234,"fixture-core",wire,sizeof(wire)));
+        const auto stoppedWire=EncoderSample::parse(nlohmann::json::parse(wire));CHECK(stoppedWire.stoppedPosition);
+        CHECK(stoppedWire.stopFrom=="K5" && stoppedWire.stopTo=="G5");
+        faultSample.stopPositionValid=false;++faultSample.leftTicks;
+        stopped.update(faultSample,"K5",1,true,true,true,false,UINT32_MAX);
+        stopped.attach(faultSample);CHECK(!faultSample.stopPositionValid); // one wheel/coasting resets stationarity.
+        faultSample.uptimeMs=2200;stopped.update(faultSample,"K5",1,true,true,true,false,0);
+        stopped.attach(faultSample);CHECK(faultSample.stopPositionValid && !faultSample.stopTo[0]);
+        faultSample.stopPositionValid=false;stopped.update(faultSample,"K5",2,false,true,true,false,0);
+        stopped.attach(faultSample);CHECK(!faultSample.stopPositionValid); // no proof after session loss.
+        StoppedPosition pivotFault;
+        pivotFault.update(segmentProof,"K5",1,true,false,false,true,UINT32_MAX);
+        auto afterPivot=segmentProof;afterPivot.uptimeMs=3000;
+        pivotFault.update(afterPivot,"K5",1,true,true,true,false,UINT32_MAX);
+        afterPivot.uptimeMs=3700;pivotFault.attach(afterPivot);CHECK(!afterPivot.stopPositionValid);
         std::cout << "PASS encoder profile: GPIO16/4, 300us noise filter, 161 pulses/100cm, translation-only lifetime ticks, speed, pivot/STOP, RFID rebase, reverse, session/count/time wrap, wire codec\n";
     } catch (const std::exception& e) {std::cerr << e.what() << '\n';return 1;}
 }

@@ -60,7 +60,7 @@ Bản đồ v3 có hai RFID giữa `M5/M6`, tên node ngắn và kho phía trong
 
 Đã có [sketch Arduino ESP32/RC522](firmware/AGV_Connection_Test/AGV_Connection_Test.ino) và [hướng dẫn cấu hình/nối dây/learn UID](firmware/AGV_Connection_Test/README.md), MQTT pipe/JSON/ACK v0 khớp server, boot chờ RFID thay cho G1 giả lập. Ngày 03/10/2026 đã tích hợp driver L298N/line/HC-SR04 theo bảng chân mới; motor khóa mặc định chờ kiểm thử bàn, bộ sạc thật chưa tích hợp. [ADR-012](docs/decisions/ADR-012-motor-firmware-integration.md).
 
-Ngày 05/10/2026 đã mở rộng [chế độ thử riêng xe 01](docs/decisions/ADR-017-solo-full-map-trial.md): Core dùng Dijkstra cho GOTO trực tiếp tới mọi node có đường trên map, firmware `esp32dev_trial` đi từng RFID và mở PWM; bản `esp32dev` thường vẫn khóa motor. Đã build và kiểm thử phần mềm; chưa nạp hoặc xác nhận xe thật chạy. [Cách chạy và giới hạn](firmware/NCKHAGV/NCKHAGV/README.md).
+Ngày 05/10/2026 đã mở rộng [chế độ thử riêng xe 01](docs/decisions/ADR-017-solo-full-map-trial.md): Core dùng Dijkstra cho GOTO trực tiếp tới mọi node có đường trên map, firmware `esp32dev_trial` đi từng RFID và mở PWM; bản `esp32dev` thường vẫn khóa motor. Đã build và kiểm thử phần mềm; chưa nạp hoặc xác nhận xe thật chạy. [Cách chạy và giới hạn](firmware/NCKHAGV/README.md).
 
 ## Tài liệu theo mảng
 

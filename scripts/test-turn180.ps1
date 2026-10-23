@@ -1,7 +1,7 @@
 param()
 $ErrorActionPreference = 'Stop'
 $turnRoot = Split-Path -Parent $PSScriptRoot
-$turnFw = Join-Path $turnRoot 'firmware/NCKHAGV/NCKHAGV/src'
+$turnFw = Join-Path $turnRoot 'firmware/NCKHAGV/src'
 $turnOut = Join-Path $turnRoot '.qa/turn180'
 New-Item -ItemType Directory -Force -Path $turnOut | Out-Null
 $turnPreviousPath = $env:PATH

@@ -341,7 +341,7 @@ static json handleWebCommand(const string& msg) {
         if (!g_storageHealthy) result = {{"type","command_result"},{"request_id",request.value("request_id","")},{"ok",false},{"status",503},{"error","Checkpoint loi; core dung phat lenh"}};
         else if (!g_mqttConnected && (cmd == "add_task" || cmd == "direct_goto" || cmd == "clear_error" || cmd == "cancel_task"))
             result = {{"type","command_result"},{"request_id",request.value("request_id","")},{"ok",false},{"status",503},{"error","Mat ket noi MQTT broker"}};
-        else result = g_commands.execute(request);
+        else {g_fleet.refreshStoppedOccupancy();result = g_commands.execute(request);}
         if (cmd == "confirm_zone_clear" && result.value("ok",false)) {
             const auto data = result.at("data");const auto grant = g_arbiter.grant(data.at("zone").get<string>(),data.at("new_owner").get<string>());
             if (!grant.is_null()) publishTo("agv/"+data.at("new_owner").get<string>()+"/mutex_grant",grant.dump());
@@ -527,9 +527,11 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
 
     if (action == "odometry") {
         const auto sample = EncoderSample::parse(json::parse(payload));
-        if (sample.robotId == agvId && sample.coreSession == CORE_SESSION && g_fleet.observeOdometry(agvId,sample))
+        if (sample.robotId == agvId && sample.coreSession == CORE_SESSION && g_fleet.observeOdometry(agvId,sample)) {
+            checkpointAndPublish(); // stopped occupancy must be durable before grants/GOTO.
             broadcastState(true);
-        return; // dữ liệu hiển thị không ghi checkpoint hoặc điều phối
+        }
+        return;
     } else if (action == "telemetry") {
         // Cu phap: "RFID|battery" hoac "RFID|battery|obstacle(0/1)"
         vector<string> parts; stringstream ss(payload); string tok;
@@ -583,6 +585,11 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
             diagnostic.contains("leftDuty") && diagnostic["leftDuty"].is_number_integer() &&
             diagnostic.contains("rightDuty") && diagnostic["rightDuty"].is_number_integer()) {
                 MotionDiagnostic motion;
+                if (encoderBound) {
+                    motion.encoderBoot=diagnostic["encoderBootId"].get<uint32_t>();
+                    motion.encoderConnection=diagnostic["session"].get<uint32_t>();
+                    motion.encoderUptime=diagnostic["uptimeMs"].get<uint32_t>();
+                }
                 motion.node = diagnostic["node"].get<string>();
                 motion.state = diagnostic["state"].get<string>();
                 motion.error = diagnostic["error"].get<string>();
@@ -650,6 +657,7 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                 if (encoderBound) g_fleet.observeEncoderFirmwareFault(agvId,motion);
         }
     } else if (action == "mutex_request") {
+        g_fleet.refreshStoppedOccupancy();
         auto zones = g_arbiter.toJson();
         auto fleet = g_fleet.toJson();
         const auto selected = fleet.value("trial_robot_id",string{});
@@ -669,6 +677,7 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
         const auto grant = json::parse(payload);
         g_arbiter.acknowledge(grant.at("zone").get<string>(),agvId,grantId(grant));
     } else if (action == "mutex_release") {
+        g_fleet.refreshStoppedOccupancy();
         const auto release = json::parse(payload);
         const auto zone = release.at("zone").get<string>();
         string nextAgv = g_arbiter.releaseZone(zone, agvId,grantId(release));

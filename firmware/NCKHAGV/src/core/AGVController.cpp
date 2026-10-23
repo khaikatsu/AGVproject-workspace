@@ -246,7 +246,7 @@ void AGVController::update() {
         control_.begin(millis());
         controlArmed_ = true;
     }
-    if (!mqtt_.isConnected()) {
+    if (!mqtt_.isConnected() && !navigator_.active()) {
         positionConfirmed_ = false; previousNode_[0] = '\0';
         lastRfidSeenMs_ = 0;
         previousSegmentReverse_ = false;
@@ -468,12 +468,21 @@ void AGVController::update() {
             navigator_.error() == ErrorCode::None && control_.error() == ErrorCode::None;
         const bool translating = tracking && navigator_.following() && motorAction != MotorAction::Stop &&
             motorAction != MotorAction::PivotLeft && motorAction != MotorAction::PivotRight;
+        // Capture the previous edge before context() clears it on fault/STOP.
+        encoder_.update(millis());
+        stoppedPosition_.update(encoder_.snapshot(), control_.currentNode(), mqtt_.session(), localized,
+            navigator_.error() != ErrorCode::None || control_.error() != ErrorCode::None,
+            motorAction == MotorAction::Stop && motor_.leftDuty() == 0 && motor_.rightDuty() == 0,
+            motorAction == MotorAction::PivotLeft || motorAction == MotorAction::PivotRight,
+            lastRfidSeenMs_ ? static_cast<uint32_t>(millis()-lastRfidSeenMs_) : UINT32_MAX);
         encoder_.context(localized ? control_.currentNode() : "", tracking ? navigator_.nextNode() : "",
             tracking ? navigator_.routeCommandId() : 0, tracking ? navigator_.pathIndex() : 0,
             mqtt_.session(), tracking, translating, navigator_.segmentReverse());
         const uint32_t now = millis();
         if (static_cast<uint32_t>(now - lastOdometryMs_) >= Config::ODOMETRY_INTERVAL_MS) {
-            mqtt_.publishOdometry(encoder_.snapshot());
+            auto odometry = encoder_.snapshot();
+            stoppedPosition_.attach(odometry);
+            mqtt_.publishOdometry(odometry);
             lastOdometryMs_ = now;
         }
     }

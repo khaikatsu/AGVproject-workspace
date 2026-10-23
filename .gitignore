@@ -37,9 +37,13 @@ data/shift_state.json.tmp
 deploy/secrets/
 deploy/tls/
 deploy/mosquitto.windows.conf
-firmware/NCKHAGV/NCKHAGV/src/LocalNetworkConfig.h
-firmware/NCKHAGV/NCKHAGV/src/LocalNetworkConfig01.h
-firmware/NCKHAGV/NCKHAGV/src/LocalNetworkConfig02.h
+**/LocalNetworkConfig.h
+**/LocalNetworkConfig01.h
+**/LocalNetworkConfig02.h
+# Local recovery archives can contain private network credentials.
+recovered/
+/firmware.rar
+/firmware/*.rar
 ~$*.docx
 
 # Keep final Word deliverables and map examples under version control

@@ -1,6 +1,10 @@
 # ADR-072 — Phục hồi lệch bộ đếm command mà không chạy lại lệnh cũ
 
-Trạng thái mới nhất21/10/2026: yêu cầu [ghi đè nguyên bản firmware](ADR-075-sync-validated-two-robot-firmware.md) thay thế bổ sung producer stale-sync-v5 bên dưới. Firmware hiện khớp nguồn người dùng gửi và chưa phát lastCommandId; phần xử lý Core vẫn có. Bản trước được sao lưu, không tự chèn lại field hoặc thay counter/NVS trong lượt ghi đè.
+Trạng thái mới nhất23/10/2026: REQ-FIRMWARE-SERVER-SYNC-01 khôi phục producer `lastCommandId` và chống replay trên nền `NCKHAGV.rar`, theo duyệt người dùng. BuildID01/02 `20261023-robot0x-server-sync-v16`. Quyết định ghi đè nguyên bản21/10 bên dưới là lịch sử, không còn mô tả producer hiện tại.
+
+## Bổ sung 23/10/2026 — Đồng bộ counter trên nền RAR
+
+`OBSERVED`: RAR có nhánh bench chấp nhận ID thấp ngoài cache bằng cách hạ high-water rồi persist, và thiếu `lastCommandId`. `IMPLEMENTED`: phân loại Fresh/Duplicate/Conflict/Stale dùng chung mọi profile; duplicate chỉ ACK, conflict/stale không enqueue và không ghi NVS. `persistCommandId` chỉ cho ID lớn hơn high-water; diagnostic worker công bố giá trị đã persist, Core dùng callback `ensureAbove` hiện có. STOP/WAIT cũ vẫn có thể yêu cầu phanh ưu tiên trước kiểm ID, không chạy lại tác vụ. Không xóa/rewind counter Core hoặc NVS, không thay tuning/mạng. Kiểm chứng tại [tests/README.md](../../tests/README.md); chưa nạp xe.
 
 Ngày 19/10/2026. Trạng thái: IMPLEMENTED trong source, chưa triển khai lên Core/robot vận hành.
 

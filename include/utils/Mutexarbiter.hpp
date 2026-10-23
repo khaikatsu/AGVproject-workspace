@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <deque>
 #include <mutex>
 #include <algorithm>
@@ -38,6 +39,10 @@ public:
         for (const auto& id : zoneIds) owner_[id] = "";
     }
 
+    void setBlockedZones(const std::unordered_set<std::string>& zones) {
+        std::lock_guard<std::mutex> lk(mtx_); blocked_ = zones;
+    }
+
     // Đăng ký thêm 1 zone mới lúc runtime (khi map được chỉnh sửa từ web)
     void registerZone(const std::string& zoneId) {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -49,7 +54,7 @@ public:
     bool requestZone(const std::string& zoneId, const std::string& agvId) {
         std::lock_guard<std::mutex> lk(mtx_);
         auto it = owner_.find(zoneId);
-        if (it == owner_.end() || !validIdentifier(agvId)) return false;
+        if (it == owner_.end() || !validIdentifier(agvId) || blocked_.count(zoneId)) return false;
         if (it->second.empty()) { assignNoLock(zoneId,agvId); return true; }
         if (it->second == agvId) {
             if (grants_[zoneId].recovery) assignNoLock(zoneId,agvId);
@@ -72,7 +77,7 @@ public:
         if (grant != grants_.end() && (grant->second.recovery || grant->second.id != grantId)) return "";
 
         auto qit = queue_.find(zoneId);
-        if (qit != queue_.end() && !qit->second.empty()) {
+        if (!blocked_.count(zoneId) && qit != queue_.end() && !qit->second.empty()) {
             std::string next = qit->second.front();
             qit->second.pop_front();
             assignNoLock(zoneId,next);
@@ -85,7 +90,7 @@ public:
 
     json grant(const std::string& zone, const std::string& robot) {
         std::lock_guard<std::mutex> lk(mtx_);
-        if (!owner_.count(zone) || owner_.at(zone) != robot || !grants_.count(zone) || grants_[zone].recovery) return nullptr;
+        if (blocked_.count(zone) || !owner_.count(zone) || owner_.at(zone) != robot || !grants_.count(zone) || grants_[zone].recovery) return nullptr;
         auto& g = grants_.at(zone);g.sent = std::chrono::steady_clock::now();
         return {{"zone",zone},{"grant_id",g.id}};
     }
@@ -99,8 +104,15 @@ public:
         std::lock_guard<std::mutex> lk(mtx_);
         std::vector<std::pair<std::string,json>> out;
         const auto now = std::chrono::steady_clock::now();
+        for (auto& kv : owner_) {
+            auto& q=queue_[kv.first];
+            if (kv.second.empty() && !blocked_.count(kv.first) && !q.empty()) {
+                const auto next=q.front();q.pop_front();assignNoLock(kv.first,next);
+            }
+        }
         for (auto& kv : grants_) {
             auto& g = kv.second;
+            if (blocked_.count(kv.first)) continue;
             if (g.acked || g.recovery || now-g.sent < std::chrono::milliseconds(retryMs_)) continue;
             g.sent = now;out.push_back({owner_.at(kv.first),{{"zone",kv.first},{"grant_id",g.id}}});
         }
@@ -131,7 +143,7 @@ public:
         std::lock_guard<std::mutex> lk(mtx_);
         if (!owner_.count(zone) || owner_.at(zone) != owner || !grants_.count(zone) || grants_.at(zone).id != grantId) return false;
         auto& q = queue_[zone];
-        if (q.empty()) {owner_[zone].clear();grants_.erase(zone);}
+        if (q.empty() || blocked_.count(zone)) {owner_[zone].clear();grants_.erase(zone);}
         else {const auto next = q.front();q.pop_front();assignNoLock(zone,next);}
         return true;
     }
@@ -157,7 +169,7 @@ public:
         for (auto& kv : owner_) {
             if (kv.second != agvId) continue;
             auto qit = queue_.find(kv.first);
-            if (qit != queue_.end() && !qit->second.empty()) {
+            if (!blocked_.count(kv.first) && qit != queue_.end() && !qit->second.empty()) {
                 const auto next = qit->second.front();
                 qit->second.pop_front();
                 assignNoLock(kv.first,next);
@@ -173,7 +185,7 @@ public:
     void resetZones(const std::vector<std::string>& ids) {
         std::lock_guard<std::mutex> lk(mtx_);
         for (const auto& kv : owner_) if (!kv.second.empty()) throw std::runtime_error("Van co xe giu mutex zone");
-        owner_.clear(); queue_.clear(); grants_.clear();
+        owner_.clear(); queue_.clear(); grants_.clear();blocked_.clear();
         for (const auto& id : ids) owner_[id] = "";
     }
 
@@ -183,6 +195,7 @@ public:
         for (auto& kv : owner_) {
             json z;
             z["owner"] = kv.second;
+            if (blocked_.count(kv.first)) z["blocked_by_stopped_robot"] = true;
             json waiters = json::array();
             auto qit = queue_.find(kv.first);
             if (qit != queue_.end()) for (auto& w : qit->second) waiters.push_back(w);
@@ -205,6 +218,7 @@ private:
         grants_[zone] = Grant{allocator_ ? allocator_() : 0,false,false,{}};
     }
     std::unordered_map<std::string,Grant> grants_;
+    std::unordered_set<std::string> blocked_;
     std::function<long()> allocator_;
     int retryMs_ = 1000;
     std::unordered_map<std::string, std::string> owner_;             // zoneId -> agvId đang giữ ("" = trống)

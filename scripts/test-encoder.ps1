@@ -5,7 +5,7 @@ $encoderOutput = Join-Path $projectRoot '.qa/encoder-build'
 New-Item -ItemType Directory -Force -Path $encoderOutput | Out-Null
 $compiler = 'C:/msys64/ucrt64/bin/g++.exe'
 $env:PATH = 'C:/msys64/ucrt64/bin;' + $env:PATH
-$firmwareRoot = Join-Path $projectRoot 'firmware/NCKHAGV/NCKHAGV'
+$firmwareRoot = Join-Path $projectRoot 'firmware/NCKHAGV'
 $arduinoJson = Join-Path $firmwareRoot '.pio/libdeps/esp32dev_two_robot_bench_01/ArduinoJson/src'
 foreach ($profile in @('01','02')) {
     $probe = Join-Path $encoderOutput "encoder_probe_$profile.exe"
@@ -16,6 +16,14 @@ foreach ($profile in @('01','02')) {
     if ($LASTEXITCODE -ne 0) { throw "Build encoder probe $profile failed" }
     & $probe
     if ($LASTEXITCODE -ne 0) { throw "Encoder probe $profile failed" }
+    $replayProbe = Join-Path $encoderOutput "command_replay_$profile.exe"
+    & $compiler '-std=c++17' '-DAGV_TWO_ROBOT_BENCH_TRIAL=1' "-DAGV_ROBOT_PROFILE_$profile=1" `
+        '-I' "$firmwareRoot/src" '-I' $arduinoJson `
+        "$projectRoot/tests/command_replay_guard.cpp" "$firmwareRoot/src/core/CoreProtocol.cpp" `
+        "$firmwareRoot/src/core/ControlLogic.cpp" '-o' $replayProbe
+    if ($LASTEXITCODE -ne 0) { throw "Build command replay probe $profile failed" }
+    & $replayProbe
+    if ($LASTEXITCODE -ne 0) { throw "Command replay probe $profile failed" }
 }
 $coreProbe = Join-Path $encoderOutput 'encoder_core_tests.exe'
 $clockProbe = Join-Path $encoderOutput 'network_clock_tests.exe'
@@ -28,4 +36,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Network clock tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Build encoder Core tests failed' }
 & $coreProbe
 if ($LASTEXITCODE -ne 0) { throw 'Encoder Core tests failed' }
+$stoppedProbe = Join-Path $encoderOutput 'stopped_occupancy.exe'
+& $compiler '-std=c++17' '-I' "$projectRoot/include" "$projectRoot/tests/stopped_occupancy.cpp" '-o' $stoppedProbe
+if ($LASTEXITCODE -ne 0) { throw 'Build stopped occupancy tests failed' }
+& $stoppedProbe
+if ($LASTEXITCODE -ne 0) { throw 'Stopped occupancy tests failed' }
 if (-not $SkipCoreBuild) { & "$PSScriptRoot/build-core.ps1" -Compiler $compiler -Tests -OutputDirectory '.qa/encoder-build' }

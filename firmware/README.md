@@ -10,4 +10,4 @@ Pinout mới từ [bảng người dùng](bang-phan-chan-agv.md): RC522 SS chuy�
 
 ## Firmware NCKHAGV mới
 
-Thư mục [NCKHAGV/NCKHAGV](NCKHAGV/NCKHAGV/README.md) là project PlatformIO đầy đủ do nhóm mới bổ sung. Ngày 04/10/2026 đã đồng bộ giao thức command/ACK/telemetry/status/heartbeat với Core v0, bảng 26 UID, cấu hình mạng cục bộ, NVS high-water và chế độ khóa motor. Pin, sạc, bảng rẽ và điều kiện rời mutex chưa được hiệu chuẩn/xác minh; xem [ADR-014](../docs/decisions/ADR-014-nckhagv-core-sync.md).
+Project PlatformIO hiện ở [NCKHAGV](NCKHAGV/README.md), đã bỏ một lớp thư mục lồng nhau. Ngày 04/10/2026 đã đồng bộ giao thức command/ACK/telemetry/status/heartbeat với Core v0, bảng 26 UID, cấu hình mạng cục bộ, NVS high-water và chế độ khóa motor. Pin, sạc, bảng rẽ và điều kiện rời mutex chưa được hiệu chuẩn/xác minh; xem [ADR-014](../docs/decisions/ADR-014-nckhagv-core-sync.md).

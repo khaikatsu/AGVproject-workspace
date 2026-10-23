@@ -317,7 +317,7 @@ constexpr uint32_t LINE_RECOVERY_STOP_MS = 100;
 constexpr uint32_t LINE_RECOVERY_TIMEOUT_MS = 600;
 constexpr uint32_t LINE_RECOVERY_PULSE_MS = 40;
 constexpr uint32_t LINE_RECOVERY_REST_MS = 60;
-constexpr uint32_t LINE_RECOVERY_CENTER_MS = 100;
+constexpr uint32_t LINE_RECOVERY_CENTER_MS = 50;
 constexpr uint32_t LINE_RECOVERY_MEMORY_MS = 750;
 #if defined(AGV_LINE_RECOVERY_SIDE_CONFIRM) && AGV_LINE_RECOVERY_SIDE_CONFIRM == 1
 constexpr bool LINE_RECOVERY_SIDE_CONFIRM = true;
@@ -353,7 +353,11 @@ constexpr float OBSTACLE_DISTANCE_CM = 15.0f;
 constexpr float OBSTACLE_CLEAR_CM = 20.0f;
 // Bounded software trial, not a measured turn time. Pivot exits when a line
 // is reacquired after leaving the original line; bench calibration is pending.
+#if defined(AGV_BENCH_TURN_MIN_MS)
+constexpr uint32_t TURN_MIN_MS = AGV_BENCH_TURN_MIN_MS;
+#else
 constexpr uint32_t TURN_MIN_MS = 100;
+#endif
 constexpr uint32_t TURN_TIMEOUT_MS = 2500;
 #if defined(AGV_TURN_AROUND_CAPTURE_ENABLED) && AGV_TURN_AROUND_CAPTURE_ENABLED == 1
 constexpr bool TURN_AROUND_CAPTURE_ENABLED = true;
@@ -364,6 +368,20 @@ constexpr bool TURN_AROUND_CAPTURE_ENABLED = false;
 constexpr uint32_t TURN_LINE_SAMPLE_MS = 2;
 static_assert(TURN_LINE_SAMPLE_MS > 0 && TURN_LINE_SAMPLE_MS <= 10,
               "Invalid turn line sample interval");
+#ifndef AGV_TURN_AROUND_CONFIRM_MS
+#define AGV_TURN_AROUND_CONFIRM_MS 100
+#endif
+// Independent of ordinary line recovery and left/right turn confirmation.
+constexpr uint32_t TURN_AROUND_CONFIRM_MS = AGV_TURN_AROUND_CONFIRM_MS;
+static_assert(TURN_AROUND_CONFIRM_MS >= 2 * TURN_LINE_SAMPLE_MS &&
+              TURN_AROUND_CONFIRM_MS < TURN_TIMEOUT_MS,
+              "Invalid turn-around confirmation time");
+#ifndef AGV_TURN_180_MIN_MS
+#define AGV_TURN_180_MIN_MS 350
+#endif
+constexpr uint32_t TURN_180_MIN_MS = AGV_TURN_180_MIN_MS;
+static_assert(TURN_180_MIN_MS >= TURN_MIN_MS && TURN_180_MIN_MS < TURN_TIMEOUT_MS,
+              "Invalid turn-180 minimum duration");
 #if defined(AGV_G1_TURN_AROUND_PWM)
 constexpr int G1_TURN_AROUND_PWM = AGV_G1_TURN_AROUND_PWM;
 #else
@@ -599,9 +617,9 @@ constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261022-robot01-profile02-tuning-v14";
+constexpr const char* FIRMWARE_BUILD = "20261023-robot01-server-sync-v16";
 #elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
-constexpr const char* FIRMWARE_BUILD = "20261022-robot02-turn180-v13";
+constexpr const char* FIRMWARE_BUILD = "20261023-robot02-server-sync-v16";
 #else
 constexpr const char* FIRMWARE_BUILD = "20261015-battery-smoothing";
 #endif

@@ -455,6 +455,58 @@ int main() {
             CHECK(fleet.toJson()["agvs"][0]["error"] == "Motor fault");
         }
         {
+            // Lỗi phải chặn toàn bộ uncertainPath, không chỉ currentNode. Xe đang
+            // chờ mutex cũ bị rút khỏi FIFO và chuyển BLOCKED nếu không có lối né.
+            json j={{"map_name","Failure footprint"},{"nodes",json::array()}, {"edges",json::array()}};
+            for (const auto* id : {"A","B","M","T","U"})
+                j["nodes"].push_back({{"id",id},{"x",0},{"y",0},{"type",std::string(id)=="M"?"mutex":"waypoint"}});
+            for (const auto& edge : {std::make_tuple("A","M",1),std::make_tuple("M","U",1),
+                                     std::make_tuple("B","M",1),std::make_tuple("M","T",1)})
+                j["edges"].push_back({{"from",std::get<0>(edge)},{"to",std::get<1>(edge)},{"weight",std::get<2>(edge)}});
+            MapGraph map;map.loadFromJson(j);MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.updateTelemetry("01","A",80,false);fleet.updateTelemetry("02","B",80,false);
+            CHECK(fleet.directGoto("01","U","failed-route").empty());
+            CHECK(fleet.directGoto("02","T","affected-route").empty());
+            CHECK(arbiter.requestZone("M","01"));CHECK(!arbiter.requestZone("M","02"));
+            fleet.reportError("01","MOTOR_FAULT");
+            auto robot=[&](const std::string& id){const auto snapshot=fleet.toJson();for(const auto& a:snapshot["agvs"])if(a["id"]==id)return a;throw std::runtime_error("missing footprint robot "+id);};
+            CHECK(robot("01")["uncertain_path"]==json::array({"M","U"}));
+            CHECK(robot("02")["state"]=="BLOCKED");CHECK(robot("02")["path"].empty());
+            CHECK(arbiter.currentOwner("M")=="01");CHECK(arbiter.toJson()["M"]["waiting"].empty());
+        }
+        {
+            // MQTT LWT cũng phải replan ngay. Trước sửa, reportOffline chỉ giữ
+            // mutex/state và xe 02 tiếp tục GOTO cũ qua node X của xe mất mạng.
+            json j={{"map_name","LWT reroute"},{"nodes",json::array()}, {"edges",json::array()}};
+            for (const auto* id : {"A","B","X","Y","T"})
+                j["nodes"].push_back({{"id",id},{"x",0},{"y",0},{"type","waypoint"}});
+            for (const auto& edge : {std::make_tuple("B","X",1),std::make_tuple("X","T",1),
+                                     std::make_tuple("B","Y",5),std::make_tuple("Y","T",5)})
+                j["edges"].push_back({{"from",std::get<0>(edge)},{"to",std::get<1>(edge)},{"weight",std::get<2>(edge)}});
+            MapGraph map;map.loadFromJson(j);MutexArbiter arbiter;FleetManager fleet(map,arbiter);
+            fleet.updateTelemetry("01","A",80,false);fleet.updateTelemetry("02","B",80,false);
+            CHECK(fleet.directGoto("02","T","lwt-reroute").empty());
+            fleet.updateTelemetry("01","X",80,false);fleet.reportOffline("01");
+            auto robot=[&](const std::string& id){const auto snapshot=fleet.toJson();for(const auto& a:snapshot["agvs"])if(a["id"]==id)return a;throw std::runtime_error("missing LWT robot "+id);};
+            CHECK(robot("02")["state"]=="WORKING");CHECK(robot("02")["path"]==json::array({"Y","T"}));
+        }
+        {
+            // Một node trong cùng mutex component cũng là footprint vật lý cần né.
+            json j={{"map_name","Mutex corridor reroute"},{"nodes",json::array()}, {"edges",json::array()}};
+            for (const auto* id : {"A","B","M1","M2","Y","T"})
+                j["nodes"].push_back({{"id",id},{"x",0},{"y",0},{"type",id[0]=='M'?"mutex":"waypoint"}});
+            for (const auto& edge : {std::make_tuple("B","M2",1),std::make_tuple("M2","T",1),
+                                     std::make_tuple("B","Y",5),std::make_tuple("Y","T",5),
+                                     std::make_tuple("M1","M2",1)})
+                j["edges"].push_back({{"from",std::get<0>(edge)},{"to",std::get<1>(edge)},{"weight",std::get<2>(edge)}});
+            MapGraph map;map.loadFromJson(j);MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+            fleet.updateTelemetry("01","A",80,false);fleet.updateTelemetry("02","B",80,false);
+            CHECK(fleet.directGoto("02","T","corridor-reroute").empty());
+            fleet.updateTelemetry("01","M1",80,false);fleet.reportError("01","LINE_LOST");
+            auto robot=[&](const std::string& id){const auto snapshot=fleet.toJson();for(const auto& a:snapshot["agvs"])if(a["id"]==id)return a;throw std::runtime_error("missing corridor robot "+id);};
+            CHECK(robot("02")["state"]=="WORKING");CHECK(robot("02")["path"]==json::array({"Y","T"}));
+        }
+        {
             MapGraph map;map.loadFromJson(graph());MutexArbiter arbiter;arbiter.registerZone("M");FleetManager fleet(map,arbiter);
             fleet.setOfflineTimeout(1);fleet.updateTelemetry("01","M",80,false);fleet.addTask("T",0,"lost");
             CHECK(arbiter.requestZone("M","01"));CHECK(!arbiter.requestZone("M","02"));

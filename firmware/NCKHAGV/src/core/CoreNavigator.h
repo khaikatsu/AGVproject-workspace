@@ -70,8 +70,9 @@ public:
     bool following() const { return phase_ == Phase::Following && !recoveringLine(); }
     bool recoveringLine() const { return Config::LINE_RECOVERY_ENABLED && lineLossPending_; }
     bool obstaclePaused() const { return obstaclePaused_; }
+    bool networkPaused() const { return networkPaused_; }
     bool forwardLineTracking() const {
-        return following() && !segmentReverse() && !obstaclePaused_ && !missingZone();
+        return following() && !segmentReverse() && !obstaclePaused_ && !networkPaused_ && !missingZone();
     }
     bool stationOriented() const { return stationOriented_; }
     AGVState state() const;
@@ -97,7 +98,8 @@ private:
     void rememberLine(const ControlInput& input, MotorAction action);
     MotorAction recoverLine(const ControlInput& input);
     MotorAction alignTurnLine(const ControlInput& input);
-    bool confirmTrackedLine(const ControlInput& input, uint32_t sampleMs = Config::LEFT_CAPTURE_SAMPLE_MS);
+    bool confirmTrackedLine(const ControlInput& input, uint32_t sampleMs = Config::LEFT_CAPTURE_SAMPLE_MS,
+                            uint32_t confirmMs = Config::LINE_RECOVERY_CENTER_MS);
     bool sampleTurnLine(const ControlInput& input);
     bool observeTurnAroundLine(const ControlInput& input);
     MotorAction confirmTurnAround(const ControlInput& input);
@@ -138,4 +140,6 @@ private:
     int32_t routeCmdId_ = 0;
     bool obstaclePaused_ = false;
     uint32_t obstaclePausedAtMs_ = 0;
+    bool networkPaused_ = false;
+    uint32_t networkPausedAtMs_ = 0;
 };

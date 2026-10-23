@@ -125,7 +125,8 @@ struct TelemetrySnapshot {
     const char* liftState = "IDLE";
 };
 
-// Dữ liệu hiển thị; không cấp quyền chuyển động hoặc hoàn thành nhiệm vụ.
+// Odometry thường chỉ hiển thị. Proof dừng tùy chọn cần Core xác minh riêng;
+// không tự cấp quyền chuyển động hoặc hoàn thành nhiệm vụ.
 struct OdometrySnapshot {
     uint32_t localSession = 0, seq = 0, uptimeMs = 0;
     uint32_t leftTicks = 0, rightTicks = 0;
@@ -134,6 +135,12 @@ struct OdometrySnapshot {
     uint8_t pathIndex = 0;
     bool tracking = false, translating = false, reverse = false;
     float distanceCm = 0, speedCmS = 0;
+    bool stopPositionValid = false;
+    char stopFrom[NODE_TEXT_SIZE]{}, stopTo[NODE_TEXT_SIZE]{};
+    int32_t stopRoute = 0;
+    uint8_t stopIndex = 0;
+    uint32_t stationaryMs = 0;
+    float stopDistanceCm = 0;
 };
 
 const char* stateName(AGVState state);

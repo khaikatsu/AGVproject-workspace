@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "robot_id": "01",
+  "core_session_id": "example-core-session",
+  "boot_id": 1234,
+  "connection_session": 1,
+  "seq": 20,
+  "uptime_ms": 10000,
+  "left_ticks": 130,
+  "right_ticks": 130,
+  "pulses_per_100cm": 161,
+  "route_cmd_id": 0,
+  "path_index": 0,
+  "from_node": "M2",
+  "to_node": "",
+  "tracking": false,
+  "translating": false,
+  "reverse": false,
+  "distance_cm": 0,
+  "speed_cm_s": 0,
+  "stopped_position": {
+    "version": 1,
+    "from_node": "M2",
+    "to_node": "G6",
+    "route_cmd_id": 1285,
+    "path_index": 2,
+    "distance_cm": 40,
+    "stationary_ms": 800
+  }
+}

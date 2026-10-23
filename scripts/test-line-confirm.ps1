@@ -1,7 +1,7 @@
 param()
 $ErrorActionPreference = 'Stop'
 $confirmRoot = Split-Path -Parent $PSScriptRoot
-$confirmFw = Join-Path $confirmRoot 'firmware/NCKHAGV/NCKHAGV/src'
+$confirmFw = Join-Path $confirmRoot 'firmware/NCKHAGV/src'
 $confirmOut = Join-Path $confirmRoot '.qa/line-confirm'
 New-Item -ItemType Directory -Force -Path $confirmOut | Out-Null
 $confirmPreviousPath = $env:PATH

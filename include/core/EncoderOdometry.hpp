@@ -14,6 +14,12 @@ struct EncoderSample {
     std::string robotId, from, to, coreSession;
     bool tracking = false, translating = false, reverse = false;
     double distance = 0, speed = 0, pulsesPer100Cm = 0;
+    bool stoppedPosition = false;
+    std::string stopFrom, stopTo;
+    long stopRoute = 0;
+    uint32_t stationaryMs = 0;
+    int stopIndex = 0;
+    double stopDistance = 0;
     static EncoderSample parse(const nlohmann::json& j) {
         using json = nlohmann::json;
         const auto integer = [&](const char* key, uint64_t maximum, uint64_t minimum = 0) -> uint32_t {
@@ -54,6 +60,27 @@ struct EncoderSample {
         if ((!s.tracking && (s.translating || s.reverse || s.route || !s.to.empty() || s.distance || s.speed)) ||
             (s.tracking && (!s.route || s.from.empty() || s.to.empty() || s.from == s.to)) ||
             (!s.translating && s.speed != 0)) throw std::invalid_argument("Odometry context sai");
+        if (j.contains("stopped_position")) {
+            const auto& p = j.at("stopped_position");
+            const auto uintValue = [&](const char* key, uint64_t maximum) {
+                const auto& v=p.at(key);
+                if (!v.is_number_integer() || (!v.is_number_unsigned() && v.get<int64_t>()<0) || v.get<uint64_t>()>maximum)
+                    throw std::invalid_argument("Stopped position integer sai");
+                return v.get<uint32_t>();
+            };
+            if (!p.is_object() || uintValue("version",1)!=1 || s.tracking || s.translating || s.speed!=0)
+                throw std::invalid_argument("Stopped position context sai");
+            s.stopFrom=p.at("from_node").get<std::string>();s.stopTo=p.at("to_node").get<std::string>();
+            s.stopRoute=uintValue("route_cmd_id",INT_MAX);s.stopIndex=uintValue("path_index",31);
+            s.stationaryMs=uintValue("stationary_ms",UINT32_MAX);
+            if (!p.at("distance_cm").is_number()) throw std::invalid_argument("Stopped distance sai");
+            s.stopDistance=p.at("distance_cm").get<double>();
+            if (s.stopFrom.empty() || s.stopFrom.size()>7 || s.stopTo.size()>7 || s.stopFrom==s.stopTo ||
+                !std::isfinite(s.stopDistance) || s.stopDistance<0 || (s.stopTo.empty() && s.stopDistance!=0) ||
+                s.stationaryMs<600 || (s.stopTo.empty() ? (s.stopRoute!=0 || s.stopIndex!=0) : s.stopRoute==0))
+                throw std::invalid_argument("Stopped position proof sai");
+            s.stoppedPosition=true;
+        }
         return s;
     }
 };

@@ -1,5 +1,9 @@
 # Hiện trạng mã và khoảng trống tích hợp
 
+CURRENT 23/10/2026, REQ-STOPPED-OCCUPANCY-01: xe lỗi còn kết nối có proof dừng mới thì Core chặn đúng một node hoặc hai đầu đoạn, tự trả mutex ngoài vùng và replan. Không cộng vùng đệm; dữ liệu cũ/mất mạng/restart quay lại vùng chưa xác minh. Arbiter dùng cùng vùng chặn dù owner rỗng; thay tuyến MCU đang chạy cần WAIT và RFID dừng mới. Firmware01/02 v15 và Core mới cần được áp dụng cùng nhau; chưa nạp hoặc restart vận hành. [ADR-079](decisions/ADR-079-stopped-edge-occupancy.md).
+
+CURRENT 23/10/2026: khi một xe ERROR/OFFLINE do báo lỗi, LWT, timeout telemetry hoặc hết ACK retry, Core replan các xe có tuyến giao với toàn bộ `currentNode/uncertainPath` và thành phần mutex của xe lỗi, cùng các xe đang chờ mutex do xe lỗi giữ. Lượt chờ cũ bị hủy trước tuyến mới; không có đường thì BLOCKED/WAIT. Không thay chính sách owner: xe lỗi vẫn giữ mutex tới khi có bằng chứng clearance. [ADR-078](decisions/ADR-078-failure-footprint-replanning.md).
+
 CURRENT17/10/2026 sau lỗi checkpoint: [ADR-065](decisions/ADR-065-rounded-map-checkpoint-recovery.md) cho Core chuyển riêng mapv3→v4 có backup/giữ mutex/lịch sử và chờ xác minh xe. Bản sửa đã được cập nhật vào build/agv_core.exe và khởi động scope cảhai theo xác nhận người dùng; gateway nhận22node/35cạnh/4geometry, Core/MQTT/storage khỏe. Firmware vẫn cần nạp mapv4 trước chạy thật; chi tiết triển khai tại tests/README.md.
 
 CURRENT17/10/2026: source mapv4 có22node, bỏC1–C4 và bốn cạnh bo135cm theo ảnh; scope01/02/cảhai dùng cùng graph. Fallback include/map/MapGraph.hpp và bảng route firmware đã đồng bộ. Tọa độ là sơ đồ; xem [ADR-064](decisions/ADR-064-rounded-map-without-corner-tags.md) và tests/README.md về số đo/kiểm chứng/áp dụng. Core vận hành cần build/restart và firmware01/02 cần nạp bản tương ứng.

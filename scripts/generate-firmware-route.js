@@ -4,7 +4,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const source = path.join(root, 'data', 'map_layout.json');
-const destination = path.join(root, 'firmware', 'NCKHAGV', 'NCKHAGV', 'src', 'core', 'RouteMap.generated.h');
+const destination = path.join(root, 'firmware', 'NCKHAGV', 'src', 'core', 'RouteMap.generated.h');
 const map = JSON.parse(fs.readFileSync(source, 'utf8'));
 
 const names = new Set();

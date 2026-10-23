@@ -1,7 +1,7 @@
 param([switch]$ServoOnly)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$firmwareRoot = Join-Path $projectRoot 'firmware/NCKHAGV/NCKHAGV'
+$firmwareRoot = Join-Path $projectRoot 'firmware/NCKHAGV'
 $parityOutput = Join-Path $projectRoot '.qa/robot02-parity-build'
 New-Item -ItemType Directory -Force -Path $parityOutput | Out-Null
 $compiler = 'C:/msys64/ucrt64/bin/g++.exe'
@@ -20,7 +20,7 @@ function Build-Probe($name, $adapter, $sources, $profile) {
     if ($LASTEXITCODE -ne 0) { throw "Test failed: $name" }
 }
 try {
-    $fw = 'firmware/NCKHAGV/NCKHAGV/src'
+    $fw = 'firmware/NCKHAGV/src'
     foreach ($profile in @('01','02')) {
         if (-not $ServoOnly) {
             Build-Probe "motor_$profile" 'motor-host' @('tests/motor-host/reverse_speed.cpp', "$fw/motion/MovementModule.cpp",

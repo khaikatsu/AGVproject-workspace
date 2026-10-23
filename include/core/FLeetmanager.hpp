@@ -71,12 +71,19 @@ struct AGV {
     Clock::time_point diagnosticSeen{};
     long routeCommandId = 0;
     bool nodeOrdersSupported = false;
+    bool replanNeedsNodeProof = false;
+    uint32_t replanHoldUptime = 0;
     bool straightThroughSupported = false;
     std::string routeStart, lastNodeOrderKey, lastNodeOrderPayload;
     std::vector<std::string> commandPath;
     Clock::time_point lastNodeOrderAt{};
     EncoderObservation encoder;
     json estimatedPosition = nullptr;
+    std::vector<std::string> stoppedNodes;
+    EncoderSample stopCandidate;
+    bool hasStopCandidate = false, stoppedLocalized = false;
+    Clock::time_point stoppedSeen{}, stoppedDiagnosticSeen{};
+    uint32_t stoppedDiagnosticUptime = 0, stoppedDiagnosticRfidAge = UINT32_MAX;
     bool sonarObstacle = false;
     double sonarDistanceCm = 0;
     std::string sonarDirection;
@@ -113,6 +120,7 @@ struct MotionDiagnostic {
     double sonarDistanceCm = 0;
     std::string sonarDirection;
     long lastCommandId = -1;
+    uint32_t encoderBoot = 0, encoderConnection = 0, encoderUptime = 0;
 };
 
 struct Task {
@@ -174,6 +182,12 @@ public:
             a.hasTelemetry = true;a.positionValid = false;a.batteryMeasured = false;a.state = AGVState::OFFLINE;
             a.lastSeen = Clock::now()-offlineTimeout_-std::chrono::seconds(1);
             a.uncertainPath = item.at("uncertain_path").get<std::vector<std::string>>();
+            a.stoppedNodes = item.value("stopped_nodes",std::vector<std::string>{});
+            if (a.stoppedNodes.size()>2) throw std::invalid_argument("Checkpoint stopped region sai");
+            for (const auto& node : a.stoppedNodes) {
+                if (!map_.nodeExists(node)) throw std::invalid_argument("Checkpoint stopped node sai");
+                if (std::find(a.uncertainPath.begin(),a.uncertainPath.end(),node)==a.uncertainPath.end()) a.uncertainPath.push_back(node);
+            }
             for (const auto& node : item.at("path")) if (std::find(a.uncertainPath.begin(),a.uncertainPath.end(),node.get<std::string>()) == a.uncertainPath.end()) a.uncertainPath.push_back(node);
             a.lastError = "Core khoi dong lai; can RFID moi va xac minh robot";fleet_[a.id] = a;
         }
@@ -181,6 +195,7 @@ public:
         acceptingTasks_ = false;
     }
     void reportOffline(const std::string& id) {
+        std::vector<std::string> toReplan;
         {
             std::lock_guard<std::mutex> lk(mtx_);auto it = fleet_.find(id);if (it == fleet_.end()) return;
             interruptWorkNoLock(it->second,"MQTT LWT offline");it->second.state = AGVState::OFFLINE;
@@ -188,8 +203,12 @@ public:
             it->second.lastError = "MQTT LWT; chuyen dong chua xac minh";
             it->second.autoResetEligible = true;it->second.autoResetRequested = false;
             it->second.autoResetCandidateAt = {};
+            toReplan = agvsAffectedByFailureNoLock(id);
         }
         arbiter_.cancelWaiting(id);
+        refreshStoppedOccupancy();
+        appendMutexWaitersForFailedOwners({id},toReplan);
+        replanAffectedAgvs({id},toReplan);
         emit("AGV_"+id+" MAT KET NOI (LWT), giu mutex");notify();
     }
     void setNetworkAvailable(bool available) { std::lock_guard<std::mutex> lk(mtx_); networkAvailable_ = available; }
@@ -477,6 +496,7 @@ public:
 
             if (nodeValid) completeArrivalNoLock(agv);
         }
+        refreshStoppedOccupancy();
         if (unknownNode) emit("AGV_" + id + " gui RFID khong ton tai tren map: " + rfid);
         if (recovered) emit("AGV_" + id + " ket noi lai (ONLINE)");
         (void)justFinishedCharging; // đã gửi lệnh ở trên trong lúc còn giữ mtx_
@@ -556,6 +576,17 @@ public:
         reportError(id,d.error);
     }
     bool observeOdometry(const std::string& id, const EncoderSample& s) {
+        if (s.stoppedPosition) return observeStoppedPosition(id,s);
+        bool invalidate=false;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            auto it=fleet_.find(id);
+            if (it!=fleet_.end() && s.robotId==id && !it->second.stoppedNodes.empty() &&
+                it->second.state==AGVState::AGV_ERROR && it->second.encoder.accept(s)) {
+                it->second.stoppedSeen={};it->second.hasStopCandidate=false;invalidate=true;
+            }
+        }
+        if (invalidate) {refreshStoppedOccupancy();return true;}
         std::lock_guard<std::mutex> lk(mtx_);
         const auto it = fleet_.find(id);
         if ((id != "01" && id != "02") || s.robotId != id || !activeRobotNoLock(id) ||
@@ -588,12 +619,133 @@ public:
         return true;
     }
 
+    // Two increasing samples with identical raw counters, plus a bound STOP
+    // diagnostic, authorize only coarse node/edge occupancy. ERROR stays latched.
+    bool observeStoppedPosition(const std::string& id, const EncoderSample& s) {
+        bool changed=false, waitingForStable=false;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            auto it=fleet_.find(id);
+            if (!s.stoppedPosition || s.robotId!=id || !activeRobotNoLock(id) || it==fleet_.end()) return false;
+            auto& a=it->second;
+            const auto now=Clock::now();
+            if (!networkAvailable_ || a.state!=AGVState::AGV_ERROR || !a.hasTelemetry || !a.positionValid ||
+                now-a.lastSeen>std::chrono::milliseconds(1000) || s.from!=a.currentNode || s.stopFrom!=a.currentNode ||
+                now-a.stoppedDiagnosticSeen>std::chrono::milliseconds(1500) ||
+                static_cast<int32_t>(s.uptime-a.stoppedDiagnosticUptime)<-500 ||
+                static_cast<int32_t>(s.uptime-a.stoppedDiagnosticUptime)>1500 ||
+                a.encoder.boot!=s.boot || a.encoder.connection!=s.connection) return false;
+            if (s.stopTo.empty()) {
+                if (a.stoppedDiagnosticRfidAge>250) return false;
+            } else {
+                if (!map_.nodeExists(s.stopTo) || s.stopRoute!=a.routeCommandId ||
+                    a.commandPath.size()<=static_cast<size_t>(s.stopIndex) ||
+                    a.commandPath[s.stopIndex]!=s.stopTo ||
+                    (s.stopIndex ? a.commandPath[s.stopIndex-1] : a.routeStart)!=s.stopFrom) return false;
+                const auto length=map_.pathCost({s.stopFrom,s.stopTo});
+                if (length<=0 || length==LLONG_MAX || s.stopDistance>length) return false;
+            }
+            if (!a.encoder.accept(s)) return false;
+            const auto previous=a.stopCandidate;
+            const bool stable=a.hasStopCandidate && previous.boot==s.boot && previous.connection==s.connection &&
+                previous.stopFrom==s.stopFrom && previous.stopTo==s.stopTo && previous.stopRoute==s.stopRoute &&
+                previous.stopIndex==s.stopIndex && previous.leftTicks==s.leftTicks && previous.rightTicks==s.rightTicks &&
+                previous.stopDistance==s.stopDistance &&
+                s.stationaryMs>=previous.stationaryMs && s.uptime-previous.uptime>=200 && s.uptime-previous.uptime<=1000;
+            a.stopCandidate=s;a.hasStopCandidate=true;
+            if (!stable) {
+                if (a.stoppedLocalized) a.stoppedSeen={};
+                waitingForStable=true;
+            } else {
+                std::vector<std::string> nodes{s.stopFrom};if (!s.stopTo.empty()) nodes.push_back(s.stopTo);
+                changed=!localizedStopNoLock(a) || a.stoppedNodes!=nodes;
+                a.stoppedNodes=nodes;a.stoppedSeen=now;a.stoppedLocalized=true;
+            }
+        }
+        refreshStoppedOccupancy();
+        if (waitingForStable) return true;
+        if (changed) {
+            // Reroute/cancel old waiters before releasing any outside grant.
+            replanAllForStoppedOccupancy();
+            const auto zones=arbiter_.toJson();
+            for (const auto& zone : zones.items()) {
+                if (zone.value().value("owner",std::string{})!=id) continue;
+                bool occupied=true;
+                { std::lock_guard<std::mutex> lk(mtx_);
+                  const auto& a=fleet_.at(id);
+                  occupied=!localizedStopNoLock(a) || std::find(a.stoppedNodes.begin(),a.stoppedNodes.end(),zone.key())!=a.stoppedNodes.end(); }
+                if (occupied || !zone.value().contains("grant_id")) continue;
+                if (arbiter_.confirmClear(zone.key(),id,zone.value().at("grant_id").get<long>())) {
+                    const auto owner=arbiter_.currentOwner(zone.key());
+                    const auto grant=arbiter_.grant(zone.key(),owner);
+                    if (!grant.is_null() && publish_) publish_("agv/"+owner+"/mutex_grant",grant.dump());
+                    emit("AGV_"+id+" dung da xac minh: tu tra mutex "+zone.key());
+                }
+            }
+            replanAllForStoppedOccupancy();
+            notify();dispatchPending();
+        }
+        return true;
+    }
+
+    // May be called before any mutex request/release and every tick. No nested
+    // Fleet/Arbiter lock; server serializes state mutation with g_stateMtx.
+    void refreshStoppedOccupancy() {
+        bool changed=false;
+        std::unordered_set<std::string> blocked;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            for (auto& kv : fleet_) {
+                auto& a=kv.second;
+                if (a.stoppedNodes.empty()) continue;
+                if (a.state==AGVState::IDLE && a.uncertainPath.empty()) {
+                    a.stoppedNodes.clear();a.stoppedLocalized=false;a.hasStopCandidate=false;changed=true;continue;
+                }
+                const bool fresh=localizedStopNoLock(a);
+                if (a.stoppedLocalized && !fresh) {a.stoppedLocalized=false;a.hasStopCandidate=false;changed=true;}
+                blocked.insert(a.stoppedNodes.begin(),a.stoppedNodes.end());
+                if (!fresh) {
+                    std::unordered_set<std::string> uncertain(a.uncertainPath.begin(),a.uncertainPath.end());
+                    uncertain.insert(a.currentNode);uncertain.insert(a.stoppedNodes.begin(),a.stoppedNodes.end());
+                    const auto copy=uncertain;
+                    for (const auto& node : copy) {const auto component=map_.mutexComponent(node);uncertain.insert(component.begin(),component.end());}
+                    blocked.insert(uncertain.begin(),uncertain.end());
+                }
+            }
+        }
+        arbiter_.setBlockedZones(blocked);
+        if (changed) {replanAllForStoppedOccupancy();notify();}
+    }
+
     // Diagnostic khong retained duoc gui ngay sau telemetry. Chi phuc hoi ca
     // thu hai xe tai tram rieng; telemetry pipe mot minh khong noi len loi MCU.
     void observeMotionDiagnostic(const std::string& id, const MotionDiagnostic& diagnostic) {
         if (diagnostic.lastCommandId >= 0 && commandIdHighwaterCallback_)
             commandIdHighwaterCallback_(diagnostic.lastCommandId);
         observeLift(id,diagnostic);
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            auto it=fleet_.find(id);
+            if (it!=fleet_.end()) {
+                auto& a=it->second;
+                const bool stopped=diagnostic.encoderBoot && a.encoder.boot==diagnostic.encoderBoot &&
+                    a.encoder.connection==diagnostic.encoderConnection && diagnostic.node==a.currentNode &&
+                    diagnostic.wifi && diagnostic.mqtt && diagnostic.motor=="STOP" &&
+                    diagnostic.leftDuty==0 && diagnostic.rightDuty==0 && !diagnostic.taskActive &&
+                    (diagnostic.state=="AGV_SAFE_STOP" || diagnostic.state=="AGV_ERROR");
+                if (stopped) {
+                    a.stoppedDiagnosticSeen=Clock::now();a.stoppedDiagnosticUptime=diagnostic.encoderUptime;
+                    a.stoppedDiagnosticRfidAge=diagnostic.rfidAgeMs;
+                } else a.stoppedDiagnosticSeen={};
+                if (a.replanNeedsNodeProof && diagnostic.encoderBoot && a.encoder.boot==diagnostic.encoderBoot &&
+                    a.encoder.connection==diagnostic.encoderConnection &&
+                    static_cast<int32_t>(diagnostic.encoderUptime-a.replanHoldUptime)>0 &&
+                    diagnostic.node==a.currentNode && diagnostic.rfidAgeMs<=250 && diagnostic.wifi && diagnostic.mqtt &&
+                    diagnostic.motor=="STOP" && diagnostic.leftDuty==0 && diagnostic.rightDuty==0 &&
+                    !diagnostic.taskActive && diagnostic.error=="NONE" &&
+                    (diagnostic.state=="AGV_IDLE" || diagnostic.state=="AGV_WAITING")) a.replanNeedsNodeProof=false;
+            }
+        }
         std::string sonarEvent;
         {
             std::lock_guard<std::mutex> lk(mtx_);
@@ -734,7 +886,10 @@ public:
             agv.state = AGVState::AGV_ERROR;
             agv.autoResetEligible = msg == "NETWORK_UNAVAILABLE" || msg == "WIFI_TIMEOUT" || msg == "MQTT_TIMEOUT";
             agv.autoResetRequested = false;agv.autoResetCandidateAt = {};
-            toReplan = agvsRoutedThroughNoLock(agv.currentNode, id); // xe lỗi đang chắn node này
+            // Xe lỗi có thể nằm giữa RFID hiện tại và phần đường còn lại. Replan
+            // mọi tuyến giao với toàn bộ footprint chưa xác minh, kể cả hành lang
+            // gồm nhiều mutex nối trực tiếp, không chỉ đúng currentNode.
+            toReplan = agvsAffectedByFailureNoLock(id);
             if (staleCommand) {
                 // The rejected command did not enter the MCU queue. Retrying it
                 // or issuing another still-low STOP creates an error storm.
@@ -744,8 +899,9 @@ public:
             } else sendCommand(agv, "STOP");
         }
         arbiter_.cancelWaiting(id);
+        appendMutexWaitersForFailedOwners({id},toReplan);
         emit("AGV_" + id + " BAO LOI: " + msg + (requeued ? " -> task bi gian doan, can xac minh" : ""));
-        for (auto& o : toReplan) replanAGV(o);
+        replanAffectedAgvs({id},toReplan);
         notify();
         dispatchPending();
     }
@@ -1140,6 +1296,7 @@ public:
     //  - giao task đang chờ cho xe rảnh gần nhất
     //  - kiểm tra pin toàn đội xe
     void tick() {
+        refreshStoppedOccupancy();
         checkLiftTimeouts();
         pruneTaskRecords();
         if (map_.expireObstacles()) notify();
@@ -1225,6 +1382,8 @@ public:
                     ? json{{"direction",a.sonarDirection},{"range_cm",a.sonarDistanceCm}} : json(nullptr)},
                 {"obstacle_detection", detected},
                 {"uncertain_path", a.uncertainPath},
+                {"stopped_nodes",a.stoppedNodes},{"stopped_occupancy_verified",localizedStopNoLock(a)},
+                {"replan_waiting_for_node",a.replanNeedsNodeProof},
                 {"heading_supported", a.headingSupported && now-a.diagnosticSeen <= std::chrono::seconds(3) && networkAvailable_},
                 {"heading", a.headingNode == a.currentNode && a.positionValid && now-a.diagnosticSeen <= std::chrono::seconds(3) &&
                     a.hasTelemetry && now-a.lastSeen <= offlineTimeout_ && a.state != AGVState::OFFLINE && networkAvailable_
@@ -1260,6 +1419,21 @@ public:
     }
 
 private:
+    bool localizedStopNoLock(const AGV& a) const {
+        const auto now=Clock::now();
+        return a.stoppedLocalized && !a.stoppedNodes.empty() && networkAvailable_ && a.hasTelemetry && a.positionValid &&
+            a.stopCandidate.stopFrom==a.currentNode &&
+            a.state==AGVState::AGV_ERROR && now-a.lastSeen<=std::chrono::milliseconds(1000) &&
+            now-a.stoppedSeen<=std::chrono::milliseconds(1000) &&
+            now-a.stoppedDiagnosticSeen<=std::chrono::milliseconds(1500) &&
+            a.encoder.boot==a.stopCandidate.boot && a.encoder.connection==a.stopCandidate.connection;
+    }
+    void replanAllForStoppedOccupancy() {
+        std::vector<std::string> ids;
+        {std::lock_guard<std::mutex> lk(mtx_);for(const auto& kv:fleet_)
+            if(kv.second.state==AGVState::WORKING || kv.second.state==AGVState::CHARGING_EN_ROUTE || kv.second.state==AGVState::BLOCKED) ids.push_back(kv.first);}
+        replanAffectedAgvs({},ids);
+    }
     bool activeRobotNoLock(const std::string& id) const {
         return activeRobotIds_.empty() || activeRobotIds_.count(id) != 0;
     }
@@ -1336,6 +1510,7 @@ private:
         if (interrupted) setTaskStatusNoLock(a.taskId, "interrupted", a.id, reason);
         if (a.uncertainPath.empty()) a.uncertainPath = a.activePath;
         a.taskId.clear(); a.activePath.clear(); a.finalTarget.clear(); a.blockedResume = AGVState::IDLE;
+        a.replanNeedsNodeProof=false;
         return interrupted;
     }
 
@@ -1423,6 +1598,7 @@ private:
         for (auto& kv : fleet_) {
             if (kv.first == excludeId) continue;
             const AGV& o = kv.second;
+            if (localizedStopNoLock(o)) {busy.insert(o.stoppedNodes.begin(),o.stoppedNodes.end());continue;}
             if (!o.currentNode.empty()) busy.insert(o.currentNode);
             for (auto& n : o.activePath) busy.insert(n);
             for (auto& n : o.uncertainPath) busy.insert(n);
@@ -1432,6 +1608,7 @@ private:
 
     // Ưu tiên né cả route dự kiến; fallback vẫn giữ node/đích đang chiếm và vùng chưa xác minh.
     std::vector<std::string> computePathNoLock(const AGV& agv, const std::string& target) {
+        if (buildOccupiedNodesNoLock(agv.id).count(agv.currentNode)) return {};
         auto busy = buildBusyNodesNoLock(agv.id);
         auto path = map_.findShortestPath(agv.currentNode, target, busy);
         if (path.empty()) path = map_.findShortestPath(agv.currentNode, target, buildHardBlockedNodesNoLock(agv.id));
@@ -1443,6 +1620,8 @@ private:
         for (const auto& kv : fleet_) {
             if (kv.first == excludeId) continue;
             const auto& a = kv.second;
+            if (localizedStopNoLock(a)) {blocked.insert(a.stoppedNodes.begin(),a.stoppedNodes.end());continue;}
+            blocked.insert(a.stoppedNodes.begin(),a.stoppedNodes.end());
             if (!a.currentNode.empty()) blocked.insert(a.currentNode);
             if (!a.finalTarget.empty()) blocked.insert(a.finalTarget);
             if (a.state == AGVState::OFFLINE || a.state == AGVState::AGV_ERROR || !a.positionValid) {
@@ -1462,6 +1641,7 @@ private:
             if (kv.first == excludeId) continue;
             const auto& a = kv.second;
             // Ordinary gates/corners have no grant protocol: reserve their whole route.
+            if (localizedStopNoLock(a)) continue;
             for (const auto& node : a.activePath) if (!mutex.count(node)) blocked.insert(node);
             auto reserveCorridor = [&](const std::string& node) {
                 if (!mutex.count(node)) return;
@@ -1484,6 +1664,71 @@ private:
             if (std::find(p.begin(), p.end(), node) != p.end()) out.push_back(kv.first);
         }
         return out;
+    }
+
+    // PHẢI gọi khi đang giữ mtx_. Một xe lỗi/offline có thể còn ở currentNode,
+    // ở bất kỳ node nào của uncertainPath, hoặc quét/chiếm cả hành lang mutex.
+    // Chỉ chọn xe đang có kế hoạch để replan; xe IDLE không cần nhận command mới.
+    std::vector<std::string> agvsAffectedByFailureNoLock(const std::string& failedId) {
+        std::vector<std::string> affected;
+        const auto failed = fleet_.find(failedId);
+        if (failed == fleet_.end()) return affected;
+
+        std::unordered_set<std::string> footprint;
+        auto addFootprintNode = [&](const std::string& node) {
+            if (node.empty()) return;
+            footprint.insert(node);
+            const auto component = map_.mutexComponent(node);
+            footprint.insert(component.begin(),component.end());
+        };
+        addFootprintNode(failed->second.currentNode);
+        if (localizedStopNoLock(failed->second)) {
+            footprint.clear();footprint.insert(failed->second.stoppedNodes.begin(),failed->second.stoppedNodes.end());
+        } else {
+            for (const auto& node : failed->second.activePath) addFootprintNode(node);
+            for (const auto& node : failed->second.uncertainPath) addFootprintNode(node);
+        }
+
+        auto intersects = [&](const AGV& candidate) {
+            if (footprint.count(candidate.currentNode) || footprint.count(candidate.finalTarget)) return true;
+            return std::any_of(candidate.activePath.begin(),candidate.activePath.end(),
+                [&](const std::string& node) {return footprint.count(node) > 0;});
+        };
+        for (const auto& kv : fleet_) {
+            if (kv.first == failedId) continue;
+            const auto state = kv.second.state;
+            if (state != AGVState::WORKING && state != AGVState::CHARGING_EN_ROUTE && state != AGVState::BLOCKED)
+                continue;
+            if (intersects(kv.second)) affected.push_back(kv.first);
+        }
+        return affected;
+    }
+
+    // Gọi ngoài mtx_: lấy cả xe đang xếp hàng sau mutex do xe lỗi giữ. Snapshot
+    // arbiter tách khỏi FleetManager lock để không tạo lock-order Fleet->Arbiter.
+    void appendMutexWaitersForFailedOwners(const std::vector<std::string>& failedIds,
+                                            std::vector<std::string>& affected) {
+        const std::unordered_set<std::string> failed(failedIds.begin(),failedIds.end());
+        const auto zones = arbiter_.toJson();
+        for (const auto& zone : zones.items()) {
+            if (!failed.count(zone.value().value("owner",std::string{}))) continue;
+            for (const auto& waiter : zone.value().value("waiting",json::array()))
+                affected.push_back(waiter.get<std::string>());
+        }
+    }
+
+    // Gọi ngoài mtx_. Hủy lượt chờ cũ trước khi phát tuyến mới để xe không được
+    // cấp grant muộn cho mutex mà tuyến mới đã né. Nếu không còn đường,
+    // replanAGV chuyển xe sang BLOCKED/WAIT và tick sẽ thử lại an toàn.
+    void replanAffectedAgvs(const std::vector<std::string>& failedIds,
+                            std::vector<std::string> affected) {
+        std::sort(affected.begin(),affected.end());
+        affected.erase(std::unique(affected.begin(),affected.end()),affected.end());
+        for (const auto& id : affected) {
+            if (std::find(failedIds.begin(),failedIds.end(),id) != failedIds.end()) continue;
+            arbiter_.cancelWaiting(id);
+            replanAGV(id);
+        }
     }
 
     // Dùng resumeBattery_ (không phải lowBattery_) để tránh xe pin 21% nhận task rồi
@@ -1519,6 +1764,7 @@ private:
                     for (auto& kv : fleet_) {
                         const AGV& agv = kv.second;
                         if (!dispatchableNoLock(agv)) continue;
+                        if (buildOccupiedNodesNoLock(agv.id).count(agv.currentNode)) continue;
                         std::vector<std::string> path;
                         if (pass == 0) path = map_.findShortestPath(agv.currentNode, t.targetNode, buildBusyNodesNoLock(kv.first));
                         else           path = map_.findShortestPath(agv.currentNode, t.targetNode, buildHardBlockedNodesNoLock(kv.first));
@@ -1549,6 +1795,7 @@ private:
     void assignPath(AGV& agv, std::vector<std::string> path, const std::string& target, AGVState newState) {
         if (!path.empty() && path.front() == agv.currentNode) path.erase(path.begin());
         agv.activePath = path;
+        agv.replanNeedsNodeProof=false;
         agv.commandPath = path; agv.routeStart = agv.currentNode;
         agv.lastNodeOrderKey.clear(); agv.lastNodeOrderPayload.clear();
         agv.finalTarget = target;
@@ -1595,6 +1842,7 @@ private:
     // thì coi là mất liên lạc lệnh: gián đoạn nhiệm vụ và chuyển xe sang AGV_ERROR.
     void checkAcks() {
         std::vector<std::pair<std::string, bool>> failed; // {agvId, co_requeue_task_khong}
+        std::vector<std::string> failedIds, toReplan;
         {
             std::lock_guard<std::mutex> lk(mtx_);
             const auto now = Clock::now();
@@ -1619,9 +1867,17 @@ private:
                     agv.lastError = "Khong nhan duoc ACK; can xac minh robot";
                     agv.state = AGVState::AGV_ERROR;
                     failed.push_back({id, requeued});
+                    failedIds.push_back(id);
+                    const auto affected = agvsAffectedByFailureNoLock(id);
+                    toReplan.insert(toReplan.end(),affected.begin(),affected.end());
                     it = pendingCmd_.erase(it);
                 }
             }
+        }
+        if (!failedIds.empty()) {
+            for (const auto& id : failedIds) arbiter_.cancelWaiting(id);
+            appendMutexWaitersForFailedOwners(failedIds,toReplan);
+            replanAffectedAgvs(failedIds,toReplan);
         }
         for (auto& f : failed)
             emit("AGV_" + f.first + " KHONG ACK lenh sau " + std::to_string(maxRetries_) +
@@ -1644,6 +1900,16 @@ private:
         if (resume != AGVState::WORKING && resume != AGVState::CHARGING_EN_ROUTE) resume = AGVState::WORKING;
 
         auto path = computePathNoLock(agv, agv.finalTarget);
+        auto remaining=path;
+        if (!remaining.empty() && remaining.front()==agv.currentNode) remaining.erase(remaining.begin());
+        if (!path.empty() && agv.state!=AGVState::BLOCKED && remaining==agv.activePath) return;
+        if (agv.nodeOrdersSupported && agv.state!=AGVState::BLOCKED) {
+            // MCU rejects GOTO over an active route; a stopped midpoint is not
+            // a new route origin. Wait for a later bound STOP + fresh node tag.
+            agv.replanNeedsNodeProof=true;agv.replanHoldUptime=agv.encoder.diagnosticUptime;
+            agv.blockedResume=resume;agv.state=AGVState::BLOCKED;agv.activePath.clear();
+            sendCommand(agv,"WAIT");return;
+        }
         if (path.empty()) {
             if (agv.state != AGVState::BLOCKED) {
                 agv.blockedResume = resume;
@@ -1651,7 +1917,7 @@ private:
                 agv.activePath.clear();
                 sendCommand(agv, "WAIT");
             }
-        } else {
+        } else if (!agv.replanNeedsNodeProof) {
             assignPath(agv, path, agv.finalTarget, resume);
         }
     }
@@ -1674,21 +1940,22 @@ private:
                 lost.push_back(kv.first);
                 pendingCmd_.erase(kv.first); // đừng phí công gửi lại lệnh cho xe đã coi là mất kết nối
             }
-            for (auto& id : lost)
-                for (auto& o : agvsRoutedThroughNoLock(fleet_[id].currentNode, id)) toReplan.push_back(o);
+            for (auto& id : lost) {
+                const auto affected = agvsAffectedByFailureNoLock(id);
+                toReplan.insert(toReplan.end(),affected.begin(),affected.end());
+            }
             release = releaseZonesOnOffline_;
         }
         if (lost.empty()) return;
 
-        std::sort(toReplan.begin(), toReplan.end());
-        toReplan.erase(std::unique(toReplan.begin(), toReplan.end()), toReplan.end());
         for (auto& id : lost) {
             bool requeued = std::find(requeuedIds.begin(), requeuedIds.end(), id) != requeuedIds.end();
             arbiter_.cancelWaiting(id);
             emit("AGV_" + id + " MAT KET NOI (OFFLINE)" + (requeued ? " -> task bi gian doan, can xac minh" : ""));
-            if (release) releaseAgvZones(id);
         }
-        for (auto& o : toReplan) replanAGV(o);
+        appendMutexWaitersForFailedOwners(lost,toReplan);
+        if (release) for (const auto& id : lost) releaseAgvZones(id);
+        replanAffectedAgvs(lost,toReplan);
         notify();
         dispatchPending();
     }
@@ -1704,6 +1971,7 @@ private:
                 if (!activeRobotNoLock(agv.id)) continue;
                 if (!trialRobotId_.empty() && agv.id != trialRobotId_) continue;
                 if (agv.state != AGVState::BLOCKED) continue;
+                if (agv.replanNeedsNodeProof) continue;
                 if (!agv.positionValid || Clock::now()-agv.lastSeen > offlineTimeout_) continue;
                 if (agv.finalTarget.empty()) {
                     // Không còn việc dở. Nếu pin thấp thì để checkBatteryOne tìm đường tới trạm sạc.

@@ -1,5 +1,9 @@
 # Giao thức mạng và hợp đồng MCU với server
 
+23/10/2026, REQ-FIRMWARE-SERVER-SYNC-01: firmware server-sync-v16 lại phát diagnostic `lastCommandId` (high-water đã persist) để Core tiến counter; bỏ ngoại lệ bench nhận lệnh cũ ngoài cache. Khôi phục producer proof dừng theo schema1 hiện có; không thay topic, command/ACK/telemetry pipe hoặc hợp đồng proof. Giữ cấu hình mạng và tuning của RAR. [ADR-072](decisions/ADR-072-stale-command-counter-recovery.md), [kiểm chứng](../tests/README.md).
+
+23/10/2026: odometry schema1 mở rộng tùy chọn `stopped_position` cho hai xe. Core xác thực đứng yên/phiên/seq/chặng và diagnostic mới trước khi thu hẹp vùng chặn về một node hoặc hai đầu đoạn, tự trả mutex ngoài vùng/replan. Thiếu/cũ/offline giữ bảo thủ; telemetry/command/ACK/mutex giữ payload cũ. [Hợp đồng](../contracts/robot01-odometry.md), [ADR-079](decisions/ADR-079-stopped-edge-occupancy.md).
+
 22/10/2026, REQ-DUAL-TURN180-FAST-CAPTURE-01: turn180-v13 thêmxácnhậnSTOP100ms khiquay180. Trongxácnhận vẫnAGV_MOVING/taskactive, chưastationReady/hoànthànhtask; sauđó mớihandoffsonar vàbámline/đỗnhưcũ. RFIDđọc lại sauphaquay; khôngtựphátRFIDarrival hayreplaylệnh. MQTTworker/STOP/grant/sonar giữnguyên, khôngđổi topic/payload/QoS/ACK/counter hoặc timeoutoffline. Nhịpđọc mục tiêu2ms/logmaxgap chỉcụcbộ firmware. [ADR-077](decisions/ADR-077-turn180-fast-stop-confirm.md).
 
 22/10/2026, REQ-DUAL-EDGE-LINE-ROLLBACK-01: narrow-v12 bỏ001/100 khỏi xác nhận phục hồi/bắtline sau rẽ của cảhai xe; chỉ010/011/110 xác nhận. Điều chỉnh cục bộ cảm biến/navigator, không đổi topic/QoS/payload/ACK/timeoutoffline/counter hoặc cấu hìnhmạng. Core vẫn nhận lỗi thực từMCU và không tựclear/replay sau lỗi/reset. [ADR-076](decisions/ADR-076-dual-narrow-line-confirm.md).

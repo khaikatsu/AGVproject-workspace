@@ -168,7 +168,7 @@ bool CoreProtocol::odometry(const OdometrySnapshot& s, uint32_t bootId, const ch
     if (!output || !capacity || !bootId || !coreSession || !coreSession[0] || std::strlen(coreSession) > 95 ||
         !s.localSession || !std::isfinite(s.distanceCm) || !std::isfinite(s.speedCmS) ||
         s.distanceCm < 0 || s.speedCmS < 0) return false;
-    StaticJsonDocument<1024> doc;
+    StaticJsonDocument<1536> doc;
     auto o = doc.to<JsonObject>();
     o["schema_version"] = 1; o["robot_id"] = Config::AGV_ID; o["core_session_id"] = coreSession;
     o["boot_id"] = bootId; o["connection_session"] = s.localSession;
@@ -179,5 +179,13 @@ bool CoreProtocol::odometry(const OdometrySnapshot& s, uint32_t bootId, const ch
     o["left_ticks"] = s.leftTicks; o["right_ticks"] = s.rightTicks;
     o["distance_cm"] = s.distanceCm; o["speed_cm_s"] = s.speedCmS;
     o["pulses_per_100cm"] = Config::ENCODER_PULSES_PER_100CM;
+    if (s.stopPositionValid) {
+        auto proof = o.createNestedObject("stopped_position");
+        proof["version"] = 1;
+        proof["from_node"] = s.stopFrom; proof["to_node"] = s.stopTo;
+        proof["route_cmd_id"] = s.stopRoute; proof["path_index"] = s.stopIndex;
+        proof["stationary_ms"] = s.stationaryMs;
+        proof["distance_cm"] = s.stopDistanceCm;
+    }
     return !doc.overflowed() && measureJson(doc) < capacity && serializeJson(doc,output,capacity) > 0;
 }

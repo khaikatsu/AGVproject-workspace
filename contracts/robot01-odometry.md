@@ -1,5 +1,24 @@
 # Hợp đồng odometry xe 01 và 02 — schema 1
 
+## Mở rộng vị trí dừng sau lỗi — 23/10/2026
+
+Producer được khôi phục trên nền RAR trong `20261023-robot0x-server-sync-v16` (REQ-FIRMWARE-SERVER-SYNC-01); schema và điều kiện xác minh dưới đây giữ nguyên.
+
+Firmware01/02 `20261023-robot0x-stopped-edge-v15` có thể thêm object tùy chọn `stopped_position` trên odometry schema1. Outer packet vẫn tracking/translating=false, route/distance/speed=0, to_node rỗng. Tracking=false của firmware cũ không phải bằng chứng tại node.
+
+| Trường trong stopped_position | Kiểu / giới hạn | Ý nghĩa |
+| --- | --- | --- |
+| version | integer1 | Phiên bản proof |
+| from_node | string node tồn tại | RFID mốc đã xác nhận |
+| to_node | string node hoặc rỗng | Rỗng: RFID mới tại from; khác rỗng: chặn hai đầu đoạn |
+| route_cmd_id / path_index | integer1…INT_MAX / 0…31 cho cạnh; 0/0 cho node | GOTO/index trước lỗi |
+| distance_cm | finite≥0; 0 cho node | Quãng tịnh tiến đến lúc dừng, không vượt weight cạnh |
+| stationary_ms | uint32≥600 | Rawticks hai bánh không đổi trong lúc driverSTOP/duty0 |
+
+Core kiểm tra Core/boot/connection session, seq/uptime, diagnostic cùng phiên STOP/SAFE_STOP/ERROR; cần hai proof cùng vùng/rawticks/distance cách200–1000ms. Telemetry≤1000ms, diagnostic≤1500ms; proof node cần diagnostic RFID tuổi≤250ms. Sai/cũ/thiếu bằng chứng không thu hẹp vùng. Core chặn một node hoặc hai đầu cạnh, tự trả mutex ngoài vùng/replan, xe lỗi vẫnERROR. Snapshot có `stopped_nodes` lưu checkpoint và `stopped_occupancy_verified` chỉ đúng khi bằng chứng mới; restart trở lại bảo thủ. Mutex có `blocked_by_stopped_robot:true` khi chặn grant kể cả owner rỗng.
+
+[Ví dụ cạnh](examples/robot01-stopped-odometry.json). Mở rộng này thay giới hạn lịch sử “odometry chỉ hiển thị/không nhả mutex” bên dưới khi đủ điều kiện. Firmware/packet cũ giữ hành vi cũ. [ADR-079](../docs/decisions/ADR-079-stopped-edge-occupancy.md).
+
 17/10/2026: mapv4 dùng weightcm làm edge_length_cm thay khoảng cách Euclid giữa hai RFID. Cạnh bo135cm có geometry hai đoạn; x/y là nội suy sơ đồ theo segment_lengths_cm, không phải đường chéo. Giữ clamp0,98 và chỉ RFID xác nhận đích; sonar chiếu theo cùng cạnh là ước tính, chưa xác nhận vị trí vật cản thực trên góc cong. [ADR-064](../docs/decisions/ADR-064-rounded-map-without-corner-tags.md).
 
 16/10/2026: REQ-ROBOT02-PARITY-01 mở cùng schema cho cả hai profile. Topic `agv/{id}/odometry`, `robot_id` là `01` hoặc `02` và phải trùng topic. Core lưu phiên/seq/route độc lập; cùng boot ID hoặc seq giữa hai xe không ghép dữ liệu. Ví dụ01 bên dưới vẫn hợp lệ; [ví dụ02](examples/robot02-odometry.json). [ADR-059](../docs/decisions/ADR-059-robot02-firmware-parity.md) thay các giới hạn chỉ xe01/mode test01 ở phần lịch sử dưới đây.

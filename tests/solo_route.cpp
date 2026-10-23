@@ -1,6 +1,6 @@
 #include "map/MapGraph.hpp"
 #include "core/NodeManeuver.hpp"
-#include "../firmware/NCKHAGV/NCKHAGV/src/core/RoutePlanner.h"
+#include "../firmware/NCKHAGV/src/core/RoutePlanner.h"
 #include <cstring>
 #include <iostream>
 #include <stdexcept>

@@ -1,5 +1,9 @@
 # Thuật toán tìm đường và điều phối
 
+23/10/2026, REQ-STOPPED-OCCUPANCY-01: proof đứng yên hợp lệ thu hẹp chặn về node A hoặc A/B của đoạn xe lỗi; planner và arbiter cùng bảo vệ vùng đó, tự trả mutex ngoài vùng. Giữ đường cũ để dự phòng khi stale/offline/restart; xe lỗi vẫn ERROR. Không cộng đệm hình học theo chốt người dùng. Tuyến đang an toàn không bị phát GOTO lại; MCU đang chạy cần WAIT và RFID dừng mới trước tuyến thay thế. [ADR-079](decisions/ADR-079-stopped-edge-occupancy.md).
+
+23/10/2026, REQ-FAILURE-REPLAN-01: ERROR/LWT/timeout/ACK-failure kích hoạt replan theo `currentNode + activePath + uncertainPath + mutex component`; xe đang chờ mutex của owner lỗi cũng được rút FIFO cũ và thử đường vòng. Không có đường thì BLOCKED/WAIT; mutex xe lỗi vẫn giữ tới khi có bằng chứng clearance. [ADR-078](decisions/ADR-078-failure-footprint-replanning.md).
+
 17/10/2026, REQ-MUTEX-ENCODER-01: firmware hai xe có thể trả M1–M6 trước RFID kế tiếp sau khi có bằng chứng đuôi đã qua biên: mỗi bánh đủ30 xung tịnh tiến từ lần đầu đọc thẻ M, thẻ mất ổn định100ms và route/phiên/vị trí còn khỏe. Pivot/STOP/tìm line không cộng; offline/lỗi không nhả. Core vẫn cấp một owner/FIFO và kiểm tra đúng `grant_id`; thay đổi này giảm thời gian giữ khóa, không giải quyết deadlock nhiều khóa hoặc xung đột cạnh. [ADR-068](decisions/ADR-068-encoder-mutex-tail-clearance.md).
 
 17/10/2026: mapv4 bỏC1–C4; cạnh bo có weight135cm (nhãn85+50) và hướng rời/tới tách riêng. Dijkstra dùng weight, NodeManeuver đi xuyên/rẽ dùng tiếp tuyến ở đúng đầu cạnh. Via không là node hoặc điểm pivot. Giữ6mutex, trả M2 tạiG6/M3 tạiG1 theo RFID đúng tuyến/token; [ADR-064](decisions/ADR-064-rounded-map-without-corner-tags.md).

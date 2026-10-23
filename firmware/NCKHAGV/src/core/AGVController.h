@@ -13,6 +13,7 @@
 #include "sensors/CargoModule.h"
 #include "actuators/BuzzerModule.h"
 #include "sensors/EncoderModule.h"
+#include "StoppedPosition.h"
 
 class AGVController {
 public:
@@ -40,6 +41,7 @@ private:
     BatteryModule battery_;
     CargoModule cargo_;
     EncoderModule encoder_;
+    StoppedPosition stoppedPosition_;
     WiFiModule wifi_;
     MQTTModule mqtt_;
     ControlLogic control_;
