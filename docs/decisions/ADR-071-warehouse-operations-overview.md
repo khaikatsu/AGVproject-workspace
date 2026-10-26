@@ -2,6 +2,10 @@
 
 Ngày 18/10/2026. Trạng thái: IMPLEMENTED giao diện.
 
+Bổ sung 26/10/2026: [ADR-085](ADR-085-unified-mission-results-board.md) thay hai danh sách Các lượt lấy–giao và Nhiệm vụ và kết quả bằng một bảng chung, mở chi tiết theo đơn/chặng và giữ các thao tác hiện có.
+
+Bổ sung 26/10/2026: [ADR-083](ADR-083-fixed-vehicle-cards-in-warehouse-overview.md) đổi tiêu đề hiện hành thành **Trạng thái xe và kho**, gộp bảng Đội xe vào hai thẻ cố định01/02 và giữ thẻ sau khi gỡ khỏi Core. Các quyết định tên gọi bên dưới ghi lại yêu cầu tại thời điểm18/10.
+
 ## Nguồn và hiện trạng
 
 `SOURCE`: người dùng gửi ảnh form đơn hàng và yêu cầu hiển thị rõ xe nào đi lấy/giao tại kho nào, nguồn → đích của từng lượt, và trạng thái các kho trong ca. Cho phép làm lại giao diện cho dễ nhìn.

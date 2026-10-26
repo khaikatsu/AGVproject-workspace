@@ -1,4 +1,5 @@
 const {randomUUID} = require('node:crypto');
+const {warehouseNodes} = require('./public/warehouse-rules');
 
 const conflict = message=>Object.assign(new Error(message),{status:409});
 const invalid = message=>Object.assign(new Error(message),{status:400});
@@ -82,7 +83,7 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       !['IDLE','CHARGING'].includes(robot.state)||robot.task_id||robot.target||robot.path?.length||robot.lift?.active))
       throw conflict('Cần xử lý đơn và dừng các thao tác xe trước khi nhập kho');
     if(body?.physically_verified!==true)throw invalid('Cần xác nhận đã kiểm tra vị trí kệ và xe thực tế');
-    const nodes=core.map.nodes.filter(node=>node.type==='station'&&/^K[1-6]$/.test(node.id)).map(node=>node.id).sort();
+    const nodes=warehouseNodes(core.map);
     if(!nodes.length || !Array.isArray(body.slots)||body.slots.length!==nodes.length)throw invalid('Nhập đầy đủ các vị trí K trên bản đồ');
     const slots=body.slots.map(slot=>{
       if(!slot||!nodes.includes(slot.node)||!(slot.rack_id===null||typeof slot.rack_id==='string'))throw invalid('Vị trí hoặc mã kệ không hợp lệ');
@@ -104,7 +105,14 @@ function createWarehouseInventory({db,publish=()=>{}}) {
   function checkMove(state,{key,pickup,dropoff,robot,standalone}) {
     if(!state.initialized)throw conflict('Nhập trạng thái kệ ban đầu trước khi tạo đơn hàng kho');
     const existing=state.moves.find(move=>move.key===key);
-    if(existing)return existing;
+    if(existing) {
+      const sameRequest=existing.pickup===(pickup||null)&&existing.dropoff===(dropoff||null)&&
+        existing.robot===robot&&existing.standalone===!!standalone;
+      if(!sameRequest)throw conflict('Mã thao tác đã được dùng cho lượt chuyển kệ khác');
+      if(existing.status==='needs_attention')throw conflict('Lượt chuyển kệ đang cần đối soát; không tự tiếp tục');
+      if(!['reserved','carrying'].includes(existing.status))throw conflict('Lượt chuyển kệ đã kết thúc; không thể đặt chỗ lại');
+      return existing;
+    }
     const source=state.slots.find(slot=>slot.node===pickup),target=state.slots.find(slot=>slot.node===dropoff);
     const rack=pickup ? state.racks.find(rack=>rack.id===source?.rack_id) :
       state.racks.find(rack=>rack.location.type==='robot'&&rack.location.id===robot);
@@ -128,7 +136,8 @@ function createWarehouseInventory({db,publish=()=>{}}) {
     }
   }
   function reserve(spec) {
-    const existing=read().moves.find(move=>move.key===spec.key);if(existing)return existing;
+    const current=read();
+    if(current.moves.some(move=>move.key===spec.key))return checkMove(current,spec);
     return change((state,event)=>{
       const move=checkMove(state,spec);state.moves.push(move);
       event(`reserve:${move.key}`,{type:'reserved',...move,message:`Dành kệ ${move.rack_id} cho xe ${move.robot}`});
@@ -159,6 +168,54 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       event(eventKey,{type:action,evidence:'servo_cycle',rack_id:rack.id,robot:robot.id,move_key:key,source:up?node:`xe ${robot.id}`,
         target:up?`xe ${robot.id}`:node,command_id:commandId,core_session_id:session,
         message:up?`Xe ${robot.id} đã nâng kệ ${rack.id} tại ${node}`:`Xe ${robot.id} đã đặt kệ ${rack.id} tại ${node}`});
+    });
+  }
+  function rollbackPlan(order,state=read()) {
+    const moves=[];
+    for(const item of order.items) {
+      if(item.status==='delivered')continue;
+      const move=state.moves.find(move=>move.key===`order:${order.id}:${item.number}`);
+      // A confirmed dropoff remains at its destination, even if exiting failed.
+      if(move?.status==='placed'||move?.status==='rolled_back')continue;
+      if(!move) {
+        if(sql.prepare("SELECT 1 FROM warehouse_events WHERE json_extract(event_json,'$.move_key')=? AND json_extract(event_json,'$.type')='dropoff' LIMIT 1")
+          .get(`order:${order.id}:${item.number}`))continue;
+        if(item.rack_id)throw conflict('Không còn dữ liệu lượt chuyển kệ; kiểm tra lại kho trước khi hoàn tác');
+        continue; // Legacy/never-dispatched order has no inventory change to undo.
+      }
+      if(!['reserved','carrying','needs_attention'].includes(move.status)||!move.pickup)
+        throw conflict('Lượt chuyển kệ không thể hoàn tác');
+      const source=state.slots.find(slot=>slot.node===move.pickup),rack=state.racks.find(rack=>rack.id===move.rack_id);
+      if(!source||!rack||source.rack_id&&source.rack_id!==rack.id)
+        throw conflict(`${move.pickup} đang có kệ khác hoặc dữ liệu kho không khớp`);
+      if(!(rack.location.type==='robot'&&rack.location.id===move.robot ||
+          rack.location.type==='slot'&&rack.location.id===move.pickup))
+        throw conflict(`Kệ ${rack.id} đã đổi vị trí; tải lại trước khi hoàn tác`);
+      if(state.racks.some(other=>other.id!==rack.id&&other.location.type==='robot'&&other.location.id===move.robot))
+        throw conflict(`Xe ${move.robot} đang có kệ khác; kiểm tra lại trước khi hoàn tác`);
+      if(state.moves.some(other=>other.key!==move.key&&openMove(other)&&
+          (other.rack_id===rack.id||other.robot===move.robot||[other.pickup,other.dropoff].includes(move.pickup))))
+        throw conflict('Kệ, xe hoặc kho lấy đang thuộc lượt chuyển khác');
+      moves.push({key:move.key,rack_id:rack.id,robot:move.robot,pickup:move.pickup});
+    }
+    return moves;
+  }
+  function rollbackOrder(order,expectedRevision,commitOrder) {
+    return change((state,event)=>{
+      if(state.initialized&&expectedRevision!==state.revision)throw conflict('Trạng thái kho đã thay đổi; tải lại trước khi hoàn tác');
+      const moves=rollbackPlan(order,state);
+      for(const entry of moves) {
+        const move=state.moves.find(move=>move.key===entry.key),rack=state.racks.find(rack=>rack.id===entry.rack_id);
+        const previous={...rack.location};
+        state.slots.find(slot=>slot.node===entry.pickup).rack_id=rack.id;
+        rack.location={type:'slot',id:entry.pickup};rack.status='stored';
+        move.status='rolled_back';move.resolved_at=now();
+        event(`rollback:${move.key}`,{type:'rollback',evidence:'operator_verified',order_id:order.id,
+          rack_id:rack.id,robot:move.robot,move_key:move.key,previous,target:entry.pickup,
+          message:`Đã hoàn tác kệ ${rack.id} về ${entry.pickup}; xác nhận xe ${move.robot} trống`});
+      }
+      // The order and ledger commit together; a failed save rolls back both.
+      commitOrder(moves);return moves;
     });
   }
   function finishShift(state,event,reason,context) {
@@ -198,7 +255,7 @@ function createWarehouseInventory({db,publish=()=>{}}) {
     return {...snapshot(state),shift:state.shift ? {...state.shift,initial_state:undefined,initial_slots:state.shift.initial_state.slots}:null,
       events:history(20),latest_report_id:sql.prepare('SELECT id FROM warehouse_shift_reports ORDER BY created_at DESC,id DESC LIMIT 1').get()?.id||null};
   }
-  return {snapshot:currentSnapshot,configure,assertPlan,reserve,confirmLift,interrupt,
+  return {snapshot:currentSnapshot,configure,assertPlan,reserve,confirmLift,interrupt,rollbackPlan,rollbackOrder,
     observationGap,observeShift,history,reports,reportById,
     robotAvailable:id=>!read().racks.some(rack=>rack.location.type==='robot'&&rack.location.id===id)};
 }

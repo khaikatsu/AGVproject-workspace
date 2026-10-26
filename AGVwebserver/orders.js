@@ -6,9 +6,10 @@ const LIFT_READY_TIMEOUT_MS = 5000;
 const LIFT_RESULT_TIMEOUT_MS = 15000;
 const activeItem = item=>!['queued','delivered','interrupted'].includes(item.status);
 
-function createOrderService({db,getState,getSession,send,publish,inventory}) {
+function createOrderService({db,getState,getSession,send,publish,inventory,getLocationNames}) {
   const orders = db.getOrders();
   let tickPromise = null,stopped = false;
+  const resolving=new Set();
   const save = order=>{order.updated = new Date().toISOString();db.saveOrder(order);publish();};
   const moveKey=(order,item)=>`order:${order.id}:${item.number}`;
   // A restart loses the in-memory command handshake and cargo observation.
@@ -24,13 +25,77 @@ function createOrderService({db,getState,getSession,send,publish,inventory}) {
   function interruptAll(reason) {
     for (const order of orders) if (order.status === 'active') interrupt(order,order.items.find(activeItem),reason);
   }
-  function resolve(orderId,physicallyClear) {
+  async function resolve(orderId,physicallyClear,expectedRevision) {
     const order = orders.find(candidate=>candidate.id === orderId);
     if (!order) throw Object.assign(new Error('Không tìm thấy đơn hàng'),{status:404});
+    if(order.status==='closed'&&order.resolution==='rollback_to_pickup')return order;
     if (order.status !== 'needs_attention') throw Object.assign(new Error('Đơn chưa ở trạng thái cần đối soát'),{status:409});
-    if (physicallyClear !== true) throw Object.assign(new Error('Cần xác nhận đã kiểm tra xe và kiện hàng'),{status:400});
-    order.status = 'closed';order.reason = 'Đã đối soát thủ công; các kiện chưa giao không được tự chạy lại';
-    order.closed_at = new Date().toISOString();save(order);return order;
+    if (physicallyClear !== true) throw Object.assign(new Error('Cần xác nhận kệ đã về kho lấy và xe đã trống'),{status:400});
+    if(resolving.has(orderId))throw Object.assign(new Error('Đang hoàn tác đơn này'),{status:409});
+    resolving.add(orderId);
+    try {
+      if(inventory?.snapshot().initialized&&expectedRevision!==inventory.snapshot().revision)
+        throw Object.assign(new Error('Trạng thái kho đã thay đổi; tải lại trước khi hoàn tác'),{status:409});
+      const rollback=inventory?.rollbackPlan(order);
+      const affected=inventory?.snapshot().initialized ? rollback :
+        order.items.filter(item=>item.robot&&!['queued','delivered'].includes(item.status));
+      const robots=[...new Set(affected.map(item=>item.robot).filter(Boolean))];
+      if(orders.some(other=>other.id!==order.id&&['active','needs_attention'].includes(other.status)&&
+          other.items.some(item=>robots.includes(item.robot)&&!['queued','delivered'].includes(item.status))))
+        throw Object.assign(new Error('Xe đang gắn với lượt chuyển khác; xử lý lượt đó trước khi hoàn tác'),{status:409});
+      if(robots.length) {
+        const state=getState();
+        if(!state||state.mqtt_connected===false)throw Object.assign(new Error('Chờ kết nối Core và xe trước khi hoàn tác'),{status:503});
+        const checks=robots.map(id=>{
+          const robot=state.fleet.agvs.find(robot=>robot.id===id);
+          if(!robot||robot.online!==true||robot.position_valid!==true||!['IDLE','ERROR','CHARGING'].includes(robot.state)||
+              robot.task_id||robot.target||robot.path?.length||robot.lift?.active||
+              state.fleet.tasks?.some(task=>task.assigned_agv===id&&['pending','dispatched'].includes(task.status)))
+            throw Object.assign(new Error(`Dừng xe ${id} và xử lý nhiệm vụ đang chạy trước khi hoàn tác`),{status:409});
+          return {id,lift_command_id:robot.lift?.command_id||0};
+        });
+        await send({cmd:'reconcile_test_cargo',robots:checks,physically_clear:true});
+      }
+      const updated={...order,status:'closed',resolution:'rollback_to_pickup',closed_at:new Date().toISOString(),
+        updated:new Date().toISOString(),reason:'Đã hoàn tác lượt dang dở về kho lấy; xác nhận xe trống'};
+      if(inventory)inventory.rollbackOrder(order,expectedRevision,moves=>{updated.rolled_back=moves;db.saveOrder(updated);});
+      else db.saveOrder(updated);
+      Object.assign(order,updated);publish();return order;
+    } finally {resolving.delete(orderId);}
+  }
+  function remove(orderId) {
+    const order=orders.find(candidate=>candidate.id===orderId);
+    if(!order)throw Object.assign(new Error('Không tìm thấy đơn hàng'),{status:404});
+    if(!order.deleted_at) {
+      const updated={...order,deleted_at:new Date().toISOString(),updated:new Date().toISOString()};
+      // Commit the display deletion before mutating the scheduler's live object.
+      db.saveOrder(updated);Object.assign(order,updated);publish();
+    }
+    return {id:order.id,deleted_at:order.deleted_at};
+  }
+  function linkTaskHistory(rows) {
+    const links=new Map(),durableLinks=new Map();
+    const add=(map,key,value)=>{
+      const previous=map.get(key);
+      if(map.has(key)&&(previous===null||previous.order_id!==value.order_id||previous.order_item!==value.order_item))map.set(key,null);
+      else map.set(key,value);
+    };
+    for(const order of orders)for(const item of order.items) {
+      const known=[...(item.task_links||[])];
+      if(item.task_id&&!known.some(link=>link.task_id===item.task_id&&link.core_session_id===order.core_session_id))
+        known.push({task_id:item.task_id,core_session_id:order.core_session_id,phase:null});
+      for(const link of known)if(link.task_id&&link.core_session_id) {
+        const key=JSON.stringify([link.core_session_id,link.task_id]);
+        const value={order_id:order.id,order_item:item.number,order_phase:link.phase,order_deleted_at:order.deleted_at||null};
+        // Ambiguous legacy data remains ungrouped; never assign by robot or target.
+        add(links,key,value);
+        if(Number.isSafeInteger(link.history_id))add(durableLinks,JSON.stringify([link.history_id,link.task_id]),value);
+      }
+    }
+    return rows.map(row=>{
+      const key=JSON.stringify([row.id,row.core_task_id]);
+      return {...row,...(durableLinks.has(key)?durableLinks.get(key):links.get(JSON.stringify([row.core_session,row.core_task_id])))};
+    });
   }
   function robotAt(state,item,node) {
     const robot = state.fleet.agvs.find(candidate=>candidate.id === item.robot);
@@ -71,6 +136,12 @@ function createOrderService({db,getState,getSession,send,publish,inventory}) {
         if (Date.now() - Date.parse(item.dispatched_at) > 10000)
           interrupt(order,item,`Không còn thấy task ${item.task_id} trong Core`);
         return;
+      }
+      const link=item.task_links?.find(candidate=>candidate.task_id===task.task_id&&candidate.core_session_id===order.core_session_id);
+      if(link&&(link.status!==task.status||link.reason!==(task.reason||''))) {
+        link.status=task.status;link.reason=task.reason||'';
+        if(['completed','cancelled','interrupted','rejected'].includes(task.status))link.completed_at=new Date().toISOString();
+        save(order);
       }
       item.task_seen = true;
       if (task.assigned_agv && task.assigned_agv !== item.robot || ['cancelled','interrupted','rejected'].includes(task.status)) {
@@ -182,6 +253,11 @@ function createOrderService({db,getState,getSession,send,publish,inventory}) {
       if (!result.task_id) throw new Error('Core không trả task_id');
       item.task_id = result.task_id;item.task_seen = false;
       item.dispatched_at = new Date().toISOString();
+      if(!Array.isArray(item.task_links))item.task_links=[];
+      if(!item.task_links.some(link=>link.task_id===result.task_id&&link.core_session_id===order.core_session_id))
+        item.task_links.push({task_id:result.task_id,core_session_id:order.core_session_id,phase,
+          history_id:db.getTaskReference?.(result.task_id,order.core_session_id)?.id||null,
+          from:robot.node,target,robot:robot.id,status:'dispatched',reason:'',created_at:item.dispatched_at});
       item.status = phase === 'pickup' ? 'to_pickup' : phase === 'exit' ? 'to_exit' : 'to_dropoff';save(order);
     } catch (error) {
       interrupt(order,item,`Không xác định được chặng ${phase} của kiện ${item.number}: ${error.message}`);
@@ -265,7 +341,7 @@ function createOrderService({db,getState,getSession,send,publish,inventory}) {
   }
   function create(body) {
     const state = getState();
-    if (standaloneScope(state)) throw Object.assign(new Error('Phạm vi một xe dùng nút Lấy hàng / Hạ hàng, chưa xử lý đơn hàng'),{status:409});
+    if (standaloneScope(state)) throw Object.assign(new Error('Phạm vi một xe dùng nút Nâng kệ / Hạ kệ, chưa xử lý đơn hàng'),{status:409});
     if (!state || state.mqtt_connected === false || state.fleet.accepting_tasks === false || state.shift?.phase !== 'RUNNING')
       throw Object.assign(new Error('Cần Core/MQTT sẵn sàng và ca RUNNING để tạo đơn'),{status:409});
     let plan;
@@ -275,12 +351,13 @@ function createOrderService({db,getState,getSession,send,publish,inventory}) {
     } catch (error) {error.status = 400;throw error;}
     inventory?.assertPlan(plan);
       const order = {id:`order-${Date.now()}-${randomUUID().slice(0,8)}`,...plan,destinationOwners:{},status:'active',reason:'',
-      core_session_id:getSession(),created:new Date().toISOString()};
+      core_session_id:getSession(),created:new Date().toISOString(),...(getLocationNames ? {location_names:getLocationNames()} : {})};
     for (const item of order.items) planQueued(order,item,state,new Set());
     orders.push(order);save(order);void tick();return order;
   }
   const timer = setInterval(()=>{void tick();},500);timer.unref();
-  return {create,resolve,list:()=>orders.slice().sort((a,b)=>Date.parse(b.created)-Date.parse(a.created)),tick,interruptAll,close:async()=>{
+  return {create,resolve,remove,linkTaskHistory,list:({includeDeleted=false}={})=>orders.filter(order=>includeDeleted||!order.deleted_at)
+    .sort((a,b)=>Date.parse(b.created)-Date.parse(a.created)),tick,interruptAll,close:async()=>{
     stopped = true;clearInterval(timer);if (tickPromise) await tickPromise;
   }};
 }

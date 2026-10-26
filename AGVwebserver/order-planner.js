@@ -1,3 +1,5 @@
+const {warehouseNodes} = require('./public/warehouse-rules');
+
 // Planning estimates only. Core remains the authority for routes and motion.
 function shortestRoute(map,from,to) {
   const unreachable = {path:[],cost:Infinity};
@@ -36,7 +38,7 @@ function shortestCost(map,from,to) {return shortestRoute(map,from,to).cost;}
 
 function planOrder(map,body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Đơn hàng không hợp lệ');
-  const warehouses = new Set((map?.nodes || []).filter(node=>node.type === 'station').map(node=>node.id));
+  const warehouses = new Set(warehouseNodes(map));
   function lines(value,key) {
     if (!Array.isArray(value) || !value.length || value.length > 20) throw new Error(`Cần 1–20 kho ${key}`);
     const seen = new Set();

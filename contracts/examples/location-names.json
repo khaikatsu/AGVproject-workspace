@@ -1,0 +1,25 @@
+{
+  "swap": {
+    "method": "POST",
+    "path": "/api/map/location-names/swap",
+    "body": {"first": "K1", "second": "K4", "expected_revision": 0}
+  },
+  "location_names_after_swap": {
+    "revision": 1,
+    "labels": {"K1": "K4", "K2": "K2", "K3": "K3", "K4": "K1", "K5": "K5", "K6": "K6", "S1": "S1", "S2": "S2"},
+    "updated_at": "2026-10-26T08:00:00.000Z",
+    "can_edit": true,
+    "reason": ""
+  },
+  "named_request": {
+    "method": "POST",
+    "path": "/api/agvs/02/goto",
+    "body": {"target": "K4", "priority": 0, "location_names_revision": 1}
+  },
+  "core_command_fields": {"cmd": "direct_goto", "agv_id": "02", "target": "K1", "priority": 0},
+  "legacy_physical_request": {
+    "method": "POST",
+    "path": "/api/agvs/02/goto",
+    "body": {"target": "K1", "priority": 0}
+  }
+}

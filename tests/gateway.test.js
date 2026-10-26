@@ -62,6 +62,84 @@ async function fixture(t,options = {}) {
   t.after(async ()=>{await gateway.close();for (const client of core.clients) client.terminate();await new Promise(resolve=>core.close(resolve));db.close();});
   return {db,model,push,api,commands,peer:()=>peer,base};
 }
+async function namedLocations(t) {
+  const f=await fixture(t);
+  f.model.map.nodes.push(...['K1','K2','K3','K4','K5','K6'].map(id=>({id,type:'station',x:1,y:1})),
+    ...['S1','S2'].map(id=>({id,type:'charging',x:1,y:1})),
+    ...['G1','G4'].map(id=>({id,type:'waypoint',x:1,y:1})));
+  f.model.map.edges.push({from:'A',to:'K1',weight:1},{from:'A',to:'K4',weight:1},
+    {from:'K1',to:'K4',weight:1},{from:'K4',to:'K1',weight:1},
+    {from:'K1',to:'G1',weight:1,two_way:true},{from:'K4',to:'G4',weight:1,two_way:true});
+  f.model.shift={phase:'CLOSED',home_stations:{'01':'S1','02':'S2'}};f.model.mqtt_connected=true;f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.shift?.phase==='CLOSED');
+  return f;
+}
+test('location names persist, swap within roles, reject stale writes and never mutate Core graph or warehouse',async t=>{
+  const f=await namedLocations(t),map=JSON.stringify(f.model.map),inventory=(await f.api('GET','/api/warehouse')).data;
+  f.db.syncTasks([{task_id:'old',target:'K1',status:'completed'}],'session-1');
+  for(const body of [{first:'K1',second:'S1',expected_revision:0},{first:'K1',second:'K1',expected_revision:0},
+    {first:'K1',second:'K4'},{first:'<script>',second:'K4',expected_revision:0}])
+    assert.equal((await f.api('POST','/api/map/location-names/swap',body)).status,400);
+  const swapped=await f.api('POST','/api/map/location-names/swap',{first:'K1',second:'K4',expected_revision:0});
+  assert.equal(swapped.status,200);assert.equal(swapped.data.location_names.labels.K1,'K4');
+  assert.equal(swapped.data.location_names.labels.K4,'K1');assert.equal(swapped.data.location_names.revision,1);
+  assert.equal((await f.api('POST','/api/map/location-names/swap',{first:'K1',second:'K4',expected_revision:0})).status,409);
+  assert.deepEqual((await f.api('GET','/api/warehouse')).data,inventory);assert.equal(JSON.stringify(f.model.map),map);
+  assert.equal(f.commands.length,0,'renaming does not send commands to Core/robots');
+  const {createLocationNames}=require('../AGVwebserver/location-names');
+  const reopened=createDatabase(f.db.db.name);try {assert.equal(createLocationNames(reopened).snapshot().labels.K1,'K4');}finally{reopened.close();}
+  f.db.syncTasks([{task_id:'new',target:'K1',status:'completed'}],'session-1');
+  assert.equal((await f.api('POST','/api/map/location-names/swap',{first:'S1',second:'S2',expected_revision:1})).status,200);
+  assert.equal(f.model.shift.home_stations['01'],'S1');
+  assert.equal((await f.api('GET','/api/state')).data.location_names.labels.S1,'S2');
+  const original=f.db.saveLocationNames;f.db.saveLocationNames=()=>{throw new Error('disk fixture failure');};
+  assert.equal((await f.api('POST','/api/map/location-names/swap',{first:'K1',second:'K4',expected_revision:2})).status,500);
+  f.db.saveLocationNames=original;assert.equal((await f.api('GET','/api/state')).data.location_names.revision,2);
+  assert.equal((await f.api('POST','/api/map/location-names/swap',{first:'K1',second:'K4',expected_revision:2})).status,200);
+  const history=(await f.api('GET','/api/tasks/history')).data;
+  assert.equal(history.find(task=>task.core_task_id==='new').location_names.labels.K1,'K4','history freezes recorded names');
+  assert.equal(history.find(task=>task.core_task_id==='old').location_names.revision,0);
+});
+test('named task and order inputs resolve to fixed IDs for both robots; stale forms send no command',async t=>{
+  const f=await namedLocations(t);
+  await configureWarehouse(f,['K1']);
+  assert.equal((await f.api('POST','/api/map/location-names/swap',{first:'K1',second:'K4',expected_revision:0})).status,200);
+  for(const id of ['01','02']) {
+    const result=await f.api('POST',`/api/agvs/${id}/goto`,{target:'K4',location_names_revision:1});
+    assert.equal(result.status,200);assert.equal(f.commands.at(-1).target,'K1');assert.equal(f.commands.at(-1).agv_id,id);
+  }
+  const before=f.commands.length;
+  for(const [route,body] of [['/api/tasks',{target:'K4'}],['/api/agvs/01/goto',{target:'K4'}],
+    ['/api/agvs/02/warehouse-action',{warehouse:'K4',action:'pickup'}],
+    ['/api/orders',{pickups:[{pickup:'K4',quantity:1}],deliveries:[{dropoff:'K1',quantity:1}]}],
+    ['/api/warehouse/configure',{slots:[]}],['/api/shift/start',{}]] ) {
+    const response=await f.api('POST',route,{...body,location_names_revision:0});assert.equal(response.status,409,route);
+  }
+  assert.equal(f.commands.length,before);
+  assert.equal((await f.api('POST','/api/tasks',{target:'K4'})).status,200);
+  assert.equal(f.commands.at(-1).target,'K4','legacy API keeps physical semantics');
+  f.model.shift.phase='RUNNING';f.model.fleet.accepting_tasks=true;f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.shift.phase==='RUNNING');
+  const response=await f.api('POST','/api/orders',{location_names_revision:1,pickups:[{pickup:'K4',quantity:1}],deliveries:[{dropoff:'K1',quantity:1}]});
+  assert.equal(response.status,201,JSON.stringify(response.data));assert.equal(response.data.order.items[0].pickup,'K1');
+  assert.equal(response.data.order.items[0].dropoff,'K4');assert.equal(response.data.order.location_names.revision,1);
+  assert.equal(f.db.getOrders()[0].location_names.labels.K1,'K4');
+});
+test('name changes reject active shifts, busy vehicles, tasks, mutex owners, missing locations and stale Core',async t=>{
+  const f=await namedLocations(t),body={first:'K1',second:'K4',expected_revision:0};
+  const cases=[()=>{f.model.shift.phase='RUNNING';},()=>{f.model.fleet.agvs=[{id:'01',state:'WORKING'}];},
+    ()=>{f.model.fleet.pending_tasks=[{task_id:'waiting'}];},()=>{f.model.mutex={M1:{owner:'02'}};},
+    ()=>{f.model.map.nodes=f.model.map.nodes.filter(node=>node.id!=='K4');}];
+  const original=JSON.parse(JSON.stringify(f.model));
+  for(const apply of cases) {
+    Object.assign(f.model,JSON.parse(JSON.stringify(original)));apply();f.push();
+    await pause(30);const result=await f.api('POST','/api/map/location-names/swap',body);assert.equal(result.status,409,JSON.stringify(result));
+  }
+  Object.assign(f.model,original);f.push();await pause(30);
+  f.peer().close();await until(async()=>(await f.api('GET','/api/state')).data.core_ready===false);
+  assert.equal((await f.api('POST','/api/map/location-names/swap',body)).status,503);
+  assert.equal(f.commands.length,0);assert.equal(f.db.loadLocationNames(),null);
+});
 test('RFID position preempts a pending ordinary broadcast and keeps delta sequence',async t=>{
   const f=await fixture(t,{broadcastIntervalMs:1500});
   f.model.fleet.agvs=[{id:'01',node:'A',position_valid:true,state:'IDLE',online:true}];f.push();
@@ -166,6 +244,10 @@ test('warehouse orders use Core task IDs and wait at pickup before any delivery 
   await until(async()=> (await f.api('GET','/api/orders')).data[0].items.some(item=>item.task_id));
   const first = (await f.api('GET','/api/orders')).data[0];
   assert.ok(first.items.some(item=>item.status === 'to_pickup'));
+  const associated=(await f.api('GET','/api/tasks/history')).data.find(row=>row.order_id===first.id);
+  assert.ok(associated);assert.equal(associated.order_phase,'pickup');
+  const linkedItem=first.items.find(item=>item.number===associated.order_item);
+  assert.equal(linkedItem.task_links[0].history_id,associated.id,'association uses the actual persistent history row');
   assert.ok((await f.api('GET','/api/state')).data.orders.some(order=>order.id === first.id));
   const task = f.model.fleet.tasks.find(row=>row.task_id === first.items.find(item=>item.task_id).task_id);
   task.status = 'completed';f.model.fleet.agvs[0].node = task.target;f.model.fleet.agvs[0].lift.observed_node=task.target;f.push();
@@ -175,7 +257,13 @@ test('warehouse orders use Core task IDs and wait at pickup before any delivery 
   f.model.fleet.agvs[0].online = false;f.push();
   await until(async()=> (await f.api('GET','/api/orders')).data[0].status === 'needs_attention');
   assert.equal((await f.api('POST',`/api/orders/${first.id}/resolve`,{})).status,400);
-  assert.equal((await f.api('POST',`/api/orders/${first.id}/resolve`,{physically_clear:true})).data.order.status,'closed');
+  const revision=(await f.api('GET','/api/warehouse')).data.revision;
+  assert.equal((await f.api('POST',`/api/orders/${first.id}/resolve`,{physically_clear:true,expected_revision:revision})).status,409);
+  f.model.fleet.agvs[0].online=true;f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.fleet.agvs[0].online);
+  assert.equal((await f.api('POST',`/api/orders/${first.id}/resolve`,{physically_clear:true,expected_revision:revision})).data.order.status,'closed');
+  assert.equal((await f.api('GET','/api/warehouse')).data.moves.length,0);
+  assert.equal(f.commands.at(-1).cmd,'reconcile_test_cargo');
 });
 test('warehouse API records confirmed rack moves and saves one downloadable report only at CLOSED',async t=>{
   const f=await fixture(t);
@@ -305,4 +393,54 @@ test('Migrate old DB without deleting history; reopen with duplicate seq across 
   assert.equal(db.insertSystemLog(1,'','new event','session-2'),true);db.close();
   db = createDatabase(filename);assert.equal(db.getRecentSystemLogs().length,2);
   assert.equal(db.getTaskHistory()[0].completed_at,'2026-09-01 00:00:00');db.close();
+});
+
+test('delete one history row by DB ID without cancelling Core tasks, changing KPI, or resurrecting on sync/reopen',async t=>{
+  const f=await fixture(t);
+  f.model.fleet.tasks=[{task_id:'task-shared-prefix-1',target:'T',status:'pending',priority:0},
+    {task_id:'task-shared-prefix-2',target:'T',status:'completed',priority:0}];
+  f.push();await until(async()=>(await f.api('GET','/api/tasks/history')).data.length===2);
+  const rows=(await f.api('GET','/api/tasks/history')).data;
+  const removed=rows.find(row=>row.core_task_id==='task-shared-prefix-1');
+  const retained=rows.find(row=>row.core_task_id==='task-shared-prefix-2');
+  const beforeKpi=f.db.computeKpiReport();
+  for(const invalid of ['0','-1','1.2','1e1','9007199254740992','bad'])
+    assert.equal((await f.api('DELETE',`/api/tasks/history/${invalid}`)).status,400);
+  assert.equal((await f.api('DELETE','/api/tasks/history/999999')).status,404);
+  assert.equal((await f.api('DELETE',`/api/tasks/history/${removed.id}`)).status,200);
+  assert.equal((await f.api('DELETE',`/api/tasks/history/${removed.id}`)).status,200,'repeat deletion is idempotent');
+  assert.deepEqual((await f.api('GET','/api/tasks/history')).data.map(row=>row.id),[retained.id]);
+  assert.ok(f.db.getOpenTasks().some(row=>row.id===removed.id),'internal pending task remains tracked');
+  assert.equal(f.commands.length,0,'delete sends no robot/Core command');
+  assert.equal(f.db.db.prepare('SELECT COUNT(*) AS n FROM task_log').get().n,beforeKpi.total_tasks);
+  f.model.fleet.tasks[0].status='completed';f.push();
+  await until(()=>f.db.db.prepare('SELECT status FROM task_log WHERE id=?').get(removed.id).status==='completed');
+  assert.deepEqual((await f.api('GET','/api/tasks/history')).data.map(row=>row.id),[retained.id]);
+  await until(async()=>(await f.api('GET','/api/state')).data.task_history.length===1);
+  const reopened=createDatabase(f.db.db.name);
+  try {assert.deepEqual(reopened.getTaskHistory().map(row=>row.id),[retained.id]);}
+  finally {reopened.close();}
+});
+
+test('deleted active orders stay in internal state, warehouse guards and final reports',async t=>{
+  const f=await fixture(t);
+  f.model.map={nodes:[{id:'K1',type:'station'},{id:'K2',type:'station'},{id:'G1',type:'waypoint'},{id:'G2',type:'waypoint'}],
+    edges:[{from:'K1',to:'K2',weight:1},{from:'K1',to:'G1',weight:1,two_way:true},{from:'K2',to:'G2',weight:1,two_way:true}],obstacles:[]};
+  await configureWarehouse(f,['K1']);
+  f.model.shift={phase:'RUNNING'};f.model.mqtt_connected=true;f.model.fleet.accepting_tasks=true;f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.shift.phase==='RUNNING');
+  const created=await f.api('POST','/api/orders',{pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]});
+  assert.equal(created.status,201,JSON.stringify(created.data));const orderId=created.data.order.id;
+  assert.equal((await f.api('DELETE','/api/orders/bad%7Cid')).status,400);
+  assert.equal((await f.api('DELETE','/api/orders/missing')).status,404);
+  const deleted=await f.api('DELETE',`/api/orders/${orderId}`);assert.equal(deleted.status,200);
+  assert.equal((await f.api('DELETE',`/api/orders/${orderId}`)).data.deleted_at,deleted.data.deleted_at);
+  assert.equal((await f.api('GET','/api/orders')).data.length,0);
+  const context=(await f.api('GET','/api/state')).data.orders.find(order=>order.id===orderId);
+  assert.equal(context.status,'active');assert.ok(context.deleted_at);
+  f.model.shift.phase='CLOSED';f.push();
+  await until(async()=>(await f.api('GET','/api/warehouse/reports')).data.length===1);
+  const report=(await f.api('GET','/api/warehouse/reports')).data[0];
+  assert.ok(report.unfinished_orders.some(order=>order.id===orderId),'deleted unfinished order stays in report');
+  assert.equal(f.commands.length,0);
 });

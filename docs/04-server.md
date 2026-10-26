@@ -1,5 +1,17 @@
 # Phát triển server và lưu trữ
 
+26/10/2026, REQ-WAREHOUSE-TEST-ROLLBACK-01: `orders.resolve` chờ batch Core `reconcile_test_cargo`, sau đó `warehouse-inventory.rollbackOrder` ghi kệ→kho lấy, kết thúc đặt chỗ, log và đóng đơn cùng transaction. Core chỉ cập nhật cargo ảo sau proof dừng/lift ID, giữ lỗi/mutex/vùng chưa xác minh. Lượt đã hạ không bị hoàn tác. [ADR-089](decisions/ADR-089-test-order-rollback.md), [hợp đồng](../contracts/web-server.md).
+
+26/10/2026: gateway thêm ánh xạ tên kho/trạm độc lập graph theo REQ-WEB-LOCATION-NAMES-01. `location-names.js` quản lý song ánh/CAS revision, SQLite lưu cấu hình và ảnh tên cho task/đơn. HTTP có revision được dịch sang ID vật lý trước khi dùng planner/Core; các tích hợp API cũ vẫn dùng ID vật lý. Không thay UID, home, map/counter hoặc MQTT/firmware. [Hợp đồng](../contracts/web-server.md), [ADR-087](decisions/ADR-087-server-location-names.md).
+
+CURRENT 26/10/2026, REQ-WEB-UNIFIED-MISSIONS-01: scheduler lưu `item.task_links` sau mỗi kết quả direct_goto, giữ đủ các chặng kể cả khi `item.task_id` bị xóa/thay. DB cung cấp khóa dòng chính xác cho link; gateway enrich lịch sử bằng order/item/phase theo ID, giữ liên kết qua adoption phiên. Không thay state machine nâng/hạ/giao hoặc điều kiện hoàn thành. [Hợp đồng](../contracts/web-server.md), [ADR-085](decisions/ADR-085-unified-mission-results-board.md).
+
+CURRENT 26/10/2026, REQ-WEB-DELETE-RECORD-01: hai DELETE đơn/lịch sử thực hiện xóa logic bền vững ở gateway, không phát lệnh Core. Đơn giữ `deleted_at` trong JSON; `task_log` thêm cột nullable tương ứng, sync/adoption không xóa dấu. Danh sách lọc nhưng scheduler/chốt kho/báo cáo/task mở và nguồn KPI dùng đủ bản ghi. Xem [hợp đồng](../contracts/web-server.md) và [ADR-084](decisions/ADR-084-delete-individual-dashboard-records.md).
+
+CURRENT 25/10/2026, REQ-WEB-SERVER-MAINT-01: planner, inventory, thao tác kho và browser dùng chung định nghĩa node kho `station` có ID K1–K6; station khác không được đưa vào đơn. `reserve` chỉ idempotent với cùng nội dung và trạng thái `reserved/carrying`; lượt `needs_attention`, đã kết thúc hoặc trùng key khác nội dung bị từ chối. Gateway restart nhận snapshot `CLOSED` cùng phiên Core chốt đúng một báo cáo có `observation_gap`.
+
+CURRENT 25/10/2026: hủy task đã giao chốt lịch sử cancelled nhưng chưa cho xe IDLE/nhận việc ngay. Core giữ footprint, gửi WAIT và chờ diagnostic dừng/RFID mới; cảnh báo sau10s. Khởi động bắt lỗi file/config và exit1, giữ dữ liệu để đối soát; migration mở rộng stopped_nodes cũ vào uncertain_path. Các tối ưu serialize/dispatch/checkpoint và metric commit chậm theo [ADR-082](decisions/ADR-082-core-cancellation-startup-and-durability.md).
+
 CURRENT 19/10/2026: Core xử lý `STALE_COMMAND` như lỗi lệch counter bền vững: xóa pending retry, không phát STOP ID thấp kế tiếp, không tự xóa ERROR từ diagnostic khỏe. Diagnostic `lastCommandId` đẩy `CommandIds` tiến và reserve bền vững phía trên; chỉ thao tác `clear_error` sau xác minh mới gửi `RESET_FAULT` ID mới. Không replay GOTO/task cũ. [ADR-072](decisions/ADR-072-stale-command-counter-recovery.md).
 
 CURRENT 16/10/2026, ghi đè tạm để test: Core main comment ngưỡng pin gốc, bật bypass cho mở ca/task/GOTO và tắt tự sạc vì nhóm sạc thủ công. Kết thúc ca vẫn về trạm, đỗ IDLE; RFID/MQTT/ACK/mutex và scope giữ nguyên. Hai cờ trạng thái được công bố cho dashboard; không sửa firmware. [ADR-060](decisions/ADR-060-temporary-battery-bypass-manual-charge.md).

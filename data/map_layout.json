@@ -1,4 +1,5 @@
 {
+  "blocked_edges": [],
   "charging_stations": [
     "S2",
     "S1"
@@ -6,12 +7,21 @@
   "edges": [
     {
       "from": "G1",
+      "geometry": {
+        "segment_lengths_cm": [
+          85,
+          50
+        ],
+        "via": {
+          "x": 0,
+          "y": 0
+        }
+      },
       "path_class": "outer",
       "to": "M1",
       "two_way": false,
       "type": "main",
-      "weight": 135,
-      "geometry": {"via": {"x": 0, "y": 0}, "segment_lengths_cm": [85, 50]}
+      "weight": 135
     },
     {
       "from": "M1",
@@ -31,21 +41,39 @@
     },
     {
       "from": "M2",
+      "geometry": {
+        "segment_lengths_cm": [
+          50,
+          85
+        ],
+        "via": {
+          "x": 200,
+          "y": 0
+        }
+      },
       "path_class": "outer",
       "to": "G6",
       "two_way": false,
       "type": "main",
-      "weight": 135,
-      "geometry": {"via": {"x": 200, "y": 0}, "segment_lengths_cm": [50, 85]}
+      "weight": 135
     },
     {
       "from": "G6",
+      "geometry": {
+        "segment_lengths_cm": [
+          85,
+          50
+        ],
+        "via": {
+          "x": 200,
+          "y": 140
+        }
+      },
       "path_class": "outer",
       "to": "M4",
       "two_way": false,
       "type": "main",
-      "weight": 135,
-      "geometry": {"via": {"x": 200, "y": 140}, "segment_lengths_cm": [85, 50]}
+      "weight": 135
     },
     {
       "from": "M4",
@@ -65,12 +93,21 @@
     },
     {
       "from": "M3",
+      "geometry": {
+        "segment_lengths_cm": [
+          50,
+          85
+        ],
+        "via": {
+          "x": 0,
+          "y": 140
+        }
+      },
       "path_class": "outer",
       "to": "G1",
       "two_way": false,
       "type": "main",
-      "weight": 135,
-      "geometry": {"via": {"x": 0, "y": 140}, "segment_lengths_cm": [50, 85]}
+      "weight": 135
     },
     {
       "from": "M1",
@@ -82,19 +119,19 @@
     },
     {
       "from": "G2",
-      "to": "M5",
-      "weight": 35,
       "path_class": "inner",
+      "to": "M5",
+      "two_way": false,
       "type": "main",
-      "two_way": false
+      "weight": 35
     },
     {
       "from": "M5",
-      "to": "G3",
-      "weight": 35,
       "path_class": "inner",
+      "to": "G3",
+      "two_way": false,
       "type": "main",
-      "two_way": false
+      "weight": 35
     },
     {
       "from": "G3",
@@ -114,19 +151,19 @@
     },
     {
       "from": "G5",
-      "to": "M6",
-      "weight": 35,
       "path_class": "inner",
+      "to": "M6",
+      "two_way": false,
       "type": "main",
-      "two_way": false
+      "weight": 35
     },
     {
       "from": "M6",
-      "to": "G4",
-      "weight": 35,
       "path_class": "inner",
+      "to": "G4",
+      "two_way": false,
       "type": "main",
-      "two_way": false
+      "weight": 35
     },
     {
       "from": "G4",
@@ -138,27 +175,27 @@
     },
     {
       "from": "G1",
-      "to": "M5",
-      "weight": 50,
       "path_class": "shortcut",
+      "to": "M5",
+      "two_way": false,
       "type": "main",
-      "two_way": false
+      "weight": 50
     },
     {
       "from": "M5",
-      "to": "M6",
-      "weight": 100,
       "path_class": "shortcut",
+      "to": "M6",
+      "two_way": false,
       "type": "main",
-      "two_way": false
+      "weight": 100
     },
     {
       "from": "M6",
-      "to": "G6",
-      "weight": 50,
       "path_class": "shortcut",
+      "to": "G6",
+      "two_way": false,
       "type": "main",
-      "two_way": false
+      "weight": 50
     },
     {
       "from": "S1",
@@ -291,62 +328,14 @@
   ],
   "map_name": "Kho AGV v4 - bo goc (cm)",
   "mutex_zones": [
-    "M1",
-    "M2",
     "M3",
     "M4",
-    "M5",
-    "M6"
+    "M6",
+    "M2",
+    "M1",
+    "M5"
   ],
   "nodes": [
-    {
-      "id": "S1",
-      "type": "charging",
-      "x": 100.0,
-      "y": -20.0
-    },
-    {
-      "id": "M1",
-      "type": "mutex",
-      "x": 50.0,
-      "y": 0.0
-    },
-    {
-      "id": "GS1",
-      "type": "waypoint",
-      "x": 100.0,
-      "y": 0.0
-    },
-    {
-      "id": "M2",
-      "type": "mutex",
-      "x": 150.0,
-      "y": 0.0
-    },
-    {
-      "id": "K2",
-      "type": "station",
-      "x": 30.0,
-      "y": 35
-    },
-    {
-      "id": "G2",
-      "type": "waypoint",
-      "x": 50.0,
-      "y": 35
-    },
-    {
-      "id": "G4",
-      "type": "waypoint",
-      "x": 150.0,
-      "y": 35
-    },
-    {
-      "id": "K4",
-      "type": "station",
-      "x": 170.0,
-      "y": 35
-    },
     {
       "id": "K1",
       "type": "station",
@@ -354,10 +343,10 @@
       "y": 70.0
     },
     {
-      "id": "G1",
-      "type": "waypoint",
-      "x": 0.0,
-      "y": 70.0
+      "id": "K2",
+      "type": "station",
+      "x": 30.0,
+      "y": 35.0
     },
     {
       "id": "M5",
@@ -366,46 +355,34 @@
       "y": 70.0
     },
     {
-      "id": "M6",
-      "type": "mutex",
-      "x": 150.0,
-      "y": 70.0
-    },
-    {
-      "id": "G6",
+      "id": "G5",
       "type": "waypoint",
-      "x": 200.0,
-      "y": 70.0
+      "x": 150.0,
+      "y": 105.0
     },
     {
-      "id": "K6",
-      "type": "station",
-      "x": 220.0,
-      "y": 70.0
-    },
-    {
-      "id": "K3",
-      "type": "station",
-      "x": 30.0,
-      "y": 105
+      "id": "M1",
+      "type": "mutex",
+      "x": 50.0,
+      "y": 0.0
     },
     {
       "id": "G3",
       "type": "waypoint",
       "x": 50.0,
-      "y": 105
+      "y": 105.0
     },
     {
-      "id": "G5",
+      "id": "G2",
       "type": "waypoint",
-      "x": 150.0,
-      "y": 105
+      "x": 50.0,
+      "y": 35.0
     },
     {
-      "id": "K5",
-      "type": "station",
-      "x": 170.0,
-      "y": 105
+      "id": "S1",
+      "type": "charging",
+      "x": 100.0,
+      "y": -20.0
     },
     {
       "id": "M3",
@@ -420,18 +397,78 @@
       "y": 140.0
     },
     {
+      "id": "K5",
+      "type": "station",
+      "x": 170.0,
+      "y": 105.0
+    },
+    {
+      "id": "GS1",
+      "type": "waypoint",
+      "x": 100.0,
+      "y": 0.0
+    },
+    {
       "id": "M4",
       "type": "mutex",
       "x": 150.0,
       "y": 140.0
     },
     {
+      "id": "M6",
+      "type": "mutex",
+      "x": 150.0,
+      "y": 70.0
+    },
+    {
+      "id": "G6",
+      "type": "waypoint",
+      "x": 200.0,
+      "y": 70.0
+    },
+    {
+      "id": "G4",
+      "type": "waypoint",
+      "x": 150.0,
+      "y": 35.0
+    },
+    {
+      "id": "K6",
+      "type": "station",
+      "x": 220.0,
+      "y": 70.0
+    },
+    {
+      "id": "K4",
+      "type": "station",
+      "x": 170.0,
+      "y": 35.0
+    },
+    {
+      "id": "K3",
+      "type": "station",
+      "x": 30.0,
+      "y": 105.0
+    },
+    {
       "id": "S2",
       "type": "charging",
       "x": 100.0,
       "y": 160.0
+    },
+    {
+      "id": "M2",
+      "type": "mutex",
+      "x": 150.0,
+      "y": 0.0
+    },
+    {
+      "id": "G1",
+      "type": "waypoint",
+      "x": 0.0,
+      "y": 70.0
     }
   ],
   "obstacles": [],
-  "revision": 4
+  "revision": 2
 }

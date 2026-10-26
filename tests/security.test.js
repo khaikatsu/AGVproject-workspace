@@ -15,6 +15,9 @@ async function fixture(t) {
 test('API requires token; explicit CORS/Origin, cookie CSRF and login attempts',async t=>{
   const {base} = await fixture(t);
   assert.equal((await fetch(base+'/api/state')).status,401);
+  assert.equal((await fetch(base+'/api/orders/test',{method:'DELETE'})).status,401);
+  assert.equal((await fetch(base+'/api/tasks/history/1',{method:'DELETE'})).status,401);
+  assert.equal((await fetch(base+'/api/map/location-names/swap',{method:'POST'})).status,401);
   assert.equal((await fetch(base+'/api/state',{headers:{Authorization:`Bearer ${token}`,Origin:'https://untrusted.example'}})).status,403);
   const ok = await fetch(base+'/api/state',{headers:{Authorization:`Bearer ${token}`,Origin:base}});
   assert.equal(ok.status,200);assert.equal(ok.headers.get('access-control-allow-origin'),null);
@@ -23,6 +26,9 @@ test('API requires token; explicit CORS/Origin, cookie CSRF and login attempts',
   assert.match(cookie,/HttpOnly/);assert.match(cookie,/SameSite=Strict/);
   assert.equal((await fetch(base+'/api/state',{headers:{Cookie:cookie}})).status,200);
   assert.equal((await fetch(base+'/api/shift/end',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:'{}'})).status,403);
+  assert.equal((await fetch(base+'/api/orders/test',{method:'DELETE',headers:{Cookie:cookie}})).status,403);
+  assert.equal((await fetch(base+'/api/tasks/history/1',{method:'DELETE',headers:{Cookie:cookie}})).status,403);
+  assert.equal((await fetch(base+'/api/map/location-names/swap',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:'{}'})).status,403);
   for (let i=0;i<10;i++) await fetch(base+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"token":"bad"}'});
   assert.equal((await fetch(base+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})})).status,429);
 });

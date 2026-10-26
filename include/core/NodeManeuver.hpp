@@ -1,6 +1,7 @@
 #pragma once
 #include "utils/json.hpp"
 #include "map/EdgeGeometry.hpp"
+#include "core/PhysicalLayout.hpp"
 #include <string>
 
 // Map y points down. Heading is the vehicle front, including during reverse.
@@ -48,8 +49,8 @@ inline json plan(const json& map, const std::string& node, const std::string& ne
     const int incoming = heading(front);
     if (incoming < 0) return nullptr;
     if (stationTurn) {
-        const auto gate = node == "S1" ? "GS1" : node == "S2" ? "GS2" : "";
-        if (gate[0] && next == node && direction(map,node,gate) == (incoming+2)%4)
+        const auto gate = PhysicalLayout::isHome(node) ? PhysicalLayout::gate(node) : "";
+        if (!gate.empty() && next == node && direction(map,node,gate) == (incoming+2)%4)
             return {{"maneuver","STATION_TURN_RIGHT"},{"turn_crossings",1}};
         return nullptr;
     }
@@ -59,7 +60,7 @@ inline json plan(const json& map, const std::string& node, const std::string& ne
         if ((edge.at("from") == node && edge.at("to") == next) ||
             (edge.value("two_way",false) && edge.at("to") == node && edge.at("from") == next)) connected = true;
     if (outgoing < 0 || !connected) return nullptr;
-    if (reverseHomeSupported && ((node == "GS1" && next == "S1") || (node == "GS2" && next == "S2"))) {
+    if (reverseHomeSupported && PhysicalLayout::isHome(next) && node==PhysicalLayout::gate(next)) {
         const int targetFront = (outgoing+2)%4;
         const int turn = (targetFront-incoming+4)%4;
         return {{"maneuver",turn == 0 ? "STRAIGHT" : turn == 1 ? "RIGHT" : turn == 3 ? "LEFT" : "TURN_AROUND_RIGHT"},
@@ -70,8 +71,7 @@ inline json plan(const json& map, const std::string& node, const std::string& ne
     if (delta == 0) return {{"maneuver","STRAIGHT"},{"turn_crossings",0}};
     if (delta == 1) return {{"maneuver","RIGHT"},{"turn_crossings",1}};
     if (delta == 3) return {{"maneuver","LEFT"},{"turn_crossings",1}};
-    const bool warehouseExit = node.size() == 2 && node[0] == 'K' && node[1] >= '1' && node[1] <= '6' &&
-                               next == std::string("G") + node[1];
+    const bool warehouseExit = PhysicalLayout::warehouse(node) && next==PhysicalLayout::gate(node);
     if (warehouseExit) return {{"maneuver","REVERSE"},{"turn_crossings",0}};
     return {{"maneuver","TURN_AROUND_RIGHT"},{"turn_crossings",1+(branch(map,node,(incoming+1)%4) ? 1 : 0)}};
 }

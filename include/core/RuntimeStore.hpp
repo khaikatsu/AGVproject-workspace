@@ -1,12 +1,10 @@
 #pragma once
-#include "commands/CommandIds.hpp"
+#include "utils/json.hpp"
+#include "utils/AtomicFile.hpp"
+#include <fstream>
 #include <algorithm>
 #include <optional>
 #include <vector>
-#if !defined(_WIN32)
-#include <fcntl.h>
-#include <unistd.h>
-#endif
 
 // Checkpoint before publishing commands/grants. Invalid files stop startup.
 class RuntimeStore {
@@ -102,12 +100,14 @@ public:
         fleet["pending_tasks"] = json::array();
         for (auto& robot : fleet.at("agvs")) {
             auto uncertain = robot.at("uncertain_path");
+            for (const auto& n : robot.value("stopped_nodes",json::array())) uncertain.push_back(n);
             for (const auto& n : robot.at("path")) uncertain.push_back(n);
             const auto node = robot.at("node").get<std::string>();
             if (!node.empty()) uncertain.push_back(node);
             const auto target = robot.value("target",std::string{});
             if (!target.empty()) uncertain.push_back(target);
             robot["uncertain_path"] = expand(uncertain);
+            robot["stopped_nodes"] = json::array(); // Restart cannot restore a live stop proof.
             if (!node.empty() && !findNode(current,node)) robot["node"] = "";
             robot["position_valid"] = false;robot["state"] = "OFFLINE";
             robot["path"] = json::array();robot["target"] = "";robot["task_id"] = "";

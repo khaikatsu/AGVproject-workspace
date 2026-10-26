@@ -6,23 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hệ thống Giám sát AGV</title>
   <style>
-    :root {
-      --bg-main: #0B0F19;
-      --bg-panel: #151A28;
-      --bg-card: #1E2536;
-      --text-main: #E2E8F0;
-      --text-muted: #94A3B8;
-      --border-color: #2D3748;
-      --accent-blue: #3B82F6;
-      --accent-blue-hover: #2563EB;
-      --status-ok: #10B981;
-      --status-warn: #F59E0B;
-      --status-error: #EF4444;
-      --status-idle: #10B981;
-      --status-working: #3B82F6;
-      --status-offline: #64748B;
-    }
-
     html,
     body {
       height: 100%;
@@ -580,22 +563,16 @@
     .form-grid input,.form-grid select {width:100%;min-width:0;box-sizing:border-box;padding:7px;background:var(--bg-card);color:var(--text-main);border:1px solid var(--border-color);border-radius:4px;}
     .history-scroll {max-height:260px;overflow:auto;}
     #kpiHistoryBox button {display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--text-main);cursor:pointer;}
-    #fleetTable {table-layout:fixed;font-size:12px;}
-    #fleetTable th,#fleetTable td {padding:6px;}
-    #fleetTable th:nth-child(1) {width:32px;}
-    #fleetTable th:nth-child(2) {width:54px;}
-    #fleetTable th:nth-child(3) {width:34px;}
-    #fleetTable th:nth-child(5) {width:54px;}
-    #fleetTable td:nth-child(1),#fleetTable td:nth-child(3),#fleetTable button {white-space:nowrap;}
-    #fleetTable button {padding:4px;font-size:11px;}
     #toastContainer {top:auto;bottom:16px;max-width:320px;}
     #systemLogBox .log-item {display:block;overflow-wrap:anywhere;}
     @media(max-width:1100px) {html,body {height:auto;min-height:100%;overflow:auto;} #topbar {height:auto;min-height:56px;flex-wrap:wrap;padding:10px;} #topbar>div:last-child {flex-wrap:wrap;} #main-container {display:grid;grid-template-columns:minmax(300px,1fr) minmax(300px,1fr);overflow:visible;} #center-panel {grid-column:1 / -1;grid-row:1;min-height:560px;} #left-panel,#right-panel {width:auto;overflow:visible;} }
     @media(max-width:680px) {#main-container {display:flex;flex-direction:column;} #center-panel {min-height:480px;order:-1;} #topbar input {width:210px;} #mapPreviewSvg {height:350px;} #toastContainer {left:8px;right:8px;bottom:8px;max-width:none;} }
     #headingStatus {flex-basis:100%;}
   </style>
-  <link rel="stylesheet" href="/dashboard-layout.css?v=20261021-shift-warehouse">
-  <link rel="stylesheet" href="/warehouse-operations.css?v=20261018-hide-resolved">
+  <link rel="stylesheet" href="/dashboard-layout.css?v=20261026-unified-missions">
+  <link rel="stylesheet" href="/warehouse-operations.css?v=20261026-layout-inventory">
+  <link rel="stylesheet" href="/dashboard-missions.css?v=20261026-layout-inventory">
+  <link rel="stylesheet" href="/dashboard-reports.css?v=20261026-compact-reports">
 </head>
 
 <body data-view="overview" data-map-expanded="true">
@@ -622,7 +599,6 @@
   </header>
   <nav id="workspaceNav" aria-label="Khu vực làm việc">
     <button type="button" data-view-target="overview" aria-current="page">Tổng quan</button>
-    <button type="button" data-view-target="tasks">Nhiệm vụ</button>
     <button type="button" data-view-target="map">Bản đồ</button>
     <button type="button" data-view-target="reports">Báo cáo</button>
   </nav>
@@ -634,29 +610,15 @@
     <div class="stat-card"><span class="stat-label">Ca làm việc</span><strong id="summaryShift">Đang chờ</strong><small id="summaryShiftDetail">Chờ core xác nhận</small></div>
   </section>
   <div id="toastContainer" aria-live="polite"></div>
-  <section id="warehouseOperationsBoard" class="panel-card operations-board" data-views="overview tasks" aria-labelledby="operationsTitle">
-    <div class="operations-heading"><div><span class="eyebrow">THEO DÕI LẤY VÀ GIAO KỆ</span><h2 id="operationsTitle">Trạng thái kho hàng</h2></div><span id="operationsFreshness" class="operation-badge">Chờ dữ liệu</span></div>
+  <section id="warehouseOperationsBoard" class="panel-card operations-board" data-views="overview reports" aria-labelledby="operationsTitle">
+    <div class="operations-heading"><div><span class="eyebrow">GIÁM SÁT VẬN HÀNH</span><h2 id="operationsTitle">Trạng thái xe và kho</h2></div><span id="operationsFreshness" class="operation-badge">Chờ dữ liệu</span></div>
     <div class="operations-columns">
-      <div><div class="operations-section-heading"><h3>Tuyến của từng xe</h3><span id="operationsShiftLabel">Chờ ca</span></div><div id="robotTransferCards" class="robot-transfer-grid"></div></div>
-      <div><div class="operations-section-heading"><h3>Kho trong ca</h3><span id="warehouseShiftSummary">Chưa nhập kho</span></div><div id="warehouseSlotCards" class="warehouse-slot-grid"></div><p class="operations-footnote">Có kệ / trống theo lần nâng hạ đã xác nhận · “Đầu ca” là trạng thái lúc mở ca.</p></div>
-    </div>
-  </section>
-  <main id="main-container">
-    <aside id="left-panel" aria-label="Đội xe và nhật ký">
-      <section class="card compact panel-card" data-views="overview tasks">
-        <div class="card-header">Đội xe <span class="card-caption">RFID gần nhất</span></div>
-        <div class="table-wrap"><table id="fleetTable"><thead><tr><th>Xe</th><th>Vị trí</th><th>Pin</th><th>Trạng thái</th><th></th></tr></thead><tbody></tbody></table></div>
-      </section>
-      <section class="card compact panel-card" data-views="overview tasks">
-        <div class="card-header">Các lượt lấy → giao <span class="card-caption">Theo đơn đã tạo</span></div>
-        <label id="orderResolvedFilter" class="check-label order-resolved-filter" hidden><input id="orderShowResolved" type="checkbox" onchange="renderOrders(lastState?.orders || [])"> <span id="orderResolvedFilterLabel">Hiện đơn đã đối soát</span></label>
-        <div id="orderList" class="order-list" aria-live="polite">Chưa có đơn hàng</div>
-      </section>
-      <section class="card compact panel-card" data-views="overview tasks reports" id="warehousePanel">
-        <div class="card-header">Trạng thái kệ</div>
-        <p id="warehouseSummary" class="card-help" aria-live="polite">Chưa nhập trạng thái kho ban đầu.</p>
-        <div class="table-wrap"><table id="warehouseStateTable"><thead><tr><th>Vị trí</th><th>Kệ</th><th>Trạng thái</th></tr></thead><tbody></tbody></table></div>
-        <p class="card-help">Vị trí cập nhật sau chu kỳ servo đã xác nhận. Chưa có cảm biến nhận biết kệ thật.</p>
+      <div><div class="operations-section-heading"><h3>Xe 01 và 02</h3><span id="operationsShiftLabel">Chờ ca</span></div><div id="robotTransferCards" class="robot-transfer-grid"></div></div>
+      <div id="warehousePanel" aria-labelledby="warehouseStatusTitle">
+        <div class="operations-section-heading"><h3 id="warehouseStatusTitle">Trạng thái kho</h3><span id="warehouseShiftSummary" aria-live="polite">Chưa nhập kho</span></div>
+        <div id="warehouseSlotCards" class="warehouse-slot-grid"></div>
+        <div id="warehouseCarriedRacks" class="warehouse-carried-racks" aria-label="Kệ trên xe"></div>
+        <p class="operations-footnote">Vị trí theo chu kỳ nâng/hạ đã xác nhận, chưa có cảm biến nhận biết kệ thật. “Đầu ca” là trạng thái lúc mở ca.</p>
         <details id="warehouseConfig" ontoggle="if(this.open) editWarehouseLayout()">
           <summary>Nhập / đối soát vị trí kệ khi ca đã đóng</summary>
           <p class="card-help">Nhập mã riêng cho từng kệ (ví dụ R01). Để trống ô không có kệ. Kiểm tra các xe đã hết kệ trước khi lưu.</p>
@@ -666,26 +628,23 @@
             <button id="saveWarehouseBtn" class="btn full-width" type="submit">Lưu trạng thái kho</button>
           </form>
         </details>
-      </section>
-      <section class="card compact panel-card" data-views="overview tasks">
+      </div>
+    </div>
+    <div id="deletedOrderAttention" hidden aria-live="polite"></div>
+  </section>
+  <main id="main-container">
+    <aside id="left-panel" aria-label="Đơn hàng, kho và nhật ký">
+      <section class="card compact panel-card" data-views="overview">
         <div class="card-header">Hàng đợi <span class="card-caption">Ưu tiên · FIFO</span></div>
         <div class="table-wrap"><table id="taskTable"><thead><tr><th>Đích đến</th><th>Ưu tiên</th><th></th></tr></thead><tbody></tbody></table></div>
       </section>
-      <section class="card compact panel-card" data-views="tasks reports">
-        <div class="card-header">Nhiệm vụ và kết quả</div>
-        <div class="history-scroll"><table id="taskHistoryTable"><thead><tr><th>ID</th><th>Đích</th><th>Xe</th><th>Trạng thái</th></tr></thead><tbody></tbody></table></div>
-      </section>
-      <section id="robotHistoryPanel" class="card compact panel-card" data-views="tasks" hidden>
+      <section id="robotHistoryPanel" class="card compact panel-card" data-views="overview" hidden>
         <div class="card-header"><span id="robotHistoryTitle">Lịch sử xe</span><button class="btn-outline" onclick="document.getElementById('robotHistoryPanel').hidden=true">Đóng</button></div>
         <div class="history-scroll"><table id="robotHistoryTable"><thead><tr><th>Thời gian</th><th>Node</th><th>Pin</th><th>Trạng thái</th></tr></thead><tbody></tbody></table></div>
       </section>
       <section class="card compact panel-card" data-views="overview map">
         <div class="card-header">Vùng giao nhau</div>
         <div class="table-wrap"><table id="mutexTable"><thead><tr><th>RFID</th><th>Đang giữ</th><th>Chờ</th></tr></thead><tbody></tbody></table></div>
-      </section>
-      <section class="card compact panel-card" data-views="reports">
-        <div class="card-header">Nhật ký hệ thống</div>
-        <div id="systemLogBox" class="log-list">Đang chờ sự kiện</div>
       </section>
     </aside>
     <section id="center-panel" aria-label="Bản đồ kho">
@@ -699,8 +658,25 @@
       </div>
       <div class="map-foot"><div id="dataFreshness">Đang chờ bản đồ và telemetry từ core</div><div id="robot01Position">Xe 01: chờ dữ liệu encoder</div><div>Chấm xe nét đứt: vị trí ước tính từ encoder · Vòng nhỏ: RFID gần nhất · Mũi tên: đầu xe · Nét đứt đường: tuyến dự kiến</div><div id="mapLegend">M: RFID / vùng chung · K: kho · G: cửa kho · S: trạm sạc · GS: cửa sạc · Góc bo: bám line liên tục, không có RFID</div></div>
     </section>
+    <section id="missionBoard" class="panel-card mission-board" data-views="overview reports" aria-labelledby="missionTitle">
+      <div class="mission-heading">
+        <div><span class="eyebrow">THEO DÕI CÔNG VIỆC</span><h2 id="missionTitle">Nhiệm vụ và kết quả</h2><p>Đơn chuyển kệ và lệnh di chuyển · mở từng công việc để xem các chặng.</p></div>
+        <span id="missionCount" class="mission-count">0 công việc</span>
+      </div>
+      <div class="mission-toolbar">
+        <div class="mission-filters" role="group" aria-label="Lọc trạng thái công việc">
+          <button type="button" data-mission-filter="all" aria-pressed="true" onclick="setMissionFilter('all')">Tất cả <span>0</span></button>
+          <button type="button" data-mission-filter="active" aria-pressed="false" onclick="setMissionFilter('active')">Đang xử lý <span>0</span></button>
+          <button type="button" data-mission-filter="done" aria-pressed="false" onclick="setMissionFilter('done')">Hoàn thành <span>0</span></button>
+          <button type="button" data-mission-filter="attention" aria-pressed="false" onclick="setMissionFilter('attention')">Cần đối soát <span>0</span></button>
+        </div>
+        <input id="missionSearch" type="search" placeholder="Tìm xe, tuyến hoặc mã công việc…" aria-label="Tìm công việc" oninput="renderMissions(lastState)">
+      </div>
+      <label id="orderResolvedFilter" class="check-label mission-resolved-filter" hidden><input id="orderShowResolved" type="checkbox" onchange="renderOrders(lastState?.orders || [])"> <span id="orderResolvedFilterLabel">Hiện đơn đã đối soát</span></label>
+      <div class="mission-table-wrap"><table id="missionTable"><thead><tr><th>Công việc</th><th>Xe</th><th>Nguồn → Đích</th><th>Trạng thái / Tiến độ</th><th>Thao tác</th></tr></thead><tbody></tbody></table></div>
+    </section>
     <aside id="right-panel" aria-label="Điều khiển và cấu hình">
-      <section class="card compact panel-card" data-views="overview tasks">
+      <section class="card compact panel-card" data-views="overview">
         <div class="card-header">Ca làm việc <span id="homeStationCaption" class="card-caption">Theo cấu hình core</span></div>
         <div id="shiftStatus" role="status" class="shift-phase">Đang chờ trạng thái ca từ core</div>
         <div id="coreModeStatus" class="field-hint" role="status">Chờ cấu hình Core</div>
@@ -708,10 +684,10 @@
         <div class="row-btn"><button id="startShiftBtn" data-control class="btn" onclick="changeShift('start',this)">Mở ca</button><button id="endShiftBtn" data-control class="btn btn-outline" onclick="changeShift('end',this)">Kết thúc ca</button></div>
         <p class="card-help">Kết thúc ca: hoàn thành nhiệm vụ đang chạy rồi về trạm riêng. Vị trí chỉ được xác nhận qua RFID.</p>
       </section>
-      <section class="card compact panel-card" data-views="overview tasks">
+      <section class="card compact panel-card" data-views="overview">
         <div class="card-header">Tạo lượt chuyển kệ</div>
         <div class="task-mode-switch" role="group" aria-label="Loại nhiệm vụ">
-          <button id="warehouseModeBtn" type="button" aria-pressed="false" onclick="setTaskMode('warehouse')" hidden>Lấy / hạ hàng</button>
+          <button id="warehouseModeBtn" type="button" aria-pressed="false" onclick="setTaskMode('warehouse')" hidden>Nâng / hạ kệ</button>
           <button id="orderModeBtn" type="button" aria-pressed="true" onclick="setTaskMode('order')">Đơn hàng kho</button>
           <button id="nodeModeBtn" type="button" aria-pressed="false" onclick="setTaskMode('node')">Đi tới node</button>
         </div>
@@ -720,8 +696,8 @@
           <label for="warehouseTarget">Kho thực hiện</label>
           <select id="warehouseTarget" class="form-group" onchange="updateWarehouseControls()"></select>
           <div class="row-btn">
-            <button id="pickupWarehouseBtn" type="button" data-control class="btn" onclick="warehouseAction('pickup',this)">Lấy hàng</button>
-            <button id="dropoffWarehouseBtn" type="button" data-control class="btn btn-outline" onclick="warehouseAction('dropoff',this)">Hạ hàng</button>
+            <button id="pickupWarehouseBtn" type="button" data-control class="btn" onclick="warehouseAction('pickup',this)">Nâng kệ</button>
+            <button id="dropoffWarehouseBtn" type="button" data-control class="btn btn-outline" onclick="warehouseAction('dropoff',this)">Hạ kệ</button>
           </div>
           <div id="warehouseActionStatus" class="field-hint" role="status">Chờ xe sẵn sàng.</div>
           <p>Đến gate thì chờ lệnh tiếp theo. Core ra lệnh xoay theo hướng của tuyến mới.</p>
@@ -734,7 +710,7 @@
           <div id="orderDeliveries" class="order-lines"></div>
           <button type="button" class="btn-outline full-width add-transfer-line" onclick="addOrderLine('dropoff')">+ Thêm kho giao</button>
           <div id="orderTransferPreview" class="transfer-preview" aria-live="polite">Chọn kho lấy và kho giao.</div>
-          <div id="orderTotals" class="field-hint">Lấy 0 · giao 0 kiện</div>
+          <div id="orderTotals" class="field-hint">Lấy 0 · giao 0 kệ</div>
           <p id="orderFormHint" class="transfer-form-hint" role="status"></p>
           <button id="submitOrderBtn" type="button" data-control data-task-control class="btn full-width" onclick="submitOrder()">Tạo đơn hàng</button>
           <p id="orderDispatchHint" class="card-help">Tự chọn xe sẵn sàng gần kho lấy nhất.</p>
@@ -747,7 +723,7 @@
           <label for="task_agv">Xe thực hiện</label>
           <select id="task_agv" class="form-group"><option value="">Tự động chọn xe gần nhất</option></select>
           <div id="taskBatteryHint" class="field-hint" role="status"></div>
-          <div class="form-grid task-inputs"><div><label for="task_target">Node đích</label><input id="task_target" class="form-group" list="mapNodeOptions" placeholder="Ví dụ: K3"></div><div><label for="task_priority">Ưu tiên</label><input id="task_priority" type="number" min="0" max="100" step="1" class="form-group" value="0"></div></div>
+          <div class="form-grid task-inputs"><div><label for="task_target">Node đích</label><input id="task_target" class="form-group" list="taskNodeOptions" placeholder="Ví dụ: K3"><datalist id="taskNodeOptions"></datalist></div><div><label for="task_priority">Ưu tiên</label><input id="task_priority" type="number" min="0" max="100" step="1" class="form-group" value="0"></div></div>
           <button id="submitTaskBtn" data-control data-task-control class="btn full-width" onclick="addTask()">Giao nhiệm vụ</button>
           <p class="card-help">Core xác nhận đã nhận nhiệm vụ; vị trí hoàn thành dựa trên telemetry RFID.</p>
         </div>
@@ -767,33 +743,52 @@
         <div id="mapListBox" class="log-list"></div>
       </section>
       <section class="card compact panel-card" data-views="map">
-        <div class="card-header">Chỉnh cấu trúc <span class="card-caption">Khi kho trống</span></div>
-        <p id="mapEditHint" class="card-help"></p>
-        <div class="section-label">NODE</div>
-        <div class="form-grid"><input id="edit_node_id" placeholder="ID node" aria-label="ID node"><select id="edit_node_type" aria-label="Loại node"><option value="waypoint">Điểm đường</option><option value="mutex">Vùng giao nhau</option><option value="station">Điểm kho</option><option value="charging">Trạm sạc</option></select><input id="edit_node_x" type="number" value="0" placeholder="Tọa độ X" aria-label="Tọa độ X"><input id="edit_node_y" type="number" value="0" placeholder="Tọa độ Y" aria-label="Tọa độ Y"></div>
-        <div class="row-btn"><button id="saveNodeBtn" data-map-edit class="btn" onclick="editNode()">Thêm / sửa</button><button id="removeNodeBtn" data-map-edit class="btn-danger" onclick="editNode(true)">Xóa node</button></div>
-        <div class="section-label section-spaced">CẠNH ĐƯỜNG</div>
-        <div class="form-grid"><input id="edit_edge_from" list="mapNodeOptions" placeholder="Từ node" aria-label="Node đầu cạnh"><input id="edit_edge_to" list="mapNodeOptions" placeholder="Đến node" aria-label="Node cuối cạnh"><input id="edit_edge_weight" type="number" min="0" max="1000000" step="1" value="1" aria-label="Trọng số cạnh"><select id="edit_edge_type" aria-label="Loại cạnh"><option value="main">Đường chính</option><option value="branch">Nhánh</option><option value="loop">Vòng</option></select><input id="edit_edge_class" placeholder="Phân loại đường" aria-label="Phân loại đường"><label class="check-label"><input id="edit_edge_two_way" type="checkbox"> Hai chiều</label></div>
-        <div class="row-btn"><button id="saveEdgeBtn" data-map-edit class="btn" onclick="editEdge()">Thêm / sửa</button><button id="removeEdgeBtn" data-map-edit class="btn-danger" onclick="editEdge(true)">Xóa cạnh</button></div>
-      </section>
-      <section class="card compact panel-card" data-views="reports" id="kpiPanel">
-        <div class="card-header">Hiệu suất ca <button class="btn" onclick="generateKpi()">Tạo báo cáo</button></div>
-        <div id="kpiBox"><i>Đang tải...</i></div>
-        <div class="section-label section-spaced">BÁO CÁO ĐÃ LƯU</div>
-        <div class="card-help">Chọn một ca để xem lại số liệu đã lưu.</div>
-        <div id="kpiHistoryBox" class="log-list"></div>
-      </section>
-      <section class="card compact panel-card" data-views="reports" id="warehouseReportsPanel">
-        <div class="card-header">Báo cáo kho cuối ca <button class="btn-outline" onclick="loadWarehouseReports()">Tải lại</button></div>
-        <p class="card-help">Tự lưu khi Core xác nhận ca đã đóng. Báo cáo giữ vị trí đầu/cuối ca, lượt nâng/hạ và mục cần đối soát.</p>
-        <div id="warehouseReportList" class="log-list">Chưa có báo cáo kho.</div>
-        <div id="warehouseReportDetail"></div>
-      </section>
-      <section class="card compact panel-card" data-views="reports">
-        <div class="card-header">Nhật ký chuyển kệ</div>
-        <div id="warehouseEventList" class="log-list">Chưa có thao tác kệ.</div>
+        <div class="card-header">Chỉnh cấu trúc</div>
+        <div id="locationNamesEditor">
+          <div class="section-label">HOÁN ĐỔI TÊN KHO / TRẠM</div>
+          <label for="locationNameFirst">Kho / trạm</label>
+          <select id="locationNameFirst" class="form-group" onchange="updateLocationNameChoices()" disabled></select>
+          <label for="locationNameSecond">Hoán đổi với</label>
+          <select id="locationNameSecond" class="form-group" disabled></select>
+          <button id="swapLocationNamesBtn" type="button" class="btn full-width" onclick="swapLocationNames()" disabled>Cập nhật</button>
+        </div>
       </section>
     </aside>
+    <section id="reportsWorkspace" class="card compact panel-card reports-workspace" data-views="reports" aria-labelledby="reportsTitle">
+      <div class="reports-heading">
+        <h2 id="reportsTitle">Báo cáo &amp; nhật ký</h2>
+        <div class="report-tabs" role="group" aria-label="Loại báo cáo">
+          <button type="button" data-report-target="performance" aria-pressed="true" onclick="showReportSection('performance')">Hiệu suất</button>
+          <button type="button" data-report-target="warehouse" aria-pressed="false" onclick="showReportSection('warehouse')">Kho cuối ca</button>
+          <button type="button" data-report-target="logs" aria-pressed="false" onclick="showReportSection('logs')">Nhật ký</button>
+        </div>
+      </div>
+      <div id="kpiPanel" data-report-panel="performance">
+        <div class="report-toolbar">
+          <label for="kpiHistoryBox">Chọn ca</label>
+          <select id="kpiHistoryBox" onchange="selectKpiReport(this.value)"><option value="">Chưa có báo cáo</option></select>
+          <button id="generateKpiBtn" type="button" class="btn" onclick="generateKpi()">Tạo báo cáo</button>
+        </div>
+        <div id="kpiBox">Đang tải…</div>
+      </div>
+      <div id="warehouseReportsPanel" data-report-panel="warehouse" hidden>
+        <div class="report-toolbar">
+          <label for="warehouseReportList">Chọn ca</label>
+          <select id="warehouseReportList" onchange="selectWarehouseReport(this.value)"><option value="">Chưa có báo cáo kho</option></select>
+          <button type="button" class="btn-outline" onclick="loadWarehouseReports()">Tải lại</button>
+        </div>
+        <div id="warehouseReportDetail">Chưa có báo cáo kho.</div>
+      </div>
+      <div id="reportLogsPanel" data-report-panel="logs" hidden>
+        <div class="report-toolbar">
+          <label for="reportLogSource">Nhật ký</label>
+          <select id="reportLogSource" onchange="showReportLog()"><option value="warehouse">Chuyển kệ</option><option value="system">Hệ thống</option></select>
+          <button type="button" class="btn-outline" onclick="refreshReportLogs()">Tải lại</button>
+        </div>
+        <div id="warehouseEventList" class="log-list reports-log">Chưa có thao tác kệ.</div>
+        <div id="systemLogBox" class="log-list reports-log" hidden>Đang chờ sự kiện</div>
+      </div>
+    </section>
   </main>
   <datalist id="mapNodeOptions"></datalist>
 
@@ -839,9 +834,17 @@
       <button class="btn full-width" type="submit">Đăng nhập</button>
     </form>
   </dialog>
-  <script src="/warehouse-ui.js?v=20261021-shift-warehouse"></script>
-  <script src="/warehouse-operations.js?v=20261018-warehouse-operations"></script>
-  <script src="/dashboard.js?v=20261021-shift-warehouse"></script>
+  <script src="/warehouse-rules.js?v=20261025-warehouse-rules"></script>
+  <script src="/dashboard-shared.js?v=20261025-dashboard-shared"></script>
+  <script src="/dashboard-reports.js?v=20261026-current-robot-ids"></script>
+  <script src="/dashboard-location-names.js?v=20261026-compact-names"></script>
+  <script src="/mission-model.js?v=20261026-location-names"></script>
+  <script src="/dashboard-missions.js?v=20261026-rollback"></script>
+  <script src="/warehouse-ui.js?v=20261026-compact-reports"></script>
+  <script src="/dashboard-vehicles.js?v=20261026-location-names"></script>
+  <script src="/warehouse-operations.js?v=20261026-rollback"></script>
+  <script src="/dashboard-map.js?v=20261026-location-names"></script>
+  <script src="/dashboard.js?v=20261026-rollback"></script>
 </body>
 
 </html>

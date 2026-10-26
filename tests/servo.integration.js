@@ -82,7 +82,7 @@ async function main(){
       assert.equal(shiftRobot.reason,up?'Dang nang hang':'Dang ha hang');
       assert.equal(firmware.angle,up?45:0);assert.equal((await robot()).virtual_cargo,!up);
       assert.equal((await post(`/api/agvs/${robotId}/goto`,{target:'G5'})).status,409);
-      if(page){await page.waitForFunction(text=>document.querySelector('#fleetTable').textContent.includes(text),up?'Đang nâng hàng':'Đang hạ hàng');
+      if(page){await page.waitForFunction(({id,text})=>document.querySelector(`[data-robot-transfer="${id}"]`).textContent.includes(text),{id:robotId,text:up?'Đang nâng kệ':'Đang hạ kệ'});
         assert.equal(await page.locator(`[data-virtual-cargo="${robotId}"]`).count(),up?0:1);
         await page.screenshot({path:path.join(dir,up?'lifting.png':'lowering.png')});}
       await until(async()=>(await state()).warehouse_actions.find(a=>a.id===id).status==='completed','servo + exit',16000);

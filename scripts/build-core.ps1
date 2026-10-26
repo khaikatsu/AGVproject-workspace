@@ -1,6 +1,7 @@
 ﻿param([string]$Compiler = 'g++', [switch]$Tests, [string]$OutputDirectory = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
+& "$PSScriptRoot/check-vendor.ps1"
 $outputRoot = if (-not $OutputDirectory) {
     Join-Path $projectRoot 'build'
 } elseif ([IO.Path]::IsPathRooted($OutputDirectory)) {

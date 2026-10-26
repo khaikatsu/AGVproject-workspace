@@ -46,9 +46,8 @@
   #endif
 #include <windows.h>
 #endif
-#include "utils/json.hpp"
+#include "utils/CoreTypes.hpp"
 
-using json = nlohmann::json;
 
 struct Node {
     std::string id;
@@ -200,6 +199,14 @@ public:
 
     void saveToFile(const std::string& path) {
         auto snapshot = toJson();
+        if (snapshot.contains("obstacle_deadlines")) {
+            auto& obstacles = snapshot["obstacles"];
+            const auto& deadlines = snapshot["obstacle_deadlines"];
+            obstacles.erase(std::remove_if(obstacles.begin(),obstacles.end(),[&](const json& id){
+                return deadlines.contains(id.get<std::string>());
+            }),obstacles.end());
+            snapshot.erase("obstacle_deadlines");
+        }
         const auto temporary = std::filesystem::path(path + ".tmp");
         std::ofstream out(temporary);
         if (!out) throw std::runtime_error("Khong mo duoc file luu ban do: " + path);
@@ -452,6 +459,22 @@ public:
     std::vector<std::string> chargingStations() { std::lock_guard<std::mutex> lk(mtx_); return chargingStations_; }
     bool nodeExists(const std::string& id) { std::lock_guard<std::mutex> lk(mtx_); return nodes_.count(id) > 0; }
 
+    // Copy only the two endpoints and matching directed edge for geometry users.
+    json edgeGeometry(const std::string& from,const std::string& to) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (!nodes_.count(from) || !nodes_.count(to)) return nullptr;
+        const auto adjacent=adjacency_.find(from);
+        if (adjacent==adjacency_.end()) return nullptr;
+        for (const auto& e:adjacent->second) if(e.to==to) {
+            json edge={{"from",e.from},{"to",e.to},{"weight",e.weight},{"two_way",e.twoWay}};
+            if(!e.geometry.is_null()) edge["geometry"]=e.geometry;
+            const auto& a=nodes_.at(from);const auto& b=nodes_.at(to);
+            return {{"nodes",json::array({{{"id",a.id},{"x",a.x},{"y",a.y}},{{"id",b.id},{"x",b.x},{"y",b.y}}})},
+                {"edges",json::array({edge})}};
+        }
+        return nullptr;
+    }
+
     json toJson() {
         std::lock_guard<std::mutex> lk(mtx_);
         json j = {{"nodes", json::array()}, {"edges", json::array()}, {"revision", revision_}};
@@ -551,6 +574,7 @@ public:
 
         mutexZones_ = {"M1","M2","M3","M4","M5","M6"};
         chargingStations_ = {"S1", "S2"};
+        ++revision_;
     }
 private:
     static void validateNode(const Node& n) {

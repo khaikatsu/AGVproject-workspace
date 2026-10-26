@@ -11,7 +11,17 @@ jobs:
         with: {node-version: '24', cache: npm, cache-dependency-path: AGVwebserver/package-lock.json}
       - run: sudo apt-get update && sudo apt-get install -y g++ libmosquitto-dev libssl-dev mosquitto openssl
       - run: npm ci --prefix AGVwebserver
+      - name: Verify pinned JSON vendor
+        run: echo 'aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63  include/utils/json.hpp' | sha256sum -c -
       - run: mkdir -p build && g++ -Iinclude -std=c++17 -pthread src/core/AGVserver.cpp -lmosquitto -lssl -lcrypto -o build/agv_core.exe && g++ -Iinclude -std=c++17 -pthread tests/core_tests.cpp -o build/core_tests && ./build/core_tests
-      - run: node --test --test-isolation=none tests/gateway.test.js tests/security.test.js
+      - name: Gateway and warehouse unit tests
+        run: npm --prefix AGVwebserver test && npm --prefix AGVwebserver run test:isolated
+      - name: Core cancellation and checkpoint regression
+        run: |
+          g++ -Iinclude -std=c++17 -pthread tests/core_hardening.cpp -o build/core_hardening
+          ./build/core_hardening
+          g++ -Iinclude -std=c++17 -pthread tests/runtime-map-migration.cpp -o build/runtime_migration
+          ./build/runtime_migration
+          AGV_CORE_BIN="$PWD/build/agv_core.exe" node tests/startup-errors.integration.js
       - run: node tests/system.integration.js && node tests/hardening.integration.js
       - run: python3 -m pip install 'jsonschema>=4,<5' && python3 scripts/check_contracts.py

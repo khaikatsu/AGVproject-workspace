@@ -1,5 +1,25 @@
 # Bảng chỉnh thông số xe 01 và xe 02
 
+## 24/10/2026 — Source hiện hành gs-wide-v18
+
+Giá trị đối chiếu trực tiếp hai profile sau REQ-DUAL-GS-WIDE-LINE-01. Bảngv17/23/10 và các mục bên dưới giữ làm lịch sử, không dùng thay bảng hiện hành này.
+
+| Thông số | Xe01 | Xe02 |
+| --- | ---: | ---: |
+| PD Kp/Kd/base/chu kỳ | 70/30/125/10ms | 75/35/115/15ms |
+| PD reset gap | 100ms | 50ms |
+| Fallback/trimENA/trimENB | 255/0/0 | 160/0/0 |
+| Capture thường trái/phải | 220/200 | 190/95 |
+| Quay thường/trimENA/trimENB | 220/0/−5 | 220/0/0 |
+| G1PWM trước trim | 205 | 200 |
+| GS dockingPWM trước trim | 200 | 180 |
+| GS pivot duty ENA/ENB (độ lớn) | 200/195 | 180/180 |
+| Xác nhận180° | 500ms | 100ms |
+| Lùi thẳng/trimENA/trimENB | 180/+20/−20 | 130/0/−10 |
+| Lùi correction/delta | 150/50 | 120/20 |
+
+Docking rẽ trái/phải tiếp tục pivot qua011/010/110 và chỉ nhận111 ổn định100ms,≥3mẫu mới cách≥5ms/gap≤50ms. Trong xác nhận motorSTOP; quét/capture vẫn bị giới hạn600/1500ms. Docking180 dùng line hẹp cho nhánh trung gian nhưng nhánh cuối chỉ111, cửa sổ500/100ms ở trên. Hình học nguồn: line4,5cm, khoảng hai mắt kề1,5cm, cụm mắt tới trục4,3cm, đoạnGS→S dài25cm. Ngoài docking, xác nhận line thường vẫn50ms theoConfig. BuildID `20261024-robot01-gs-wide-v18` và `20261024-robot02-gs-wide-v18`; buildESP32 cảhaiPASS, chưa nạp/thử vật lý. [ADR-081](decisions/ADR-081-dual-gs-wide-line-confirmation.md).
+
 ## 23/10/2026 — Bộ thông số tích hợp vào thư mục main
 
 Nguồn giá trị: bản lưu cuối `output/turn180-confirm-both-20261022/staged` của workspacechat, theo lựa chọn người dùng. Chuyển giá trị hợp lệ; giữservo/ID/mạng/hiệu chuẩn củađích. Xe02 giữ `AGV_BENCH_MOTOR_SPEED=160` và `AGV_RIGHT_TURN_CAPTURE_ENABLED=1` hợp lệ củađích vì bảnlưu thiếu hai khai báo này, có macro `AGV_BENCH_MOTOR_SPEED_ENABLED` khôngđượcđọc và dòngPWMphải trùng. Không sao chép các dòng lỗi đó hoặc vô hiệu hóa chức năng hiệncó.

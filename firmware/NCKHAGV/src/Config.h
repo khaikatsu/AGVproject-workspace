@@ -380,6 +380,20 @@ static_assert(TURN_AROUND_CONFIRM_MS >= 2 * TURN_LINE_SAMPLE_MS &&
 #define AGV_TURN_180_MIN_MS 350
 #endif
 constexpr uint32_t TURN_180_MIN_MS = AGV_TURN_180_MIN_MS;
+#if defined(AGV_GS_TURN_PWM)
+constexpr int GS_TURN_PWM = AGV_GS_TURN_PWM;
+#else
+constexpr int GS_TURN_PWM = 180;
+#endif
+static_assert(GS_TURN_PWM > 0 && GS_TURN_PWM <= TURN_SPEED, "Invalid GS turn PWM");
+
+#if defined(AGV_GS_ALIGN_PWM)
+constexpr int GS_ALIGN_PWM = AGV_GS_ALIGN_PWM;
+#else
+constexpr int GS_ALIGN_PWM = 155;
+#endif
+static_assert(GS_ALIGN_PWM > 0 && GS_ALIGN_PWM <= GS_TURN_PWM, "Invalid GS align PWM");
+
 static_assert(TURN_180_MIN_MS >= TURN_MIN_MS && TURN_180_MIN_MS < TURN_TIMEOUT_MS,
               "Invalid turn-180 minimum duration");
 #if defined(AGV_G1_TURN_AROUND_PWM)
@@ -420,6 +434,18 @@ static_assert(RIGHT_TURN_CAPTURE_PWM > 0 && RIGHT_TURN_CAPTURE_PWM <= 255 &&
 constexpr uint32_t LEFT_CAPTURE_SAMPLE_MS = 05;
 constexpr uint32_t LEFT_CAPTURE_MAX_GAP_MS = 50;
 constexpr uint32_t LEFT_CAPTURE_SETTLE_MS = 200;
+#if defined(AGV_GS_CONFIRM_MS)
+constexpr uint32_t GS_CONFIRM_MS = AGV_GS_CONFIRM_MS;
+#else
+constexpr uint32_t GS_CONFIRM_MS = 2 * LEFT_CAPTURE_SAMPLE_MS;
+#endif
+static_assert(GS_CONFIRM_MS >= 2 * LEFT_CAPTURE_SAMPLE_MS && GS_CONFIRM_MS < TURN_TIMEOUT_MS, "Invalid GS confirm MS");
+#if defined(AGV_REVERSE_ALIGN_FORWARD_MS)
+constexpr uint32_t REVERSE_ALIGN_FORWARD_MS = AGV_REVERSE_ALIGN_FORWARD_MS;
+#else
+constexpr uint32_t REVERSE_ALIGN_FORWARD_MS = 0;
+#endif
+constexpr uint32_t REVERSE_ALIGN_SETTLE_MS = 150;
 #if defined(AGV_TURN_RETRY_ENABLED) && AGV_TURN_RETRY_ENABLED == 1
 constexpr bool TURN_RETRY_ENABLED = true;
 #else

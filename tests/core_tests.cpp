@@ -25,6 +25,12 @@ json comparableMap(MapGraph& map) {
         std::sort(j[key].begin(),j[key].end(),[](const json& a,const json& b) {return a.dump() < b.dump();});
     return j;
 }
+void confirmCancelledStop(FleetManager& fleet,const std::string& id,const std::string& node) {
+    fleet.bindEncoderSession(id,777,1,100);
+    MotionDiagnostic stop{node,"AGV_IDLE","NONE","STOP",false,true,true,0,0,0};
+    stop.encoderBoot=777;stop.encoderConnection=1;stop.encoderUptime=1000;
+    fleet.observeMotionDiagnostic(id,stop);
+}
 int main() {
     try {
         {
@@ -85,6 +91,7 @@ int main() {
             CHECK(!fleet.updateTelemetry("01","G6",80,false)); // Heartbeat is not a new RFID observation.
             CHECK(fleet.directGoto("01","G1","legacy-through").empty());
             CHECK(!sent.back().contains("pass_through"));fleet.cancelTask("","legacy-through");
+            confirmCancelledStop(fleet,"01","G6");
             MotionDiagnostic d{"G6","AGV_IDLE","NONE","STOP",false,true,true,0,0,0};
             d.headingSupported=true;d.heading="S";d.headingNode="G6";d.headingSource="route";
             d.nodeOrdersSupported=d.straightThroughSupported=true;fleet.observeMotionDiagnostic("01",d);
@@ -102,9 +109,10 @@ int main() {
             CHECK(fleet.directGoto("01","K5","turn-trip").empty());
             const auto through=sent.back()["pass_through"];
             CHECK(std::find(through.begin(),through.end(),json(0))==through.end());
-            fleet.cancelTask("","turn-trip");d.straightThroughSupported=false;fleet.observeMotionDiagnostic("01",d);
+            fleet.cancelTask("","turn-trip");confirmCancelledStop(fleet,"01","G6");
+            d.straightThroughSupported=false;fleet.observeMotionDiagnostic("01",d);
             CHECK(fleet.directGoto("01","G1","old-firmware").empty());CHECK(!sent.back().contains("pass_through"));
-            fleet.cancelTask("","old-firmware");fleet.updateTelemetry("01","K1",80,false);
+            fleet.cancelTask("","old-firmware");confirmCancelledStop(fleet,"01","G6");fleet.updateTelemetry("01","K1",80,false);
             d.node=d.headingNode="K1";d.heading="W";d.headingSource="bay_default";d.straightThroughSupported=true;
             fleet.observeMotionDiagnostic("01",d);CHECK(fleet.directGoto("01","M5","warehouse-exit-through").empty());
             CHECK(sent.back()["pass_through"].empty()); // Do not reject the valid reverse-exit route at the MCU.

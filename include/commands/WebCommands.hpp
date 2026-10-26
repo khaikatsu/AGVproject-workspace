@@ -27,13 +27,16 @@ public:
                 if (!fleet_.acceptingTasks()) return failure(result,409,"Ca chua bat dau hoac dang ket thuc; hang doi tam dung");
                 const auto target = id(j, "target");
                 if (!map_.nodeExists(target)) return failure(result, 404, "Node dich khong ton tai");
-                const auto taskId = fleet_.createTaskId();
                 if (j.contains("priority") && !j["priority"].is_number_integer()) return failure(result,400,"priority phai la so nguyen");
+                if (j.contains("priority") && (j["priority"] < 0 || j["priority"] > 100))
+                    return failure(result,400,"priority phai trong 0..100");
                 int priority = j.value("priority", 0);
                 if (priority < 0 || priority > 100) return failure(result, 400, "priority phai trong 0..100");
+                const auto robotId = cmd == "direct_goto" ? id(j,"agv_id") : std::string{};
+                const auto taskId = fleet_.createTaskId();
                 if (cmd == "add_task") fleet_.addTask(target, priority, taskId);
                 else {
-                    auto error = fleet_.directGoto(id(j, "agv_id"), target, taskId, priority);
+                    auto error = fleet_.directGoto(robotId, target, taskId, priority);
                     if (!error.empty()) return failure(result, 409, error);
                 }
                 data["task_id"] = taskId;
@@ -45,6 +48,23 @@ public:
                 const auto error=fleet_.startLift(id(j,"agv_id"),id(j,"node"),operation=="pickup",commandId);
                 if(!error.empty()) return failure(result,409,error);
                 data["command_id"]=commandId;
+            } else if (cmd == "reconcile_test_cargo") {
+                if(!j.contains("physically_clear") || j["physically_clear"]!=true)
+                    return failure(result,400,"Can xac nhan ke da ve kho lay va xe trong");
+                const auto& entries=j.at("robots");
+                if(!entries.is_array() || entries.empty() || entries.size()>2)return failure(result,400,"Danh sach xe sai");
+                std::vector<std::pair<std::string,long>> robots;
+                for(const auto& entry:entries) {
+                    const auto robot=id(entry,"id");
+                    if((robot!="01" && robot!="02") || !entry.at("lift_command_id").is_number_integer() ||
+                        entry["lift_command_id"]<0 || entry["lift_command_id"]>INT_MAX ||
+                        std::any_of(robots.begin(),robots.end(),[&](const auto& r){return r.first==robot;}))
+                        return failure(result,400,"ID xe/lenh nang ha sai hoac trung");
+                    robots.emplace_back(robot,entry["lift_command_id"].get<long>());
+                }
+                const auto error=fleet_.reconcileTestCargo(robots);
+                if(!error.empty())return failure(result,409,error);
+                data["reconciled"]=entries;
             } else if (cmd == "confirm_zone_clear") {
                 if (!j.value("physically_clear",false)) return failure(result,400,"Can xac nhan da dung xe va vung trong");
                 const auto zone = id(j,"zone"), owner = id(j,"owner");

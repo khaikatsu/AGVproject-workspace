@@ -2,6 +2,8 @@
 
 Ngày 18/10/2026. Trạng thái: IMPLEMENTED phần mềm; thử kệ/servo thật OPEN.
 
+Bổ sung26/10/2026: [ADR-089](ADR-089-test-order-rollback.md) ghi đè quy tắc chỉ đóng đơn nhưng giữ sổ kho khi đối soát lượt thử. Với xác nhận kệ đã về nguồn/xe trống, server hoàn tác các lượt chưa hạ về kho lấy và đóng đơn cùng transaction; Core xóa cargo ảo sau proof dừng. Giữ lượt đã hạ, lỗi/mutex và báo cáo cũ. Nhập lại toàn bộ kho vẫn chỉ khi CLOSED như dưới.
+
 ## Nguồn và phạm vi
 
 `SOURCE`: người dùng muốn server cập nhật trạng thái kệ và log theo việc xe đã làm; khi kết thúc ca lưu báo cáo trạng thái kho. Khi được hỏi vị trí ban đầu, người dùng chọn tự nhập trên giao diện. Không tự cấu hình K2–K5 có kệ hoặc K1/K6 trống.

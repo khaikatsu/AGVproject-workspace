@@ -1,5 +1,167 @@
 # Hồ sơ kiểm thử AGV
 
+## 26/10/2026 — Hoàn tác lượt thử gián đoạn về kho lấy
+
+REQ-WAREHOUSE-TEST-ROLLBACK-01 / [ADR-089](../docs/decisions/ADR-089-test-order-rollback.md).
+
+- `npm --prefix AGVwebserver test` PASS64/64 sau thay đổi cuối. Ca hoàn tác kiểm cả01/02, lượt chưa nâng/đã nâng, revision cũ/xác nhận thiếu/xe bận, nguồn bị chiếm, lỗi ghi sự kiện và lỗi ghi đơn rollback cùng transaction, retry không lặp, restart giữ trạng thái và tạo được lượt lấy mới. Lượt đã hạ giữ kho giao; đóng lỗi chặng exit cũ không xóa cargo mới của xe; báo cáo đã lưu bất biến.
+- `scripts/build-core.ps1 -OutputDirectory .qa/rollback-core -Tests` build Core và unit PASS. `tests/servo_core.cpp` compile/run tại `.qa/rollback-core/servo_core.exe` PASS cho cả01/02: ID/lift command CAS, stop proof đúng boot/kết nối, batch không áp dụng một phần, đang nâng bị chặn, giữ ERROR/mutex, không phát MQTT khi đối soát, diagnostic DONE_UP cũ không khôi phục cargo đã xóa.
+- `tests/warehouse-rollback.browser.integration.js` PASS `.qa/warehouse-rollback-e3K0QX` trên Edge headless: nút Hoàn tác về K1/K3, hủy xác nhận không đổi, Core từ chối giữ nguyên kệ/đơn, chọn từng xe không ảnh hưởng xe kia, marker cargo biến mất và kệ về nguồn, desktop1440/mobile390 không tràn, reload/restart giữ kết quả, không lỗi JavaScript. Lần đầu PASS `.qa/warehouse-rollback-DOFuRq`; ảnh desktop đã được xem trực tiếp. Chạy lại bằng `npm --prefix AGVwebserver run test:rollback:browser` với Playwright/Edge env như các bài browser khác.
+- Hồi quy `tests/record-delete.browser.integration.js` PASS `.qa/record-delete-OeGIcW`, gồm đối soát đơn đã xóa. JS syntax và diff whitespace PASS.
+
+Sandbox chặn loopback và CIM ở lượt chạy đầu, đã dừng tiến trình test và chạy lại có quyền phù hợp; không tính các lỗi môi trường này là lỗi sản phẩm. Hai assertion fixture mới được chỉnh đúng luồng tới kho ngay và sự kiện hạ bền vững sau đóng ca, sau đó PASS. Một lỗi khai báo `auto` trong test C++ đã sửa trước lượt PASS cuối. Mọi lần chạy dùng cổng/DB/Core giả riêng; không sửa DB/counter vận hành, không thay executable đang chạy, không nạp firmware hoặc thử xe thật. Cần chạy gateway/Core mới để dùng command đối soát mới; firmware01/02 giữ nguyên.
+
+## 26/10/2026 — Hoạt động xe chỉ hiện ID 01/02
+
+REQ-WEB-REPORTS-ROBOT-IDS-01: `tests/reports.browser.integration.js` PASS `.qa/reports-browser-OH3CCT`. Fixture có sáu ID (`1`, `01`, `02`, `AGV_01`, `AGV_02`, ID HTML thử); bảng chỉ còn `01`, `02`, số đếm2 và thời gian mỗi xe giữ nguyên, không cộng alias; báo cáo lưu vẫn đủ sáu ID. Hồi quy chọn ca/tạo KPI/kho/tải JSON/nhật ký, trạng thái trống và desktop/mobile PASS. JS syntax và diff whitespace PASS; chỉ đổi lọc hiển thị/cache asset, không xóa dữ liệu DB vận hành.
+
+## 26/10/2026 — Gộp báo cáo và nhật ký
+
+REQ-WEB-REPORTS-COMPACT-01 / [ADR-088](../docs/decisions/ADR-088-compact-reports-workspace.md).
+
+- `tests/reports.browser.integration.js` PASS tại `.qa/reports-browser-3SrQCZ`: một khung/ba mục, chỉ một mục hiện; chọn KPI và ca kho cũ vẫn giữ khi tải lại/chuyển mục, tạo KPI mới, chi tiết thu gọn, các ID xe lịch sử khác nhau vẫn giữ riêng. Một bảng đối chiếu đầu/cuối ca, tải JSON nguyên vẹn so báo cáo lưu, chọn nhật ký, text XSS an toàn và trạng thái trống. Desktop1440/mobile390 không tràn ngang; đã xem trực tiếp ảnh hiệu suất và kho ở cả hai kích thước. Chạy lại bằng `npm --prefix AGVwebserver run test:reports:browser` với Playwright/Edge như bên dưới.
+- `tests/browser.integration.js` PASS `.qa/browser-test-F6hhCd`; `tests/warehouse.browser.integration.js` PASS `.qa/warehouse-browser-KFs3hI`: dashboard/ca/bản đồ, chọn báo cáo kho mới khi Core CLOSED, trạng thái kệ, đối soát, tải JSON và mobile không hồi quy. Các fixture cập nhật selector từ danh sách button sang select/option.
+- Kiểm cú pháp JS và `git diff --check` phần liên quan PASS. Chỉ sửa frontend và script test/package; không đổi API, cách tính KPI, DB vận hành, Core hoặc firmware. Các test dùng Core giả và DB/cổng riêng; không phát lệnh robot thật hoặc restart dịch vụ vận hành.
+
+## 26/10/2026 — Rút gọn chữ trong form hoán đổi tên
+
+REQ-WEB-LOCATION-NAMES-03: bỏ mô tả/xem trước/thông báo dài, chỉ giữ tiêu đề, hai ô chọn và nút Cập nhật. `tests/location-names.browser.integration.js` PASS tại `.qa/location-names-browser-l4Begd`; ảnh mobile đã xem trực tiếp. Chức năng hoán đổi, hai tab, lỗi lưu, hai xe, đơn/lịch sử và restart fixture không hồi quy; kiểm cú pháp và diff whitespace PASS. Không thay backend hoặc dữ liệu vận hành.
+
+## 26/10/2026 — Bỏ form sửa node/cạnh cũ
+
+REQ-WEB-LOCATION-NAMES-02: xóa Cấu trúc vị trí cố định cùng form/handler node/cạnh, giữ hoán đổi tên và snapshot. `tests/browser.integration.js` PASS tại `.qa/browser-test-qlc9uK`, xác nhận form cũ không còn trong DOM, snapshot/giao task/map/ca và desktop/mobile không hồi quy. Fixture tuyến Z nay do Core giả cấp thay vì thao tác form đã xóa. `tests/location-names.browser.integration.js` PASS `.qa/location-names-browser-gVmwhr`, gồm hoán đổi, hai tab, lỗi lưu, 01/02, đơn, lịch sử và restart fixture. JS syntax, tìm kiếm không còn tham chiếu DOM cũ trong code dashboard và `git diff --check` PASS. Không đổi backend/DB/Core/firmware hoặc restart dịch vụ vận hành.
+
+## 26/10/2026 — Hoán đổi tên kho/trạm, giữ ID vật lý
+
+REQ-WEB-LOCATION-NAMES-01 / [ADR-087](../docs/decisions/ADR-087-server-location-names.md).
+
+- `npm --prefix AGVwebserver test` PASS62/62; `npm --prefix AGVwebserver run test:isolated` PASS62/62 sau bổ sung chặn mở ca với revision tên cũ. Ba test mới kiểm hoán đổi cùng nhóm/khác nhóm, CAS/stale/missing revision, lỗi lưu giữ RAM/DB, đọc lại DB, giữ graph/kệ/home và lịch sử cũ; dịch đích cho cả01/02 và đơn; API cũ giữ ID vật lý; chặn khi ca/xe/task/vùng/đối soát hoặc Core không sẵn sàng. Auth/CSRF của route mới được kiểm trong security suite.
+- `tests/location-names.browser.integration.js` PASS tại `.qa/location-names-browser-eExfVJ`: form xem trước, lỗi HTTP500 không đổi map, hai tab nhận cùng ánh xạ, đổi K1↔K4/S1↔S2, giữ kệ và trạm riêng theo vị trí, tên trong form nhập kho; nhập đích cho01/02 và click marker gửi đúng ID, đơn lấy/giao được dịch đúng một lần; lịch sử cũ không đổi tên, task/đơn mới giữ ảnh tên; reload/restart gateway giữ ánh xạ; desktop1440/mobile390 không tràn ngang. Đã xem trực tiếp ảnh desktop/mobile và bảng nhiệm vụ ở lượt `.qa/location-names-browser-pqcqt7` cùng bố cục. Chạy bằng `npm --prefix AGVwebserver run test:names:browser` với Playwright/Edge như bên dưới.
+- Hồi quy dashboard PASS `.qa/browser-test-Rmgpgj`, kho/báo cáo PASS `.qa/warehouse-browser-47Y8X4`, nhiệm vụ PASS `.qa/missions-browser-Lcw1bN`, mở ca PASS `.qa/shift-start-browser-hxYckx` sau chốt kiểm revision ở API mở ca. Kiểm cú pháp15JS, JSON ví dụ và `git diff --check` phạm vi sửa PASS.
+
+Các test dùng Core giả, DB/cổng loopback riêng. Không restart gateway/Core vận hành, đổi cấu hình thật hoặc phát lệnh robot. Source gateway cần restart để cung cấp API/metadata tên mới. Không build/nạp firmware vì UID, graph, trạm riêng và MQTT không đổi.
+
+Lần unit sandbox đầu bị EACCES loopback; đã dừng đúng tiến trình test rồi chạy lại có quyền loopback và PASS. Fixture browser ban đầu dùng `innerText` cho SVG và chưa chờ `ontoggle` dựng form; sửa fixture sang `textContent`/chờ phần tử rồi PASS. Khi thêm tab thứ hai, bước cleanup/restart từng kẹt; đóng hẳn tab phụ và đặt timeout rõ ràng rồi toàn bộ suite PASS. `python scripts/check_workspace.py` chưa PASS: còn các link đường dẫn cũ `src/...`, `NCKHAGV/NCKHAGV` và artifact `.qa` ngoài phạm vi, cùng môi trường Python thiếu jsonschema. Không sửa các link lịch sử hoặc cài dependency để mở rộng task.
+
+## 26/10/2026 — Bỏ trang Nhiệm vụ trùng Tổng quan
+
+REQ-WEB-OVERVIEW-NAV-01: điều hướng còn Tổng quan/Bản đồ/Báo cáo, tạo đơn và mở lịch sử xe ở Tổng quan. `test:browser` PASS `.qa/browser-test-asSlur` (assert ba tab và lịch sử xe); `test:warehouse:browser` PASS `.qa/warehouse-browser-PmRWoD` (tạo đơn vẫn ở Tổng quan, kho/đối soát/báo cáo); `test:records:browser` PASS `.qa/record-delete-PzfEkR` (xóa, lỗi/hủy xác nhận, reload/restart và desktop/mobile ở Tổng quan). JS syntax và `git diff --check` PASS.
+
+Lượt xóa đầu đã chụp desktop/mobile nhưng chờ cleanup/restart fixture, được dừng; test nay rời trang bằng `about:blank` để dừng reconnect trước khi đóng gateway giả, chạy lại hoàn tất exit0. Không sửa backend. Selector của `missions.browser.integration.js`/`orders-selection.browser.js` đã cập nhật và kiểm cú pháp; không chạy lại hai suite này. Tất cả kiểm thử dùng Core giả, cổng/SQLite riêng, không thao tác hệ thống vận hành.
+
+## 26/10/2026 — Nhiệm vụ dưới bản đồ, gộp trạng thái kho
+
+REQ-WEB-LAYOUT-INVENTORY-01 / [ADR-086](../docs/decisions/ADR-086-map-first-missions-and-single-inventory.md).
+
+- `npm --prefix AGVwebserver run test:missions:browser` PASS `.qa/missions-browser-SzLABT`: thêm kiểm tọa độ bảng nằm dưới bản đồ desktop mở rộng/thu gọn, tab Nhiệm vụ, tablet900/mobile390; mobile bảng nằm trước nhóm điều khiển; không tràn ngang. Giữ toàn bộ hồi quy nhóm task, tìm kiếm/lọc, chi tiết, xóa/hủy, stale, persistence và DOM cache. Ảnh `desktop-layout.png` đã xem trực tiếp.
+- `npm --prefix AGVwebserver run test:warehouse:browser` PASS `.qa/warehouse-browser-iCGRAW`: chỉ một khối kho, không có bảng sidebar cũ; form nhập kho và reload; kệ từ ô K lên xe rồi về ô giao, không giữ nhãn kệ trên xe sau hạ; giữ chỗ/hai xe/đối soát, đầu ca, báo cáo/download; trạng thái kho thống nhất vẫn hiện ở Báo cáo. Ảnh `desktop-operations.png` và `mobile-operations.png` đã xem trực tiếp.
+- `npm --prefix AGVwebserver run test:browser` PASS `.qa/browser-test-iHLD7f`; `npm --prefix AGVwebserver run test:shift:browser` PASS `.qa/shift-start-browser-gwrDkp`: dashboard và mở ca/nhập kho, lỗi lưu/mở, xung đột revision/phiên, stale/MQTT, chặn submit trùng và desktop/mobile.
+
+Các lượt dùng Edge headless, Core giả và SQLite/cổng riêng; không tác động gateway/DB/robot vận hành. Thay đổi chỉ ở frontend/tài liệu/test, không thay API hoặc backend; không chạy lại unit backend vì lượt này không sửa backend/model. Kiểm cú pháp JS liên quan và `git diff --check` PASS.
+
+## 26/10/2026 — Bảng Nhiệm vụ và kết quả thống nhất
+
+REQ-WEB-UNIFIED-MISSIONS-01 / [ADR-085](../docs/decisions/ADR-085-unified-mission-results-board.md).
+
+- `npm --prefix AGVwebserver test` và `npm --prefix AGVwebserver run test:isolated`: PASS 59/59 mỗi chế độ. Model kiểm nhóm đúng task/phiên, không đoán theo xe/đích, parent đã xóa/đối soát, dữ liệu mâu thuẫn, hai xe và bộ lọc/tìm kiếm. Orders/gateway kiểm ba chặng pickup/dropoff/exit, lưu history ID và giữ liên kết khi adopt phiên Core.
+- `npm --prefix AGVwebserver run test:missions:browser`: PASS tại `.qa/missions-browser-04Oom1`. Kiểm một bảng duy nhất, không lặp chặng dưới đơn, lịch sử cũ độc lập, Chi tiết hai xe, tìm kiếm/bộ lọc, Hủy đúng task, Xóa/không hiện lại/reload, stale khóa Hủy, XSS và giữ DOM qua sáu cập nhật encoder. Ảnh desktop/mobile và `expanded-order-detail.png` được kiểm tra trực tiếp; mobile không tràn ngang.
+- Hồi quy dashboard PASS `.qa/browser-test-WNnn6E`; kho PASS `.qa/warehouse-browser-CQUyX5`; hai thẻ xe PASS `.qa/vehicle-cards-sCZsPy`; xóa bản ghi PASS `.qa/record-delete-YIsW09`, gồm HTML404 của gateway cũ báo đúng yêu cầu khởi động lại thay vì báo nhầm mất kết nối. Hiển thị pin PASS 4/4; kiểm tra cú pháp JS sửa/thêm và `git diff --check` PASS.
+
+Các test browser dùng Core giả, SQLite/cổng riêng và Edge headless. Không restart gateway/Core vận hành, sửa DB thật hoặc thử robot. `orders-selection.browser.js`, `simulation.edges.browser.js` và `warehouse-actions.browser.js` đã cập nhật selector/kiểm tra cú pháp; chưa chạy lại toàn bộ các kịch bản mô phỏng chuyên biệt này. Dữ liệu cũ thiếu liên kết đáng tin cậy vẫn là dòng riêng; không benchmark CPU/FPS toàn dashboard. Chạy lại browser với `AGV_PLAYWRIGHT_MODULE` và `AGV_BROWSER_CHANNEL=msedge` như hướng dẫn bên dưới.
+
+## 26/10/2026 — Xóa riêng từng đơn và dòng lịch sử
+
+REQ-WEB-DELETE-RECORD-01 / [ADR-084](../docs/decisions/ADR-084-delete-individual-dashboard-records.md).
+
+- `npm --prefix AGVwebserver test` và `npm --prefix AGVwebserver run test:isolated` PASS52/52 mỗi chế độ. Ba test mới kiểm xóa task theo ID dòng, strict validation/retry/không phát command, giữ nguồn KPI/task mở và không hiện lại qua sync/reopen; đơn active/cargo hold vẫn được giám sát và có trong báo cáo sau xóa; lưu lỗi không đổi hiển thị, đơn đã xóa được giữ qua restart. Test security bổ sung DELETE thiếu token/CSRF bị chặn.
+- `tests/record-delete.browser.integration.js` PASS tại `.qa/record-delete-LT8Gvn`: xóa từng đơn/dòng có chung tiền tố ID, hủy confirm không xóa và không toggle details, lỗi API giữ dòng, xóa đơn closed/pending task, xử lý đối soát cho đơn đã xóa, Core gửi lại trạng thái vẫn ẩn, reload và restart gateway/DB vẫn ẩn, desktop/mobile không tràn ngang.
+- Hồi quy `tests/browser.integration.js` PASS tại `.qa/browser-test-9Atekm`, `tests/warehouse.browser.integration.js` PASS tại `.qa/warehouse-browser-wjEI7z`; test hiển thị pin4/4 và JS syntax PASS. Ảnh `desktop-delete.png`/`mobile-delete.png` đã được xem trực tiếp.
+
+Lần unit đầu dùng fixture map thiếu gate nên tạo đơn400; thêm gate đúng contract rồi PASS. Lần browser đầu chờ bảng lịch sử ở tab Tổng quan (bảng thuộc Nhiệm vụ); chuyển test sang đúng tab rồi PASS. Mọi test dùng DB/cổng/Core giả riêng; không mở DB vận hành hoặc điều khiển xe. Chạy lại bằng `npm --prefix AGVwebserver run test:records:browser` với cấu hình Playwright/Edge như các test browser khác. Không thay binary Core, firmware hoặc session/audit.
+
+## 26/10/2026 — Hai thẻ xe cố định trong Trạng thái xe và kho
+
+REQ-WEB-FIXED-VEHICLES-01 / [ADR-083](../docs/decisions/ADR-083-fixed-vehicle-cards-in-warehouse-overview.md). Bỏ bảng/renderer Đội xe chi tiết, giữ hai thẻ browser01/02; các bản ghi fleet/marker/task vẫn theo Core thật.
+
+- `tests/vehicle-cards.browser.integration.js` PASS tại `.qa/vehicle-cards-pKBzAN`: hai thẻ trước telemetry; chọn xe/lịch sử/xóa lỗi; offline không tự gỡ; gỡ bị từ chối giữ bản ghi; gỡ thành công vẫn hiện ID với RFID/pin rỗng; kết nối lại đúng thẻ cũ cho cả01/02. Kiểm scope và hủy chọn xe vừa ra ngoài scope, stale khóa điều khiển, đổi phiên và reload, XSS. Mười hai cập nhật encoder liên tiếp giữ DOM cả hai thẻ và ô kho; đổi pin01 không dựng lại nội dung02.
+- `tests/browser.integration.js` PASS tại `.qa/browser-test-YMKar8`: hồi quy thao tác task/map/mutex, lịch sử chuyển sang nút trên thẻ, cảnh báo hủy/replan/boot limit, lỗi, pin, kết nối, ca, desktop/mobile và đăng nhập.
+- `tests/warehouse.browser.integration.js` PASS tại `.qa/warehouse-browser-s9h2Ae`: hai tuyến lấy/giao, servo, ảnh đầu ca/giữ chỗ, lỗi/cũ, báo cáo CLOSED/tải JSON, form, bộ lọc và mobile.
+- `node tests/dashboard-battery.test.js` PASS4/4; `node --check` các tệp JS sửa/thêm và `git diff --check` PASS. `tests/servo.integration.js` chỉ đổi selector/thuật ngữ sang thẻ mới và qua kiểm tra cú pháp; chưa chạy lại bộ MQTT/firmware này.
+
+Ảnh đã xem: `empty-cards.png`, `desktop-cards.png`, `mobile-cards.png`, `removed-card-mobile.png` trong thư mục thẻ xe, và `desktop-operations.png` trong thư mục kho. Lần test đầu dừng tại assert lịch sử do chưa chờ API trả về; thêm chờ đúng tiêu đề rồi toàn bộ suite PASS. Việc chạy lại từng bị bộ phê duyệt tự động chặn vì hết hạn mức; sau khi tiếp tục, các lần kiểm chứng cuối ở trên đều hoàn tất exit0.
+
+Chạy lại bằng `npm --prefix AGVwebserver run test:vehicles:browser` với `AGV_PLAYWRIGHT_MODULE` trỏ Playwright đã có và `AGV_BROWSER_CHANNEL=msedge`, như các test browser hiện hành. Tất cả dùng Core giả, DB/cổng riêng; không sửa Core/firmware/DB vận hành hoặc session/audit. Kiểm DOM identity xác nhận giảm dựng lại ở khối này, chưa đo benchmark CPU/FPS toàn dashboard.
+
+## 25/10/2026 — Build Windows không cần ripgrep trong PATH
+
+Theo ảnh lỗi task VS Code, `scripts/check-vendor.ps1` đã dùng PowerShell thuần cho kiểm tra include. Windows PowerShell 5 với PATH chỉ có `C:\Windows\System32;C:\Windows` chạy kiểm tra vendor/source PASS; fixture `.qa/check-vendor-scan-20261025/verify.ps1` xác nhận include hỏng vẫn bị chặn, `-VendorOnly` bỏ qua scan include và JSON sai SHA256 vẫn bị chặn ở cả hai chế độ.
+
+Cùng môi trường đó, chạy `scripts/build-core.ps1 -Compiler C:/msys64/ucrt64/bin/g++.exe -Tests -OutputDirectory .qa/core-build-no-rg-20261025`: build Core và toàn bộ unit Core PASS, exit0. Artifact ở thư mục `.qa` trên; không khởi chạy Core hoặc thay binary vận hành. Bộ test có ghi nhận hai commit storage chậm 682ms/2008ms; không gây lỗi test. [Chẩn đoán](../docs/16-startup-troubleshooting.md).
+
+## 25/10/2026 — Gia cố Core sau review: hủy task, startup, checkpoint
+
+REQ-CORE-HARDENING-20261025-01 / [ADR-082](../docs/decisions/ADR-082-core-cancellation-startup-and-durability.md). Source Core/web đã sửa; firmware docking v18 và những thay đổi có trước được giữ nguyên. Không thay Core/gateway đang chạy, không đọc/ghi DB hay counter vận hành, không phát lệnh tới robot thật.
+
+| Kiểm tra đã chạy | Kết quả và phạm vi |
+| --- | --- |
+| `scripts/build-core.ps1 -Tests -OutputDirectory .qa/core-hardening-20261025` | PASS build Core và toàn bộ hồi quy Core; sau bước gom cấu hình layout cũng PASS. Build cuối thêm chốt priority trước chuyển kiểu PASS |
+| `tests/core_hardening.cpp` | PASS cả01/02: cancel giữ BLOCKED/footprint; ACK/diagnostic cũ/RFID cũ/task active/motor chạy/high-water cũ không mở chốt; proof đúng mới cho dispatch; xe khác không đi qua footprint; restart bảo thủ; không tự trả mutex |
+| Cùng bộ hardening | PASS durable snapshot không đổi do heading/capability; boot thứ65 từ chối và log một lần; hình học cạnh bo khớp toàn map; TTL map không được lưu và RAM giữ nguyên; default revision tăng; priority sai/số lớn/target/ID xe sai không cấp task ID |
+| Tải hàng chờ | PASS1000 task không tới được: telemetry không đổi không quét lại toàn queue mỗi mẫu; thay origin sang node có đường vẫn dispatch ngay. `planning.dispatch_scans` dùng kiểm chứng số lượt quét |
+| Cảnh báo và đĩa | PASS sau10s chờ node cho cả01/02, không spam trong các tick kế tiếp; khóa file Windows650ms rồi nhả cho commit thành công, ghi cảnh báo và metric>500ms (lượt cuối khoảng719ms) |
+| `tests/runtime-map-migration.cpp` | PASS fixture v3 có stopped_nodes C3/C4: chuyển sang hai đầu cạnh trong uncertain_path, xóa proof cũ, giữ owner/token/lịch sử, backup, restore và restart; vẫn từ chối graph khác |
+| `tests/encoder_core_tests.cpp`, `tests/stopped_occupancy.cpp` | PASS odometry/session/order/route binding độc lập hai xe; footprint/proof/stale/replan/restart không hồi quy |
+| `tests/startup-errors.integration.js` | PASS10 trường hợp: command/task counter hỏng, runtime JSON/schema hỏng, fleet/mutex restore sai, migration có node lạ, shift hỏng, port/token sai. Exit1/có thông báo/file đầu vào nguyên vẹn/listener được đóng. Lượt cuối `.qa/startup-errors-rLAAnT` |
+| `tests/stopped-occupancy.integration.js` | PASS broker/Core/WS riêng: proof đúng phiên, chặn endpoint, trả mutex ngoài vùng, replan, checkpoint trước command, stale fallback/token cũ. Lượt cuối `.qa/stopped-mqtt-xtmeOO` |
+| Gateway/đơn hàng/thao tác kho | PASS36 bài: `node --test --test-isolation=none --test-reporter=dot tests/gateway.test.js tests/orders.test.js tests/warehouse-actions.test.js` |
+| Dashboard Edge headless | `tests/browser.integration.js` PASS desktop/mobile, thông báo cancel/replan chờ proof và boot limit; các luồng map/task/history/reconnect/ca/kho vẫn PASS. Ảnh `.qa/browser-test-BQK433` |
+| Vendor và cú pháp | PASS hash JSON3.12.0 nguyên bản, source include không còn chuỗi hỏng, tool sửa include chạy `-WhatIf` giữ vendor; PowerShell parser/JS syntax và `git diff --check` PASS |
+| Contract schema | `scripts/check_contracts.py` PASS với Python runtime và jsonschema cài riêng trong `.qa/core-hardening-20261025/python-deps` |
+
+Build cuối `.qa/core-hardening-20261025/agv_core.exe`:16119135byte, SHA256 `E07658A7844B1C45EB145110F4FB86F03F9E4A6999C54989A85CDDF9E50E19A4`. Đây là artifact kiểm thử; chưa thay bản vận hành.
+
+Đã cập nhật CI để kiểm hash vendor, unit hardening/migration và startup lỗi; chưa chạy workflow GitHub/Linux trong lượt này. Các lần thử browser/gateway trong sandbox gặp EACCES loopback đã được dừng và chạy lại có quyền loopback, kết quả PASS ở trên. Cả hai Python có sẵn đều thiếu jsonschema; dependency kiểm tra đã được cài riêng trong `.qa`, không thay Python hệ thống hoặc dependency ứng dụng. Chạy contract với `PYTHONPATH` trỏ thư mục đó và Python runtime đi kèm Codex.
+
+Chạy lại từ gốc: `scripts/test-core-hardening.ps1`; thêm `-Integration` cho broker riêng, `-Browser` cho dashboard. Browser dùng `AGV_PLAYWRIGHT_MODULE` và `AGV_BROWSER_CHANNEL=msedge` như hướng dẫn bên dưới. Tất cả dữ liệu kiểm thử nằm trong `.qa`.
+
+Giới hạn: chưa nghiệm thu phần cứng hoặc quãng dừng. Xe dừng giữa hai RFID vẫn cần đưa về thẻ/xác minh; không timeout rồi tự nhả mutex. I/O checkpoint vẫn đồng bộ trước publish, metric chỉ giúp phát hiện chậm. Đổi tên RFID tổng quát vẫn cần đồng bộ firmware; chỉ gom cấu hình cố định và báo sớm sai layout.
+
+## 24/10/2026 — Docking GS1/GS2 dùng line rộng 111, gs-wide-v18
+
+REQ-DUAL-GS-WIDE-LINE-01 / [ADR-081](../docs/decisions/ADR-081-dual-gs-wide-line-confirmation.md). Người dùng cung cấp line4,5cm, khoảng hai mắt kề1,5cm, cụm mắt tới trục4,3cm, đoạnGS→S25cm và sẽ làm dày line nối dài. Firmware hai profile tiếp tục quay docking qua011/010/110, chỉSTOP/xác nhận ở111; rẽ/recovery thường giữ nguyên. PWM/trim dùng đúng profile hiện tại, không khóa cứng một giá trị chung trong fixture.
+
+| Kiểm tra | Kết quả |
+| --- | --- |
+| `scripts/test-docking.ps1` | PASS01/02: GS1/S1+GS2/S2, trái/phải/180°,010 không chốt,111 ổn định, noise/gap/timestamp/wrap,600/1500ms,STOP/mạng/sonar/vật cản/RFID |
+| `scripts/test-core-protocol.ps1` | PASS51/51 mỗi profile,102/102 tổng |
+| `scripts/test-line-confirm.ps1` | PASS01/02; xác nhận thường50ms và reverse010 ngoài docking không đổi |
+| `scripts/test-turn180.ps1` | PASS01/02; quay180 thường/narrow500/100ms không hồi quy |
+
+BuildESP32 hai env PASS: RAM58204 byte mỗi ảnh; flash01=968461 byte/02=968441 byte. Binary01 dài975040 byte/SHA256 `3326841BE5E22563A647A839E021358E1CA37E8DA7C094225CB145A4BC12F64E`; binary02 dài975024 byte/SHA256 `21E6455E5D03B7088AA9529012B66CE776F4E375EF1A8A94318EA9A4D36CCCD6`; đúng buildID `20261024-robot01-gs-wide-v18` / `20261024-robot02-gs-wide-v18`. Chưa nạp và chưa thử line nối dài111 trên xe thật.
+
+## 24/10/2026 — Sửa firmware docking GS1/GS2, gs-center-v17
+
+REQ-DUAL-GS-CENTER-01 / [ADR-080](../docs/decisions/ADR-080-dual-gs-center-confirmation.md). Project đã về `firmware/NCKHAGV`, khôi phục suite `test_core_protocol`; snapshot trước sửa ở `.qa/docking-fix-20261024-before`. Đối chiếu hash source trước/sau di chuyển; mạng riêng01/02/fallback và hiệu chuẩn pin không đổi. Giữ nguyên các file đã bị xóa ngoài phạm vi firmware từ trước lượt sửa.
+
+Trước sửa, suite51 ca chạy trên snapshot sourceHEAD riêng tại `.qa/docking-baseline` tái hiện7 lỗi01/6 lỗi02 giống review: kỳ vọng lỗi mạng tức thì khác policy pause3000ms, chứng minh rời line bằng mắt biên trước80ms và nhịp đếm nhánh180 cũ. Đây là lỗi fixture đã có trênHEAD, không phải13 lỗi mới do docking. Cập nhật test để assert STOP/pause tức thì và NotConnected sau đúng3000ms, lấy mẫu biên sau80ms, các nhánh cách100ms, giữ mọi kiểm tra grant/fault/route. Helper docking chờ010 ổn định100ms. Hostline-confirm cũ cũng khóa100ms trong khiConfig nguồn hiện50ms; fixture nay lấy cửa sổ từConfig, production không đổi thời gian phục hồi thường.
+
+| Kiểm chứng trong lượt này | Kết quả |
+| --- | --- |
+| `scripts/test-core-protocol.ps1` | PASS51/51 mỗi profile,102/102 tổng |
+| `scripts/test-docking.ps1` | PASS01/02: GS1→S1 vàGS2→S2, trái/phải/180°,PWM180+trim,010 ổn định, nhiễu/gap/timestamp trùng/rollover, STOP/mạng/sonar/vật cản,600ms/1500ms,RFID |
+| Sonar trong `test-docking.ps1` | PASS4 tổ hợp profile/trạm: trước khi quay→STOP→xóa mẫu trước/đợi mẫu sau mới→vật cản sau→lùi→RFID dừng |
+| `scripts/test-turn180.ps1` | PASS01/02 với500/100ms; hồi quy rẽ thường/recovery giữ50ms |
+| `scripts/test-line-confirm.ps1` | PASS01/02: cửa sổ thường50ms, narrow/edge/noise/stale/LEFT/RIGHT/wrap/reverse/grant/hazards |
+| `scripts/test-encoder.ps1 -SkipCoreBuild` | PASS encoder/replay cả01/02, network clock, encoderCore và stopped occupancy/replan/restart |
+| `node scripts/generate-firmware-route.js --check` | PASS |
+| CompileConfig host khôngprofile | PASS locked/solo/two-robot bench; fallback GS không vượtTURN_SPEED |
+
+BuildESP32 chạy từ project chuẩn bằng PlatformIO với platformespressif32@6.13.0/Arduino2.0.17, ArduinoJson6.21.5, PubSubClient2.8, MFRC5221.4.12, C++17; build/deps dùng cacheASCII trong `D:/AGV-build-cache/AGVproject-workspace-main`. Hai env `esp32dev_two_robot_bench_01` / `_02` PASS; RAM58204byte mỗi ảnh, flash01=968425byte/02=968409byte trên1310720. BuildID `20261024-robot01-gs-center-v17` / `20261024-robot02-gs-center-v17` đã kiểm trong binary cuối. Rebuild cuối sau cập nhậtConfig/chú thíchPASS cảhai env; `git diff --check` PASS.
+
+Artifact `D:/AGV-build-cache/AGVproject-workspace-main/build/<env>/firmware.bin`:01 dài975008byte, SHA256 `01D7A9D4E357E1F66AA29D2246C376CB7FC4486182A4BDD915B0BCAA2DC73F9C`;02 dài974992byte, SHA256 `71F0CD276FB0562AC21D49E79D691B12C53DC313FF5F41B6B5CD88E46C6982E2`. Cache có thể bị thay bởi lần build khác; luôn đối chiếu buildID/hash khi sử dụng.
+
+`OPEN`: chưa nạp, chưa đọcSerial/MQTT từ robot và chưa thử chuyển động thật. Kết quả host không xác nhận quãng trôi, lựcPWM180/175, vị trí cơ khí hoặc góc quay. Bước triển khai tiếp theo: nạp từng profile đúngxe, kiểm buildID/mạng/STOP trên giá kê rồi đo bắtline/docking từng tuyến; chưa tự mở ca, phát lệnh chạy, xóa lỗi hoặc thay DB/counter.
+
 ## 23/10/2026 — Chuẩn bị push main sau khi chuyển project firmware
 
 OBSERVED project hiện nằm ở `firmware/NCKHAGV`, bỏ một lớp thư mục; cập nhật đường dẫn script sinhroute, probe encoder/line/turn/parity/rounded-map và include host. File mạng riêng, RAR và recovered nằm ngoài Git. Hợp nhất `origin/main` tại b71bec9, giữ sửa G1/quy tắc buildASCII và tuning cục bộ mới nhất01 (trim quayphải−5/G1PWM205/xácnhận180=500ms),02 xácnhận100ms; giữ chống hạcounter/producer proofv16. Bộtest_core_protocol từmain được giữ ở đường dẫn mới, không bỏ bộtest do xung độtmodify/delete. `scripts/test-turn180.ps1` PASS01/02 với500/100ms; route `--check` PASS. Kiểm encoder banđầu không tìm thấy cacheenv01 sau chuyểnthưmục; script nhận thêm -ArduinoJsonInclude và fallbackcacheesp32dev trongRAR. Chạy lại `scripts/test-encoder.ps1 -SkipCoreBuild` PASS đầy đủ: encoder/codec/proof và commandreplay01/02, networkclock, encoderCore và stoppedoccupancy/replan/restart. Không rerun toàn bộ native legacy hoặc buildESP32 trong lượtpush. Các kết quả build/nạp/đoMQTT bên dưới thuộc ảnh ở thời điểm đó, không chứng minh tuning workspace mới đã nạp lên xe; lượtpush không nạp firmware hoặc phát lệnh chuyển động.
@@ -625,3 +787,9 @@ Bộ build ở `build/stopped-occupancy-v15/` gồm `agv_core.exe`, `robot01-fir
 `scripts/build-core.ps1 -Tests -OutputDirectory .qa/failure-replan-build` PASS. Unit mới kiểm tra giao với `uncertainPath` làm xe còn lại BLOCKED và xóa waiter nhưng không nhả owner; MQTT LWT tại node trên tuyến làm xe kia chọn đường vòng; node khác trong cùng mutex component cũng kích hoạt đường vòng. Toàn bộ hồi quy Core cũ cùng PASS.
 
 Với `AGV_CORE_BIN=.qa/failure-replan-build/agv_core.exe`, `node tests/two-robot-recovery.integration.js` PASS tại `build/recovery-check/mqtt-wPoE0g`: LWT giữ M2, telemetry trạm đơn lẻ chưa trả quyền, diagnostic STOP/RFID mới mới cho tự trả, lỗi mạng reset đúng một lần và lỗi line vẫn chốt. Đây là fixture MQTT loopback/dữ liệu riêng, không phải kiểm thử chuyển động hai robot thật. [ADR-078](../docs/decisions/ADR-078-failure-footprint-replanning.md).
+
+## Bảo trì web/server kho — 25/10/2026
+
+REQ-WEB-SERVER-MAINT-01: `npm test` và `npm run test:isolated` trong `AGVwebserver` cùng PASS 49/49. Unit mới kiểm tra station ngoài K1–K6 bị planner từ chối, retry reservation đúng nội dung vẫn idempotent, key khác nội dung và `needs_attention` bị từ chối, gateway restart nhận snapshot CLOSED cùng phiên chỉ tạo một báo cáo có observation gap.
+
+`tests/warehouse.browser.integration.js` PASS tại `.qa/warehouse-browser-MpBumU`: ngoài hồi quy hai xe/kệ/báo cáo/mobile, fixture thêm station `MAINTENANCE`, xác nhận không xuất hiện trong dropdown và node SVG K1 giữ nguyên DOM qua cập nhật chỉ đổi fleet. `tests/browser.integration.js` PASS tại `.qa/browser-test-Wq059C`; ảnh desktop/mobile đã xem trực tiếp. Đây là Core giả lập, SQLite riêng và Edge headless, không phát lệnh tới robot hoặc sửa DB vận hành.

@@ -65,6 +65,12 @@ function createDatabase(filename = process.env.AGV_DB_PATH || path.join(__dirnam
   );
   CREATE INDEX IF NOT EXISTS idx_warehouse_orders_created ON warehouse_orders(created_at);
 
+  CREATE TABLE IF NOT EXISTS location_names (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      revision INTEGER NOT NULL,
+      config_json TEXT NOT NULL
+  );
+
   -- MỚI: nhật ký sự kiện toàn hệ thống, đồng bộ từ "logs" mà C++ Core phát kèm
   -- mỗi lần broadcast trạng thái (xem AGVserver.cpp / pushLog). core_seq cùng core_session là số
   -- thứ tự C++ Core gán cho từng sự kiện -> dùng UNIQUE index để INSERT OR IGNORE,
@@ -106,7 +112,7 @@ function createDatabase(filename = process.env.AGV_DB_PATH || path.join(__dirnam
   }
 
   // Additive migration: older task rows remain visible, without inventing a core identity.
-  for (const [name, declaration] of Object.entries({core_task_id: 'TEXT', core_session: 'TEXT', reason: 'TEXT'})) {
+  for (const [name, declaration] of Object.entries({core_task_id: 'TEXT', core_session: 'TEXT', reason: 'TEXT', deleted_at: 'TEXT', location_names_json: 'TEXT'})) {
     if (!db.prepare('PRAGMA table_info(task_log)').all().some(c => c.name === name))
       db.exec(`ALTER TABLE task_log ADD COLUMN ${name} ${declaration}`);
   }
@@ -133,7 +139,7 @@ function createDatabase(filename = process.env.AGV_DB_PATH || path.join(__dirnam
     agvHistory: db.prepare(`SELECT * FROM agv_events WHERE agv_id = ? ORDER BY id DESC LIMIT ?`),
 
     pendingOrDispatchedTasks: db.prepare(`SELECT * FROM task_log WHERE status IN ('pending', 'dispatched') ORDER BY id ASC`),
-    taskHistory: db.prepare(`SELECT * FROM task_log ORDER BY id DESC LIMIT ?`),
+    taskHistory: db.prepare(`SELECT * FROM task_log WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ?`),
 
     insertObstacle: db.prepare(`INSERT INTO obstacle_log (node_id, blocked) VALUES (?, ?)`),
     obstacleHistory: db.prepare(`SELECT * FROM obstacle_log ORDER BY id DESC LIMIT ?`),
@@ -214,6 +220,21 @@ function createDatabase(filename = process.env.AGV_DB_PATH || path.join(__dirnam
   const api = {
     db,
 
+    loadLocationNames() {
+      const row=db.prepare('SELECT config_json FROM location_names WHERE id=1').get();
+      return row ? JSON.parse(row.config_json) : null;
+    },
+
+    saveLocationNames(expected,next) {
+      return db.transaction(()=>{
+        const row=db.prepare('SELECT revision FROM location_names WHERE id=1').get();
+        if ((row?.revision ?? 0)!==expected) return false;
+        db.prepare('INSERT INTO location_names(id,revision,config_json) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,config_json=excluded.config_json')
+          .run(next.revision,JSON.stringify(next));
+        return true;
+      })();
+    },
+
     saveOrder(order) {
       stmts.saveOrder.run(order.id,JSON.stringify(order),order.created);
     },
@@ -237,7 +258,18 @@ function createDatabase(filename = process.env.AGV_DB_PATH || path.join(__dirnam
     },
 
     getTaskHistory(limit = 200) {
-      return stmts.taskHistory.all(limit);
+      return stmts.taskHistory.all(limit).map(({location_names_json,...row})=>location_names_json ?
+        {...row,location_names:JSON.parse(location_names_json)} : row);
+    },
+
+    getTaskReference(taskId,session) {
+      return db.prepare('SELECT id FROM task_log WHERE core_task_id=? AND core_session=?').get(taskId,session);
+    },
+
+    deleteTaskHistory(id) {
+      api.flush();
+      const result=db.prepare("UPDATE task_log SET deleted_at=COALESCE(deleted_at,datetime('now')) WHERE id=?").run(id);
+      return result.changes > 0;
     },
 
     logObstacle(nodeId, blocked) {
@@ -359,8 +391,8 @@ function createDatabase(filename = process.env.AGV_DB_PATH || path.join(__dirnam
       UPDATE task_log SET status = ?, reason = ?, completed_at = CASE WHEN ? IN ('rejected', 'interrupted') THEN datetime('now') ELSE completed_at END
       WHERE core_task_id = ? AND core_session = ? AND status IN ('submitting', 'unknown')`).run(status, reason, status, taskId, session);
     const syncOne = db.prepare(`
-      INSERT INTO task_log (core_task_id, core_session, target_node, priority, status, assigned_agv, reason, dispatched_at, completed_at)
-      VALUES (@task_id, @session, @target, @priority, @status, @assigned_agv, @reason,
+      INSERT INTO task_log (core_task_id, core_session, target_node, priority, status, assigned_agv, reason, location_names_json, dispatched_at, completed_at)
+      VALUES (@task_id, @session, @target, @priority, @status, @assigned_agv, @reason, @location_names,
               CASE WHEN @status = 'dispatched' THEN datetime('now') END,
               CASE WHEN @terminal THEN datetime('now') END)
       ON CONFLICT(core_session, core_task_id) DO UPDATE SET
@@ -377,6 +409,7 @@ function createDatabase(filename = process.env.AGV_DB_PATH || path.join(__dirnam
         if (!previous || previous.status !== t.status) db.prepare("INSERT INTO task_status_events (core_session,core_task_id,status) VALUES (?,?,?)").run(session,t.task_id,t.status);
         syncOne.run({task_id:t.task_id, session, target:t.target, priority:t.priority || 0,
                      status:t.status, assigned_agv:t.assigned_agv || null, reason:t.reason || '',
+                     location_names:JSON.stringify(api.loadLocationNames() || {revision:0,labels:{}}),
                      terminal:['completed','cancelled','interrupted'].includes(t.status) ? 1 : 0});
       }
     });

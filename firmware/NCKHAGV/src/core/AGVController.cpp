@@ -305,36 +305,40 @@ void AGVController::update() {
             else lastRfidSeenMs_ = 0;
             // Periodic telemetry reports a confirmed stationary tag.
             if (event.newNode) {
-                // Keep moving only at the authorized RFID with safe sensors
-                // and all required grants. Every actual RFID is still reported.
-                const bool reverse = navigator_.segmentReverse() || control_.segmentReverse();
-                const bool expected = priorConfirmed && positionConfirmed_ && navigator_.active() &&
-                    std::strcmp(navigator_.nextNode(), event.node) == 0;
-                const auto arrivalInput = input();
-                const bool through = expected && control_.error() == ErrorCode::None &&
-                    control_.state() != AGV_SAFE_STOP && control_.state() != AGV_ERROR &&
-                    navigator_.canPassThrough(event.node,arrivalInput);
-                if (navigator_.active() && !through) movement_.stop();
-                navigator_.reachedNode(event.node, millis(),through ? &arrivalInput : nullptr);
-                char fromNode[NODE_TEXT_SIZE]{};
-                AGVMath::copyText(fromNode, sizeof(fromNode), control_.currentNode());
-                if (expected && fromNode[0] && navigator_.error() == ErrorCode::None) {
-                    const auto translation = encoder_.translationTicks();
-                    clearance_.reached(fromNode, event.node, translation.left,
-                                       translation.right, millis());
+                if (navigator_.active() && std::strcmp(control_.currentNode(), event.node) == 0) {
+                    // Tag of current starting node seen again while pivoting/aligning on line; keep existing position
+                } else {
+                    // Keep moving only at the authorized RFID with safe sensors
+                    // and all required grants. Every actual RFID is still reported.
+                    const bool reverse = navigator_.segmentReverse() || control_.segmentReverse();
+                    const bool expected = priorConfirmed && positionConfirmed_ && navigator_.active() &&
+                        std::strcmp(navigator_.nextNode(), event.node) == 0;
+                    const auto arrivalInput = input();
+                    const bool through = expected && control_.error() == ErrorCode::None &&
+                        control_.state() != AGV_SAFE_STOP && control_.state() != AGV_ERROR &&
+                        navigator_.canPassThrough(event.node,arrivalInput);
+                    if (navigator_.active() && !through) movement_.stop();
+                    navigator_.reachedNode(event.node, millis(),through ? &arrivalInput : nullptr);
+                    char fromNode[NODE_TEXT_SIZE]{};
+                    AGVMath::copyText(fromNode, sizeof(fromNode), control_.currentNode());
+                    if (expected && fromNode[0] && navigator_.error() == ErrorCode::None) {
+                        const auto translation = encoder_.translationTicks();
+                        clearance_.reached(fromNode, event.node, translation.left,
+                                           translation.right, millis());
+                    }
+                    const char* incoming = RoutePlanner::confirmedIncoming(
+                        expected && navigator_.error() == ErrorCode::None, fromNode, event.node);
+                    if (incoming)
+                        AGVMath::copyText(previousNode_, sizeof(previousNode_), incoming);
+                    else previousNode_[0] = '\0';
+                    previousSegmentReverse_ = incoming && reverse;
+                    heading_ = incoming ? RoutePlanner::edgeHeading(fromNode, event.node, reverse, true) : RobotHeading::Unknown;
+                    headingBayDefault_ = false;
+                    control_.reachedNode(event.node, millis());
+                    if (!navigator_.active() && control_.state() != AGV_MOVING) movement_.stop();
+                    mqtt_.publishEvent("AGV_REACHED_NODE", event.node, millis(), control_.task().id, fromNode, reverse);
+                    publishTelemetry();
                 }
-                const char* incoming = RoutePlanner::confirmedIncoming(
-                    expected && navigator_.error() == ErrorCode::None, fromNode, event.node);
-                if (incoming)
-                    AGVMath::copyText(previousNode_, sizeof(previousNode_), incoming);
-                else previousNode_[0] = '\0';
-                previousSegmentReverse_ = incoming && reverse;
-                heading_ = incoming ? RoutePlanner::edgeHeading(fromNode, event.node, reverse, true) : RobotHeading::Unknown;
-                headingBayDefault_ = false;
-                control_.reachedNode(event.node, millis());
-                if (!navigator_.active() && control_.state() != AGV_MOVING) movement_.stop();
-                mqtt_.publishEvent("AGV_REACHED_NODE", event.node, millis(), control_.task().id, fromNode, reverse);
-                publishTelemetry();
             }
         }
         if (positionConfirmed_ && !navigator_.active() && !control_.task().active &&

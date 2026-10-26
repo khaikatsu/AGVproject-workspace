@@ -60,19 +60,22 @@ async function main() {
     await page.locator('#wsUrl').waitFor({state:'visible'});
     await page.locator('#connectionSettings summary').click();
     assert.equal(await page.locator('[data-view-target="overview"]').getAttribute('aria-current'),'page');
+    assert.deepEqual(await page.locator('#workspaceNav [data-view-target]').allTextContents(),['Tổng quan','Bản đồ','Báo cáo']);
     await page.locator('[data-view-target="reports"]').click();
     await page.locator('#kpiPanel').waitFor({state:'visible'});
     await page.locator('[data-view-target="map"]').click();
     await page.locator('#mapListBox button').waitFor();
     assert.match(await page.locator('#mapListBox').innerText(),/<script>window.__xss=1<\/script>/);
     assert.equal(await page.evaluate(()=>window.__xss),undefined);
-    assert.equal(await page.locator('#kpiHistoryBox button').count(),1);
-    assert.equal(await page.locator('#saveNodeBtn').isEnabled(),true);
+    assert.equal(await page.locator('#kpiHistoryBox option').count(),1);
+    assert.equal(await page.locator('#edit_node_id, #edit_edge_from, #saveNodeBtn, #saveEdgeBtn, #mapEditHint').count(),0);
+    assert.equal(await page.locator('#locationNamesEditor').count(),1);
     await page.locator('#mapListBox button').click();await page.locator('#applySnapshotBtn').click();
     await page.locator('#mapPreviewOverlay').waitFor({state:'hidden'});
-    await page.locator('#edit_node_id').fill('Z');await page.locator('#edit_node_x').fill('75');await page.locator('#edit_node_y').fill('90');await page.locator('#saveNodeBtn').click();
+    // Node/edge editing was removed from the UI. Supply the route fixture through the fake Core.
+    model.map.nodes.push({id:'Z',x:75,y:90,type:'waypoint'});
+    model.map.edges.push({from:'B',to:'Z',weight:40,type:'main',two_way:true});model.map.revision++;push();
     await page.locator('#nodesG text').filter({hasText:/^Z$/}).waitFor();
-    await page.locator('#edit_edge_from').fill('B');await page.locator('#edit_edge_to').fill('Z');await page.locator('#edit_edge_weight').fill('40');await page.locator('#edit_edge_two_way').check();await page.locator('#saveEdgeBtn').click();
     await page.waitForFunction(()=>document.querySelector('#edgesG').textContent.includes('40'));
     await page.locator('#map_save_name').fill('Bản đồ mới');await page.locator('#saveSnapshotBtn').click();
     await page.locator('#mapListBox').filter({hasText:'Bản đồ mới'}).waitFor();
@@ -80,21 +83,30 @@ async function main() {
     model.fleet.agvs = [
       {id:'01',node:'A',battery:80,battery_measured:true,position_valid:true,online:true,state:'IDLE',path:[],target:'',last_seen_s:1},
       {id:'02',node:'A',battery:45,battery_measured:true,position_valid:true,online:true,state:'IDLE',path:[],target:'',last_seen_s:2}];push();
-    await page.locator('[data-robot="02"]').waitFor();assert.equal(await page.locator('#saveNodeBtn').isDisabled(),true);
+    await page.locator('[data-robot="02"]').waitFor();
     await page.locator('#nodesG circle').filter({has:page.locator('title',{hasText:'Z;'})}).click();
     await page.waitForFunction(()=>document.querySelector('#selectionText').textContent.includes('Core sẽ chọn xe gần nhất'));
     assert.equal(commands.find(c=>c.cmd === 'add_task').target,'Z');
     assert.equal(commands.find(c=>c.cmd === 'add_task').agv_id,undefined);
     await page.locator('[data-robot="02"]').click();assert.match(await page.locator('#selectionText').innerText(),/Đã chọn 02/);
     await page.locator('#nodesG circle').filter({has:page.locator('title',{hasText:'Z;'})}).click();
-    await page.locator('[data-view-target="tasks"]').click();
-    await page.locator('#taskHistoryTable').filter({hasText:'Đã giao xe'}).waitFor();
+    await page.locator('[data-view-target="overview"]').click();
+    await page.locator('#missionTable').filter({hasText:'Đã giao xe'}).waitFor();
     assert.equal(commands.find(c=>c.cmd === 'direct_goto').agv_id,'02');
     assert.equal(await page.locator('[data-robot-route="02"]').count(),1);
-    await page.locator('#fleetTable button').filter({hasText:/^02$/}).click();await page.locator('#robotHistoryPanel').waitFor({state:'visible'});
-    await page.locator(`#taskHistoryTable tr[title="${model.fleet.tasks[0].task_id}"] button`).filter({hasText:'Hủy'}).click();
-    await page.locator('#taskHistoryTable').filter({hasText:'Đã hủy'}).waitFor();
+    await page.locator('[data-robot-transfer="02"]').getByRole('button',{name:'Lịch sử',exact:true}).click();await page.locator('#robotHistoryPanel').waitFor({state:'visible'});
+    assert.equal(await page.locator('body').getAttribute('data-view'),'overview','robot history opens in overview');
+    await page.locator(`#missionTable tr[title="${model.fleet.tasks[0].task_id}"] button`).filter({hasText:'Hủy'}).click();
+    await page.locator('#missionTable').filter({hasText:'Đã hủy'}).waitFor();
     assert.equal(commands.find(c=>c.cmd === 'cancel_task').task_id,model.fleet.tasks[0].task_id);
+    Object.assign(model.fleet.agvs[0],{cancel_waiting_for_node:true,node_proof_wait_ms:12000});push();
+    await page.locator('#robotTransferCards').filter({hasText:'Đã hủy task · chờ xác minh dừng'}).waitFor();
+    assert.match(await page.locator('#robotTransferCards').innerText(),/Đã chờ 12 giây/);
+    Object.assign(model.fleet.agvs[0],{cancel_waiting_for_node:false,replan_waiting_for_node:true});push();
+    await page.locator('#robotTransferCards').filter({hasText:'Chờ RFID mới để đổi tuyến'}).waitFor();
+    Object.assign(model.fleet.agvs[0],{replan_waiting_for_node:false,encoder_session_limit_reached:true});push();
+    await page.locator('#robotTransferCards').filter({hasText:'Đã vượt giới hạn phiên encoder'}).waitFor();
+    model.fleet.agvs[0].encoder_session_limit_reached=false;push();
     // Automatic heading telemetry; no editor and no SET_HEADING request.
     assert.equal(await page.locator('#headingPanel').count(),0);
     assert.equal(await page.locator('[data-heading-choice]').count(),0);
@@ -110,7 +122,7 @@ async function main() {
     await page.waitForFunction(()=>!document.querySelector('[data-robot-heading="01"]'));
     assert.equal(commands.some(c=>c.cmd==='set_heading'),false);
     model.fleet.agvs[0].state = 'ERROR';model.fleet.agvs[0].error = '<img src=x onerror="window.__xss=2"> lỗi motor';push();
-    await page.locator('#fleetTable').filter({hasText:'lỗi motor'}).waitFor();assert.equal(await page.evaluate(()=>window.__xss),undefined);
+    await page.locator('#robotTransferCards').filter({hasText:'lỗi motor'}).waitFor();assert.equal(await page.evaluate(()=>window.__xss),undefined);
     model.fleet.agvs[1].state = 'WORKING';model.fleet.agvs[1].path = ['B','Z'];model.fleet.agvs[1].target = 'Z';push();
     await page.waitForFunction(()=>document.querySelectorAll('[data-robot-route="02"]').length === 2);
     await page.screenshot({path:path.join(directory,'two-robots-routes-history.png'),fullPage:true});
@@ -196,8 +208,8 @@ async function main() {
     assert.equal(await page.locator('#startShiftBtn').isDisabled(),true);
     assert.match(await page.locator('#homeStationList').innerText(),/02 → S2: Chờ telemetry/);
     assert.match(await page.locator('#homeStationCaption').innerText(),/01 → S1/);
-    assert.match(await page.locator('#fleetTable').innerText(),/Ở trạm sạc/);
-    assert.match(await page.locator('#fleetTable').innerText(),/Trạm riêng: S1/);
+    assert.match(await page.locator('#robotTransferCards').innerText(),/Ở trạm sạc/);
+    assert.match(await page.locator('#robotTransferCards').innerText(),/Trạm riêng: S1/);
     model.shift.phase='CLOSED';model.shift.can_start=true;push();
     await page.waitForFunction(()=>!document.querySelector('#startShiftBtn').disabled);
     await page.locator('#startShiftBtn').click();
@@ -238,8 +250,8 @@ async function main() {
     await page.locator('[data-view-target="overview"]').click();
     model.fleet.agvs[0].position_valid=false;model.fleet.agvs[0].state='UNLOCALIZED';push();
     await page.waitForFunction(()=>document.querySelectorAll('#agvsG [data-robot]').length===0);
-    assert.match(await page.locator('#fleetTable').innerText(),/Chưa xác minh/);
-    assert.match(await page.locator('#fleetTable').innerText(),/Chờ quét RFID/);
+    assert.match(await page.locator('#robotTransferCards').innerText(),/Chưa xác minh/);
+    assert.match(await page.locator('#robotTransferCards').innerText(),/Chờ quét RFID/);
     await page.setViewportSize({width:390,height:844});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth),true);
     assert.deepEqual(errors,[]);

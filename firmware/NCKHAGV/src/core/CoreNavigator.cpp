@@ -167,10 +167,83 @@ MotorAction CoreNavigator::alignTurnLine(const ControlInput& in) {
         searchMotorChangedMs_ = in.now;
         return MotorAction::Stop;
     }
+    const bool docking = isDockingTurn();
+    if (docking) {
+        if (in.linePattern == 2) {
+            // Đúng chuẩn tâm 010: Hãm phanh dừng và giữ yên để triệt tiêu toàn bộ quán tính xoay
+            searchPulse_ = false;
+            searchMotorChangedMs_ = in.now;
+            if (!centerSamples_) {
+                centerSamples_ = 1;
+                centerSinceMs_ = centerSampleMs_ = in.now;
+            } else if (static_cast<uint32_t>(in.now - centerSampleMs_) >= Config::LEFT_CAPTURE_SAMPLE_MS) {
+                ++centerSamples_;
+                centerSampleMs_ = in.now;
+            }
+            const uint32_t dwell = in.now - centerSinceMs_;
+            if (centerSamples_ >= 2 && dwell >= Config::GS_CONFIRM_MS) {
+#if defined(ARDUINO)
+                if (Config::DEBUG_ENABLED) Serial.printf(
+                    "[DOCKING] GS line locked 010 pattern=%u samples=%u dwell=%lums node=%s\n",
+                    in.linePattern, centerSamples_, static_cast<unsigned long>(dwell), current_);
+#endif
+                phase_ = Phase::Following;
+                segmentStartedMs_ = in.now;
+                reverseAlignStartedMs_ = in.now;
+                reverseAligned_ = (Config::REVERSE_ALIGN_FORWARD_MS == 0);
+                resetLineTracking();
+                turnSettling_ = false;
+                return MotorAction::Stop;
+            }
+            return MotorAction::Stop;
+        }
+
+        // Nếu lệch khỏi 010: Reset bộ đếm xác nhận và thời gian giữ dừng
+        centerSamples_ = 0;
+        captureCount_ = captureHistory_ = 0;
+
+        MotorAction direction = MotorAction::Stop;
+        if (in.linePattern == 6 || in.linePattern == 4) {
+            // 110 hoặc 100: Line lệch trái -> vi chỉnh nhích trái
+            direction = MotorAction::PivotLeft;
+        } else if (in.linePattern == 3 || in.linePattern == 1) {
+            // 011 hoặc 001: Line lệch phải (quán tính lố) -> vi chỉnh nhích phải
+            direction = MotorAction::PivotRight;
+        } else if (in.linePattern == 0) {
+            // Mất line: nhích tìm lại theo hướng quay ban đầu
+            direction = turns_[index_] == RouteTurn::Right ? MotorAction::PivotRight : MotorAction::PivotLeft;
+        }
+
+        if (direction == MotorAction::Stop) {
+            searchPulse_ = false;
+            searchMotorChangedMs_ = in.now;
+            return MotorAction::Stop;
+        }
+
+        if (direction != searchDirection_) {
+            searchDirection_ = direction;
+            searchPulse_ = false;
+            searchMotorChangedMs_ = in.now;
+            return MotorAction::Stop;
+        }
+
+        const uint32_t sinceChange = in.now - searchMotorChangedMs_;
+        if (searchPulse_) {
+            // Xung nhích góc nhỏ: 35ms ở tốc độ 155 PWM để không bị văng quán tính
+            if (sinceChange < 35) return direction;
+            searchPulse_ = false;
+            searchMotorChangedMs_ = in.now;
+            return MotorAction::Stop;
+        }
+        // Thời gian nghỉ phanh dừng: 45ms để đọc cảm biến khi xe đã triệt tiêu gia tốc
+        if (sinceChange < 45) return MotorAction::Stop;
+        searchPulse_ = true;
+        searchMotorChangedMs_ = in.now;
+        return direction;
+    }
+
     const bool centerBearing = in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6;
     const bool stableTrack = Config::LINE_RECOVERY_TRACK_CONFIRM && confirmTrackedLine(in);
-    // Samples must be spaced and fresh. Side+center counts as line evidence,
-    // not failed centering. A wide junction never authorizes translation.
     if (captureCount_ && static_cast<uint32_t>(in.now-captureSampleMs_) > Config::LEFT_CAPTURE_MAX_GAP_MS)
         captureHistory_ = captureCount_ = 0;
     const bool sampled = !captureCount_ || static_cast<uint32_t>(in.now-captureSampleMs_) >= Config::LEFT_CAPTURE_SAMPLE_MS;
@@ -190,9 +263,9 @@ MotorAction CoreNavigator::alignTurnLine(const ControlInput& in) {
         segmentStartedMs_ = in.now;
         resetLineTracking();
         turnSettling_ = true;
-        return MotorAction::Stop; // Rear-sonar handoff still precedes translation.
+        return MotorAction::Stop;
     }
-    if (Config::LINE_RECOVERY_TRACK_CONFIRM &&
+    if (!docking && Config::LINE_RECOVERY_TRACK_CONFIRM &&
         (centerBearing || elapsed >= Config::LINE_RECOVERY_TIMEOUT_MS)) {
         // Validate a tracked line at rest; never extend pivot pulses
         // beyond the old 600ms budget, even during the longer confirmation wait.
@@ -303,6 +376,8 @@ bool CoreNavigator::start(const char* current, const CoreCommand& command, const
     stoppedAtMs_ = now;
     oldLineDeparted_ = false;
     turnRetryUsed_ = false;
+    reverseAligned_ = false;
+    reverseAlignStartedMs_ = 0;
     resetLineTracking();
     soloTrial_ = soloTrial;
     error_ = ErrorCode::None;
@@ -358,13 +433,18 @@ void CoreNavigator::reachedNode(const char* node, uint32_t now, const ControlInp
     }
     const bool through = input && canPassThrough(node,*input);
     const bool parkedReverse = reverseAfterTurn_[index_];
-    // A tag seen while rotating/waiting cannot prove the reverse leg happened.
-    if (parkedReverse && phase_ != Phase::Following) { fault(ErrorCode::UnexpectedNode); return; }
+    // A tag seen while rotating/waiting/aligning cannot prove the reverse leg happened.
+    if (parkedReverse && (phase_ != Phase::Following || !reverseAligned())) {
+        fault(ErrorCode::UnexpectedNode);
+        return;
+    }
     currentZoneCleared_ = false;
     resetLineTracking();
     AGVMath::copyText(current_, sizeof(current_), node);
     ++index_;
     nodeOrderReceived_ = false;
+    reverseAligned_ = false;
+    reverseAlignStartedMs_ = 0;
     if (RoutePlanner::station(node)) {
         if (parkedReverse) {
             if (index_ == length_) stop();
@@ -506,6 +586,8 @@ MotorAction CoreNavigator::confirmTurnAround(const ControlInput& in) {
     } else {
         phase_ = Phase::Following;
         segmentStartedMs_ = in.now;
+        reverseAlignStartedMs_ = in.now;
+        reverseAligned_ = (Config::REVERSE_ALIGN_FORWARD_MS == 0);
         resetLineTracking();
         turnSettling_ = true;
     }
@@ -570,6 +652,7 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
         stoppedAtMs_ += held;
         lineLossStartedMs_ += held;
         lastCorrectionMs_ += held;
+        if (reverseAlignStartedMs_) reverseAlignStartedMs_ += held;
         if (recoveringLine()) searchMotorChangedMs_ = in.now;
         networkPaused_ = false;
     }
@@ -592,6 +675,7 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
         stoppedAtMs_ += held;
         lineLossStartedMs_ += held;
         lastCorrectionMs_ += held;
+        if (reverseAlignStartedMs_) reverseAlignStartedMs_ += held;
         if (recoveringLine()) searchMotorChangedMs_ = in.now;
         obstaclePaused_ = false;
     }
@@ -721,6 +805,8 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
             if (crossedLines_ >= required) {
                 phase_ = Phase::Following;
                 segmentStartedMs_ = in.now;
+                reverseAlignStartedMs_ = in.now;
+                reverseAligned_ = (Config::REVERSE_ALIGN_FORWARD_MS == 0);
                 // Give the controller one STOP cycle to switch to the rear
                 // sonar and acquire a fresh sample before any reverse PWM.
                 if (reverseAfterTurn_[index_]) return MotorAction::Stop;
@@ -738,6 +824,27 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
     if (missingZone()) {
         // Evidence gathered before grant revocation must not survive the hold.
         centerSamples_ = 0;
+        return MotorAction::Stop;
+    }
+    if (reverseAfterTurn_[index_] && !reverseAligned_ && Config::REVERSE_ALIGN_FORWARD_MS > 0) {
+        if (!reverseAlignStartedMs_) reverseAlignStartedMs_ = in.now;
+        const uint32_t alignElapsed = in.now - reverseAlignStartedMs_;
+        if (alignElapsed < Config::REVERSE_ALIGN_FORWARD_MS) {
+            const MotorAction action = AGVMath::lineAction(in.linePattern);
+            rememberLine(in, action);
+            return action;
+        }
+        if (alignElapsed < (Config::REVERSE_ALIGN_FORWARD_MS + Config::REVERSE_ALIGN_SETTLE_MS)) {
+            return MotorAction::Stop;
+        }
+        reverseAligned_ = true;
+        resetLineTracking();
+        segmentStartedMs_ = in.now;
+#if defined(ARDUINO)
+        if (Config::DEBUG_ENABLED) Serial.printf(
+            "[DOCKING] Forward PD align complete (%lums). Starting reverse into %s\n",
+            static_cast<unsigned long>(alignElapsed), path_[index_]);
+#endif
         return MotorAction::Stop;
     }
     const MotorAction action = segmentReverse()

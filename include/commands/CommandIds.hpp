@@ -16,10 +16,6 @@
   #endif
 #include <windows.h>
 #endif
-#if !defined(_WIN32)
-#include <fcntl.h>
-#include <unistd.h>
-#endif
 
 // Reserve a block on disk before exposing any ID. Process restarts skip unused IDs.
 // Keep IDs in signed 32-bit range for compatibility with the existing numeric ACK contract.

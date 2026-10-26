@@ -38,13 +38,21 @@
 // 3. Quay tại node; cùng áp dụng cho cả quay trái và quay phải.
 #define AGV_BENCH_TURN_SPEED 220 // quay tại chỗ
 #define AGV_BENCH_TURN_LEFT_SPEED_TRIM 0 // kênh ENA
-#define AGV_BENCH_TURN_RIGHT_SPEED_TRIM -5 // kênh ENB
+#define AGV_BENCH_TURN_RIGHT_SPEED_TRIM 0 // kênh ENB
 #define AGV_BENCH_TURN_MIN_MS 200 // thời gian tối thiểu quay tại chỗ (ms) trước khi bắt line mới
 
 // Riêng quay đầu 180 độ tại G1.
-#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 15)
+#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 20)
+// Tốc độ xoay tại GS1 khi quay trái để lùi vào base S1 (giảm tốc để bắt chuẩn 010 không văng quán tính)
+#define AGV_GS_TURN_PWM 170
+// Tốc độ nhích vi chỉnh bắt chuẩn 010 tại GS1 khi vào TurnCapture
+#define AGV_GS_ALIGN_PWM 155
+// Thời gian hãm dừng xác nhận chuẩn 010 tại GS1 trước khi lùi vào base
+#define AGV_GS_CONFIRM_MS 100
+// Thời gian tiến thêm bám line PD (ms) sau khi bắt line tại GS1 để nắn thẳng xe trước khi lùi vào S1 (1000 - 2000ms)
+#define AGV_REVERSE_ALIGN_FORWARD_MS 1500
 // Xac nhan line sau quay 180 do; dong bo hai xe.
-#define AGV_TURN_AROUND_CONFIRM_MS 500
+#define AGV_TURN_AROUND_CONFIRM_MS 100
 
 // 4. BÁM LINE TIẾN:
 #define AGV_BENCH_CORRECTION_SPEED 170

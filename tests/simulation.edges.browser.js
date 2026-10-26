@@ -31,7 +31,7 @@ async function main(){
   await page.screenshot({path:path.join(sim.directory,'desktop-order.png'),fullPage:true});
   await page.waitForFunction(()=>lastState?.orders?.[0]?.status==='completed',null,{timeout:100000});
   const order=await page.evaluate(()=>lastState.orders[0]);assert.equal(order.items.filter(i=>i.status==='delivered').length,2);assert.equal(new Set(order.items.map(i=>i.robot)).size,2);
-  assert.match(await page.locator('#orderList').innerText(),/K[1-6] → K[1-6]/);
+  assert.match(await page.locator('#missionTable').innerText(),/K[1-6] → K[1-6]/);
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(400);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.screenshot({path:path.join(sim.directory,'mobile.png'),fullPage:true});

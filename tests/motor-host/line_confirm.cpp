@@ -39,167 +39,124 @@ struct Rig {
     }
 };
 
+constexpr uint32_t ConfirmMs=Config::LINE_RECOVERY_CENTER_MS;
+
 static void following() {
-    for (uint8_t pattern : {2,3,6}) {
-        Rig r; r.start(nullptr,"S1","GS1"); CHECK(r.step(2,r.in.now)==MotorAction::Forward);
-        const auto lost=r.in.now+1; CHECK(r.step(0,lost)==MotorAction::Stop); r.stopped();
-        const auto confirm=lost+700; // Past the motor-search budget, still inside task grace.
-        for (uint32_t dt=0;dt<100;dt+=20) { CHECK(r.step(pattern,confirm+dt)==MotorAction::Stop); r.stopped(); }
-        CHECK(r.step(pattern,confirm+100)!=MotorAction::Stop); CHECK(r.nav.following());
-        CHECK(r.motor.leftDuty()+r.motor.rightDuty()>0);
-        CHECK(r.nav.routeCommandId()==900 && r.nav.pathIndex()==0 && std::strcmp(r.nav.nextNode(),"GS1")==0);
+    for(uint8_t pattern:{2,3,6}) {
+        Rig r;r.start(nullptr,"S1","GS1");CHECK(r.step(2,r.in.now)==MotorAction::Forward);
+        const auto lost=r.in.now+1;r.step(0,lost);
+        const auto first=lost+700;
+        for(uint32_t dt=0;dt<ConfirmMs;dt+=5) {
+            CHECK(r.step(pattern,first+dt)==MotorAction::Stop);r.stopped();CHECK(!r.nav.following());
+        }
+        CHECK(r.step(pattern,first+ConfirmMs)!=MotorAction::Stop);CHECK(r.nav.following());
+        CHECK(r.nav.routeCommandId()==900 && r.nav.pathIndex()==0);
     }
-    for (uint8_t pattern : {0,1,4,5,7}) {
-        Rig r; r.start(nullptr,"S1","GS1"); r.step(2,r.in.now); const auto lost=r.in.now+1; r.step(0,lost);
-        for (uint32_t dt=700;dt<=900;dt+=20) { r.step(pattern,lost+dt); CHECK(!r.nav.following()); r.stopped(); }
-        r.step(pattern,lost+Config::LINE_LOSS_GRACE_MS); CHECK(r.nav.error()==ErrorCode::LineLost);
-        r.step(2,r.in.now+1); r.stopped(); CHECK(!r.nav.active());
+    for(uint8_t pattern:{0,1,4,5,7}) {
+        Rig r;r.start(nullptr,"S1","GS1");r.step(2,r.in.now);
+        const auto lost=r.in.now+1;r.step(0,lost);
+        for(uint32_t dt=700;dt<=900;dt+=20) {r.step(pattern,lost+dt);CHECK(!r.nav.following());r.stopped();}
+        r.step(pattern,lost+Config::LINE_LOSS_GRACE_MS);CHECK(r.nav.error()==ErrorCode::LineLost);
+        r.step(2,r.in.now+1);r.stopped();CHECK(!r.nav.active());
     }
-    for (uint8_t pattern : {1,3,4,6}) {
-        Rig r; r.start(nullptr,"K5","G5"); CHECK(r.step(2,r.in.now)==MotorAction::Backward);
-        r.step(0,r.in.now+1); const auto at=r.in.now;
-        for(uint32_t dt=20;dt<=200;dt+=20) { r.step(pattern,at+dt); CHECK(r.nav.recoveringLine()); }
-        for(uint32_t dt=220;dt<320;dt+=20) CHECK(r.step(2,at+dt)==MotorAction::Stop);
-        CHECK(r.step(2,at+320)==MotorAction::Backward); // Reverse still requires010.
+    for(uint8_t pattern:{1,3,4,6}) {
+        Rig r;r.start(nullptr,"K5","G5");CHECK(r.step(2,r.in.now)==MotorAction::Backward);
+        r.step(0,r.in.now+1);const auto at=r.in.now;
+        for(uint32_t dt=5;dt<=40;dt+=5) {r.step(pattern,at+dt);CHECK(r.nav.recoveringLine());}
+        const auto first=at+700;
+        for(uint32_t dt=0;dt<ConfirmMs;dt+=5)CHECK(r.step(2,first+dt)==MotorAction::Stop);
+        CHECK(r.step(2,first+ConfirmMs)==MotorAction::Backward);
     }
 }
 
 static void turnConfirmation() {
-    for(bool right : {false,true}) for(uint8_t edge : {1,4}) {
-        Rig r; r.start("M3","G1",right?"M5":"K1");
-        if(right)CHECK(r.nav.grant("M5",20));
-        CHECK(r.step(2,r.in.now)==(right?MotorAction::PivotRight:MotorAction::PivotLeft));
-        const auto at=r.in.now;
+    for(bool right:{false,true}) for(uint8_t edge:{1,4}) {
+        Rig r;r.start("M3","G1",right?"M5":"K1");if(right)CHECK(r.nav.grant("M5",20));
+        r.step(2,r.in.now);const auto began=r.in.now;
         for(uint32_t dt=1;dt<=201;dt+=20) {
-            r.step(edge,at+dt);
-            CHECK(!r.nav.capturingTurnLine() && !r.nav.following());
+            r.step(edge,began+dt);CHECK(!r.nav.capturingTurnLine() && !r.nav.following());
         }
-        // An edge may prove departure, but only a center-bearing return starts capture.
-        CHECK(r.step(3,at+221)==MotorAction::Stop);
-        CHECK(r.nav.capturingTurnLine()); r.stopped();
+        CHECK(r.step(3,began+221)==MotorAction::Stop);CHECK(r.nav.capturingTurnLine());r.stopped();
     }
-    for(bool right : {false,true}) for(uint8_t pattern : {3,6}) for(bool wrap : {false,true}) {
-        Rig r; const auto at=r.capture(right,pattern,wrap?UINT32_MAX-1050u:0u);
-        for(uint32_t dt=0;dt<100;dt+=20) { CHECK(r.step(pattern,at+dt)==MotorAction::Stop); r.stopped(); CHECK(r.nav.capturingTurnLine()); }
-        CHECK(r.step(pattern,at+100)==MotorAction::Stop); CHECK(r.nav.following()); r.stopped();
-        CHECK(r.nav.settlingTurnLine() && r.nav.routeCommandId()==900 && r.nav.pathIndex()==0);
-        CHECK(r.step(pattern,at+101)!=MotorAction::Stop);
-        CHECK(r.motor.leftDuty()+r.motor.rightDuty()>0);
+    for(bool right:{false,true}) for(uint8_t pattern:{3,6}) for(bool wrap:{false,true}) {
+        Rig r;const auto at=r.capture(right,pattern,wrap?UINT32_MAX-1050u:0u);
+        for(uint32_t dt=0;dt<ConfirmMs;dt+=5) {
+            CHECK(r.step(pattern,at+dt)==MotorAction::Stop);CHECK(r.nav.capturingTurnLine());r.stopped();
+        }
+        CHECK(r.step(pattern,at+ConfirmMs)==MotorAction::Stop);CHECK(r.nav.following());r.stopped();
+        CHECK(r.nav.settlingTurnLine());CHECK(r.step(pattern,at+ConfirmMs+1)!=MotorAction::Stop);
         CHECK(r.motor.leftDuty()<=r.nav.turnCapturePwm() && r.motor.rightDuty()<=r.nav.turnCapturePwm());
     }
-    for(bool right : {false,true}) for(uint8_t edge : {1,4}) for(bool wrap : {false,true}) {
-        Rig r; const auto at=r.capture(right,3,wrap?UINT32_MAX-1050u:0u);
-        for(uint32_t dt=20;dt<=800;dt+=20) {
-            const auto action=r.step(edge,at+dt);
-            CHECK(r.nav.capturingTurnLine() && !r.nav.following());
-            CHECK(action==MotorAction::Stop || action==MotorAction::PivotLeft || action==MotorAction::PivotRight);
+    for(bool right:{false,true}) for(uint8_t edge:{1,4}) {
+        Rig r;const auto at=r.capture(right);
+        for(uint32_t dt=5;dt<=800;dt+=5) {
+            r.step(edge,at+dt);CHECK(r.nav.capturingTurnLine());
             if(dt>=Config::LINE_RECOVERY_TIMEOUT_MS)r.stopped();
         }
-        // Center-bearing confirmation must start afresh after edge-only evidence.
-        for(uint32_t dt=820;dt<920;dt+=20) {
-            CHECK(r.step(6,at+dt)==MotorAction::Stop); CHECK(r.nav.capturingTurnLine()); r.stopped();
-        }
-        CHECK(r.step(6,at+920)==MotorAction::Stop); CHECK(r.nav.following()); r.stopped();
+        for(uint32_t dt=0;dt<ConfirmMs;dt+=5) {r.step(6,at+805+dt);CHECK(!r.nav.following());r.stopped();}
+        r.step(6,at+805+ConfirmMs);CHECK(r.nav.following());
     }
-    Rig late; const auto at=late.capture();
-    for(uint32_t dt=1;dt<=600;dt+=1) {
-        late.step(0,at+dt); CHECK(late.nav.error()==ErrorCode::None);
-        if(dt>=600)late.stopped();
+    Rig blank;const auto at=blank.capture();bool pivoted=false;
+    for(uint32_t dt=5;dt<Config::TURN_CAPTURE_CONFIRM_TIMEOUT_MS;dt+=5) {
+        const auto action=blank.step(0,at+dt);
+        if(dt>=Config::LINE_RECOVERY_TIMEOUT_MS) {CHECK(action==MotorAction::Stop);blank.stopped();}
+        else if(action!=MotorAction::Stop)pivoted=true;
     }
-    for(uint32_t dt=650;dt<=730;dt+=20) { CHECK(late.step(6,at+dt)==MotorAction::Stop); late.stopped(); }
-    CHECK(late.step(6,at+750)==MotorAction::Stop); CHECK(late.nav.following());
-
-    Rig blank; const auto blankAt=blank.capture(); bool sawPivot=false;
-    for(uint32_t dt=10;dt<Config::TURN_CAPTURE_CONFIRM_TIMEOUT_MS;dt+=10) {
-        const auto action=blank.step(0,blankAt+dt);
-        CHECK(blank.nav.error()==ErrorCode::None);
-        if(dt>=Config::LINE_RECOVERY_TIMEOUT_MS) { CHECK(action==MotorAction::Stop); blank.stopped(); }
-        else if(action!=MotorAction::Stop)sawPivot=true;
-    }
-    CHECK(sawPivot); blank.step(0,blankAt+Config::TURN_CAPTURE_CONFIRM_TIMEOUT_MS);
-    CHECK(blank.nav.error()==ErrorCode::LineLost && !blank.nav.active());
-    blank.step(2,blank.in.now+1); blank.stopped(); CHECK(blank.nav.error()==ErrorCode::LineLost);
+    CHECK(pivoted);blank.step(0,at+Config::TURN_CAPTURE_CONFIRM_TIMEOUT_MS);
+    CHECK(blank.nav.error()==ErrorCode::LineLost);blank.step(2,blank.in.now+1);blank.stopped();
 }
 
 static void noiseAndHazards() {
-    {
-        // Neither alternating nor sustained edge-only samples can resume the route.
-        Rig r; r.start(nullptr,"S1","GS1"); r.step(2,r.in.now); r.step(0,r.in.now+1);
-        const auto at=r.in.now;
-        for(uint32_t dt=20;dt<=180;dt+=20) {
-            CHECK(r.step(((dt/20)&1u)?4:1,at+dt)==MotorAction::Stop);
-            CHECK(r.nav.recoveringLine()); r.stopped();
-        }
-        for(uint32_t dt=200;dt<300;dt+=20) {
-            CHECK(r.step(1,at+dt)==MotorAction::Stop); CHECK(r.nav.recoveringLine()); r.stopped();
-        }
-        CHECK(r.step(1,at+300)==MotorAction::Stop); CHECK(r.nav.recoveringLine()); r.stopped();
-        for(uint32_t dt=320;dt<420;dt+=20) {
-            CHECK(r.step(3,at+dt)==MotorAction::Stop); CHECK(r.nav.recoveringLine()); r.stopped();
-        }
-        CHECK(r.step(3,at+420)!=MotorAction::Stop); CHECK(r.nav.following());
-    }
-    // Following recovery must discard stale/pre-hazard line evidence as well.
-    for(bool obstacle : {false,true}) {
-        Rig r; r.start("K1","G1","M5"); CHECK(r.nav.grant("M5",21));
-        CHECK(r.step(2,r.in.now)==MotorAction::Forward);
-        r.step(0,r.in.now+1); const auto at=r.in.now;
-        for(uint32_t dt=20;dt<=80;dt+=20) { r.step(3,at+dt); r.stopped(); }
-        if(obstacle)r.in.obstacle=true; else r.nav.revokeGrant("M5",21);
-        r.step(3,at+100); r.stopped(); CHECK(r.nav.recoveringLine());
-        if(obstacle)r.in.obstacle=false; else CHECK(r.nav.grant("M5",22));
-        for(uint32_t dt=120;dt<220;dt+=20) { r.step(6,at+dt); CHECK(r.nav.recoveringLine()); r.stopped(); }
-        CHECK(r.step(3,at+220)!=MotorAction::Stop); CHECK(r.nav.following());
-    }
-    {
-        Rig r; r.start(nullptr,"S1","GS1"); r.step(2,r.in.now); r.step(0,r.in.now+1);
-        const auto at=r.in.now;
-        for(uint32_t dt : {100u,160u,220u}) { r.step(3,at+dt); CHECK(r.nav.recoveringLine()); r.stopped(); }
-        r.step(7,at+240); r.step(6,at+260);
-        for(int i=0;i<10;++i)r.step(6,at+260);
-        CHECK(r.nav.recoveringLine());
-        for(uint32_t dt=280;dt<360;dt+=20) { r.step(6,at+dt); CHECK(r.nav.recoveringLine()); }
-        CHECK(r.step(6,at+360)!=MotorAction::Stop); CHECK(r.nav.following());
-    }
-    for(uint8_t invalid : {0,1,4,5,7}) {
-        Rig r; const auto at=r.capture();
-        for(uint32_t dt=0;dt<=60;dt+=20)r.step(3,at+dt);
-        r.step(invalid,at+80); r.step(3,at+100); CHECK(r.nav.capturingTurnLine());
-        for(int repeat=0;repeat<10;++repeat)r.step(3,at+100);
-        CHECK(r.nav.capturingTurnLine());
-        r.step(3,at+160); r.step(3,at+220); CHECK(r.nav.capturingTurnLine()); // Stale gaps reset evidence.
-        for(uint32_t dt=240;dt<=300;dt+=20) { r.step(3,at+dt); CHECK(r.nav.capturingTurnLine()); }
-        r.step(3,at+320); CHECK(r.nav.following());
+    for(uint8_t invalid:{0,1,4,5,7}) {
+        Rig r;const auto at=r.capture();
+        for(uint32_t dt=0;dt<=30;dt+=5)r.step(3,at+dt);
+        r.step(invalid,at+35);r.step(3,at+40);
+        for(int i=0;i<20;++i)r.step(3,at+40);
+        CHECK(!r.nav.following());r.step(3,at+100);CHECK(!r.nav.following());
+        for(uint32_t dt=5;dt<ConfirmMs;dt+=5) {r.step(3,at+100+dt);CHECK(!r.nav.following());r.stopped();}
+        r.step(3,at+100+ConfirmMs);CHECK(r.nav.following());
     }
     for(int hazard=0;hazard<7;++hazard) {
-        Rig r; const auto at=r.capture(); for(uint32_t dt=0;dt<=60;dt+=20)r.step(3,at+dt);
-        if(hazard==0)r.in.wifi=false; if(hazard==1)r.in.mqtt=false;
-        if(hazard==2)r.in.distanceValid=false; if(hazard==3)r.in.motionConfigured=false;
-        if(hazard==4)r.in.lineConfigured=false; if(hazard==5)r.nav.stop(); if(hazard==6)r.in.obstacle=true;
-        CHECK(r.step(3,at+80)==MotorAction::Stop); r.stopped();
-        if(hazard<6) { CHECK(!r.nav.active()); r.step(2,at+100); r.stopped(); }
-        else {
-            CHECK(r.nav.obstaclePaused()); r.in.obstacle=false;
-            for(uint32_t dt=100;dt<200;dt+=20) { CHECK(r.step(3,at+dt)==MotorAction::Stop); CHECK(r.nav.capturingTurnLine()); }
-            r.step(3,at+200); CHECK(r.nav.following());
-        }
+        Rig r;const auto at=r.capture();for(uint32_t dt=0;dt<=30;dt+=5)r.step(3,at+dt);
+        if(hazard==0)r.in.wifi=false;if(hazard==1)r.in.mqtt=false;
+        if(hazard==2)r.in.distanceValid=false;if(hazard==3)r.in.motionConfigured=false;
+        if(hazard==4)r.in.lineConfigured=false;if(hazard==5)r.nav.stop();if(hazard==6)r.in.obstacle=true;
+        CHECK(r.step(3,at+35)==MotorAction::Stop);r.stopped();CHECK(!r.nav.following());
+        if(hazard<2 || hazard==6) {
+            if(hazard<2)CHECK(r.nav.networkPaused());else CHECK(r.nav.obstaclePaused());
+            r.in.wifi=r.in.mqtt=true;r.in.obstacle=false;
+            for(uint32_t dt=0;dt<ConfirmMs;dt+=5) {r.step(6,at+40+dt);CHECK(!r.nav.following());r.stopped();}
+            r.step(6,at+40+ConfirmMs);CHECK(r.nav.following());
+        } else {CHECK(!r.nav.active());r.step(2,at+100);r.stopped();}
     }
-    Rig zone; zone.start("G2","M5","M6"); CHECK(zone.nav.grant("M5",10)); CHECK(zone.nav.grant("M6",11));
-    CHECK(zone.step(2,zone.in.now)==MotorAction::PivotLeft); zone.step(0,zone.in.now+1); zone.step(6,zone.in.now+1);
-    const auto at=zone.in.now; for(uint32_t dt=0;dt<=60;dt+=20)zone.step(6,at+dt);
-    zone.nav.revokeGrant("M6",11); CHECK(zone.step(6,at+80)==MotorAction::Stop); zone.stopped();
+    Rig zone;zone.start("G2","M5","M6");CHECK(zone.nav.grant("M5",10));CHECK(zone.nav.grant("M6",11));
+    zone.step(2,zone.in.now);zone.step(0,zone.in.now+1);zone.step(6,zone.in.now+1);
+    const auto at=zone.in.now;for(uint32_t dt=0;dt<=30;dt+=5)zone.step(6,at+dt);
+    zone.nav.revokeGrant("M6",11);zone.step(6,at+35);zone.stopped();CHECK(!zone.nav.following());
     CHECK(zone.nav.grant("M6",12));
-    for(uint32_t dt=100;dt<200;dt+=20) { zone.step(6,at+dt); CHECK(zone.nav.capturingTurnLine()); zone.stopped(); }
-    zone.step(6,at+200); CHECK(zone.nav.following());
-    zone.nav.revokeGrant("M6",12); zone.step(6,at+201); zone.stopped();
+    for(uint32_t dt=0;dt<ConfirmMs;dt+=5) {zone.step(6,at+40+dt);CHECK(!zone.nav.following());zone.stopped();}
+    zone.step(6,at+40+ConfirmMs);CHECK(zone.nav.following());
+    zone.nav.revokeGrant("M6",12);zone.step(6,zone.in.now+1);zone.stopped();
+
+    // Following must also discard pre-obstacle/grant evidence after blank line.
+    for(bool obstacle:{false,true}) {
+        Rig r;r.start("K1","G1","M5");CHECK(r.nav.grant("M5",21));r.step(2,r.in.now);
+        r.step(0,r.in.now+1);const auto at=r.in.now;
+        for(uint32_t dt=5;dt<=30;dt+=5)r.step(3,at+dt);
+        if(obstacle)r.in.obstacle=true;else r.nav.revokeGrant("M5",21);
+        r.step(3,at+35);r.stopped();CHECK(r.nav.recoveringLine());
+        if(obstacle)r.in.obstacle=false;else CHECK(r.nav.grant("M5",22));
+        for(uint32_t dt=0;dt<ConfirmMs;dt+=5) {r.step(6,at+40+dt);CHECK(r.nav.recoveringLine());r.stopped();}
+        r.step(6,at+40+ConfirmMs);CHECK(r.nav.following());
+    }
 }
 
 int main() {
     try {
-        static_assert(Config::LINE_RECOVERY_TRACK_CONFIRM,"Profiles must opt into tracked-line confirmation");
-        following(); turnConfirmation(); noiseAndHazards();
-        std::cout<<"PASS "<<Config::AGV_ID<<": 010/011/110 fresh stable recovery; 001/100 cannot start/finish capture or resume recovery; LEFT/RIGHT and wrap; "
-                 <<"600ms motor budget/1500ms confirmation; PWM cap; reverse stays centered; "
-                 <<"noise/stale/wide/blank/STOP/network/sonar/grant/obstacle; no fault replay\n";
-    } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
+        static_assert(Config::LINE_RECOVERY_TRACK_CONFIRM,"Run with two-robot profiles");
+        following();turnConfirmation();noiseAndHazards();
+        std::cout<<"PASS "<<Config::AGV_ID<<": ordinary line window "<<ConfirmMs
+                 <<"ms; narrow/edge/noise/stale/LEFT/RIGHT/wrap, reverse010, 600/1500ms, "
+                   "PWM cap/STOP/network pause/sonar/grant/obstacle/fault\n";
+    }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

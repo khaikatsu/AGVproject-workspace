@@ -1,5 +1,11 @@
 # Giao thức mạng và hợp đồng MCU với server
 
+26/10/2026, REQ-WAREHOUSE-TEST-ROLLBACK-01: WS v1 gateway→Core thêm `reconcile_test_cargo`, batch ID01/02+lift_command_id và xác nhận xe trống. Core cần diagnostic dừng đúng boot/kết nối còn mới rồi chỉ cập nhật cargo ảo phục vụ lượt thử. Không gửi MQTT hoặc thêm command MCU; firmware không cần nạp lại. [Hợp đồng](../contracts/web-server.md), [ví dụ](../contracts/examples/test-order-rollback.json), [ADR-089](decisions/ADR-089-test-order-rollback.md).
+
+26/10/2026, REQ-WEB-LOCATION-NAMES-01: hoán đổi tên kho/trạm chỉ nằm ở HTTP/WS browser–gateway và SQLite. Trường `location_names_revision` opt-in dịch tên sang ID vật lý tại gateway; MQTT command/telemetry, UID, bảng tuyến và trạm riêng của hai xe giữ ID cũ. Không có gói cấu hình tên gửi xuống MCU. [Hợp đồng và ví dụ](../contracts/web-server.md), [ADR-087](decisions/ADR-087-server-location-names.md).
+
+24/10/2026, REQ-DUAL-GS-WIDE-LINE-01 chỉ đổi xác nhận cảm biến cục bộ khi docking: GS1/GS2 quay tới111 ổn định mới chuyển sonar sau và lùi; topic/QoS/payload/ACK/counter, NODE_ORDER `reverse_after_turn`, grant và RFID hoàn tất không đổi. [ADR-081](decisions/ADR-081-dual-gs-wide-line-confirmation.md).
+
 23/10/2026, REQ-FIRMWARE-SERVER-SYNC-01: firmware server-sync-v16 lại phát diagnostic `lastCommandId` (high-water đã persist) để Core tiến counter; bỏ ngoại lệ bench nhận lệnh cũ ngoài cache. Khôi phục producer proof dừng theo schema1 hiện có; không thay topic, command/ACK/telemetry pipe hoặc hợp đồng proof. Giữ cấu hình mạng và tuning của RAR. [ADR-072](decisions/ADR-072-stale-command-counter-recovery.md), [kiểm chứng](../tests/README.md).
 
 23/10/2026: odometry schema1 mở rộng tùy chọn `stopped_position` cho hai xe. Core xác thực đứng yên/phiên/seq/chặng và diagnostic mới trước khi thu hẹp vùng chặn về một node hoặc hai đầu đoạn, tự trả mutex ngoài vùng/replan. Thiếu/cũ/offline giữ bảo thủ; telemetry/command/ACK/mutex giữ payload cũ. [Hợp đồng](../contracts/robot01-odometry.md), [ADR-079](decisions/ADR-079-stopped-edge-occupancy.md).

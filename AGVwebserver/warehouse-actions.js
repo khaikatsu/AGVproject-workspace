@@ -1,5 +1,6 @@
 const {randomUUID}=require('node:crypto');
 const {shortestRoute}=require('./order-planner');
+const {isWarehouseNode}=require('./public/warehouse-rules');
 const SERVICE_MS=5000;
 const finished=action=>['completed','interrupted'].includes(action.status);
 
@@ -46,7 +47,7 @@ function createWarehouseActions({getState,getSession,send,publish,inventory}) {
     if(robotId!==scopedRobot(state))throw Object.assign(Error('Xe ngoài phạm vi vận hành'),{status:409});
     if(!['pickup','dropoff'].includes(body?.action))throw Object.assign(Error('Chọn lấy hàng hoặc hạ hàng'),{status:400});
     const warehouse=body.warehouse;
-    if(typeof warehouse!=='string'||!/^K[1-6]$/.test(warehouse)||!state.map.nodes.some(node=>node.id===warehouse&&node.type==='station'))
+    if(typeof warehouse!=='string'||!state.map.nodes.some(node=>node.id===warehouse&&isWarehouseNode(node)))
       throw Object.assign(Error('Kho không hợp lệ'),{status:400});
     const gate=warehouse.replace('K','G'),robot=state.fleet.agvs.find(robot=>robot.id===robotId);
     if(!robot||robot.state!=='IDLE'||robot.error||robot.online===false||robot.position_valid===false||robot.task_id||robot.target||robot.path?.length)

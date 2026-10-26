@@ -1,5 +1,9 @@
 # Hiện trạng mã và khoảng trống tích hợp
 
+CURRENT 26/10/2026, REQ-WAREHOUSE-TEST-ROLLBACK-01: đối soát lượt thử gián đoạn hoàn tác kệ chưa hạ về kho lấy và đóng đơn trong transaction; Core xác nhận xe dừng rồi xóa cargo ảo, không phát MQTT/servo hoặc nhả lỗi/mutex. Lượt đã hạ giữ kho giao; nguồn bị chiếm/revision cũ/xe bận bị chặn. Không cần đổi firmware; cần chạy gateway/Core mới. [ADR-089](decisions/ADR-089-test-order-rollback.md).
+
+CURRENT 25/10/2026, REQ-CORE-HARDENING-20261025-01: hủy task giữ BLOCKED/uncertain tới proof dừng và RFID mới; startup lỗi có thông báo/exit1; migration xử lý stopped_nodes cũ; checkpoint chỉ dựng trường bền vững; có metric storage và cảnh báo chờ node/giới hạn boot. Vendor JSON đã pin về release3.12.0. [ADR-082](decisions/ADR-082-core-cancellation-startup-and-durability.md), [kiểm thử](../tests/README.md). Bản build kiểm thử riêng, chưa thay Core vận hành.
+
 CURRENT 23/10/2026, REQ-STOPPED-OCCUPANCY-01: xe lỗi còn kết nối có proof dừng mới thì Core chặn đúng một node hoặc hai đầu đoạn, tự trả mutex ngoài vùng và replan. Không cộng vùng đệm; dữ liệu cũ/mất mạng/restart quay lại vùng chưa xác minh. Arbiter dùng cùng vùng chặn dù owner rỗng; thay tuyến MCU đang chạy cần WAIT và RFID dừng mới. Firmware01/02 v15 và Core mới cần được áp dụng cùng nhau; chưa nạp hoặc restart vận hành. [ADR-079](decisions/ADR-079-stopped-edge-occupancy.md).
 
 CURRENT 23/10/2026: khi một xe ERROR/OFFLINE do báo lỗi, LWT, timeout telemetry hoặc hết ACK retry, Core replan các xe có tuyến giao với toàn bộ `currentNode/uncertainPath` và thành phần mutex của xe lỗi, cùng các xe đang chờ mutex do xe lỗi giữ. Lượt chờ cũ bị hủy trước tuyến mới; không có đường thì BLOCKED/WAIT. Không thay chính sách owner: xe lỗi vẫn giữ mutex tới khi có bằng chứng clearance. [ADR-078](decisions/ADR-078-failure-footprint-replanning.md).

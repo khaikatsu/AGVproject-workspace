@@ -27,6 +27,7 @@ int main(int argc,char** argv) {
             fleet.addTask("M1",1,"pending");
             old["fleet"] = fleet.durableSnapshot();old["fleet"]["agvs"][0]["node"] = "C1";
             old["fleet"]["agvs"][0]["path"] = json::array({"C2","G6"});
+            old["fleet"]["agvs"][0]["stopped_nodes"] = json::array({"C3","C4"});
             old["fleet"]["tasks"].push_back({{"task_id","old-corner"},{"target","C2"},{"status","completed"}});
             arbiter.setGrantIdAllocator([]{return 123L;});arbiter.requestZone("M1","01");arbiter.requestZone("M1","02");
             old["mutex"] = arbiter.toJson();
@@ -43,6 +44,7 @@ int main(int argc,char** argv) {
         CHECK(old.at("fleet").at("agvs")[0].at("node") == "");
         for (const auto& robot : old.at("fleet").at("agvs")) {
             CHECK(robot.at("position_valid") == false);
+            CHECK(robot.at("stopped_nodes").empty());
             CHECK(robot.at("uncertain_path").size() >= 2);
             for (const auto& n : robot.at("uncertain_path")) CHECK(map.nodeExists(n.get<std::string>()));
         }
@@ -50,6 +52,10 @@ int main(int argc,char** argv) {
         FleetManager restored(map,restoredArbiter);restored.restore(old.at("fleet"));
         CHECK(restored.toJson().at("agvs")[0].at("position_valid") == false);
         CHECK(restored.toJson().at("pending_tasks").empty());
+        if(argc<=1) for(const auto* node:{"M3","G1","G6","M4"}) {
+            const auto& uncertain=old.at("fleet").at("agvs")[0].at("uncertain_path");
+            CHECK(std::find(uncertain.begin(),uncertain.end(),json(node))!=uncertain.end());
+        }
         const auto restoredData = restored.durableSnapshot();
         FleetManager again(map,restoredArbiter);again.restore(restoredData); // Retired history survives the next restart.
         auto wrong = original;wrong["map"]["edges"][0]["weight"] = 999;

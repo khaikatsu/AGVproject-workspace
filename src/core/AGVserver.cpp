@@ -55,7 +55,7 @@
 #include <openssl/crypto.h>
 #include <mosquitto.h>
 
-#include "utils/json.hpp"
+#include "utils/CoreTypes.hpp"
 #include "map/MapGraph.hpp"
 #include "utils/Mutexarbiter.hpp"
 #include "core/FLeetmanager.hpp"
@@ -65,7 +65,6 @@
 #include <random>
 #include <cstdlib>
 
-using json = nlohmann::json;
 
 // Co Ctrl+C (SIGINT) de thoat chuong trinh sach se tren MOI nen tang, thay the
 // GetAsyncKeyState(VK_ESCAPE) (chi hoat dong tren Windows, va chi khi cua so
@@ -109,7 +108,7 @@ static int envPort(const char* name, int fallback) {
     if (port < 1 || port > 65535) throw std::invalid_argument("Port khong hop le");
     return port;
 }
-static const int WS_PORT = envPort("AGV_CORE_WS_PORT", 8080);
+static int WS_PORT = 8080;
 static const string MAP_PATH = std::getenv("AGV_MAP_PATH") ? std::getenv("AGV_MAP_PATH") : "data/map_layout.json";
 static WebCommands g_commands(g_map, g_fleet, g_arbiter, MAP_PATH);
 static std::unique_ptr<ShiftController> g_shift;
@@ -118,13 +117,16 @@ static std::unique_ptr<RuntimeStore> g_runtime;
 static vector<pair<string,string>> g_outbound;
 static bool g_storageHealthy = true;
 static std::uint64_t g_snapshotSequence = 0;
-static const string CORE_SESSION = to_string(chrono::system_clock::now().time_since_epoch().count()) + "-" + to_string(std::random_device{}());
+static string CORE_SESSION;
+static string g_startupStage="cau hinh";
 static json stateSnapshot() {
     lock_guard<recursive_mutex> lk(g_stateMtx);
     json state = {{"protocol_version", 1}, {"core_session_id", CORE_SESSION},
             {"core_snapshot_seq",++g_snapshotSequence},
             {"mqtt_connected", g_mqttConnected.load()}, {"storage_healthy",g_storageHealthy}, {"map", g_map.toJson()}, {"fleet", g_fleet.toJson()}, {"mutex", g_arbiter.toJson()}};
-    if (g_shift) state["shift"] = g_shift->snapshot();
+    if (g_shift) state["shift"] = g_shift->snapshot(state["fleet"],state["mutex"]);
+    state["storage_metrics"]={{"last_commit_ms",AtomicCommitMetrics::lastMs.load()},
+        {"max_commit_ms",AtomicCommitMetrics::maxMs.load()},{"slow_commits",AtomicCommitMetrics::slowCount.load()}};
     return state;
 }
 
@@ -794,7 +796,9 @@ static string startupMode(int argc, char** argv, bool& quit) {
     return mode;
 }
 
-int main(int argc, char** argv) {
+static int runCore(int argc, char** argv) {
+    WS_PORT=envPort("AGV_CORE_WS_PORT",8080);
+    CORE_SESSION=to_string(chrono::system_clock::now().time_since_epoch().count())+"-"+to_string(std::random_device{}());
     if (const char* token = std::getenv("AGV_CORE_TOKEN")) {
         if (strlen(token) < 32 || string(token).find_first_of("\r\n") != string::npos) throw std::invalid_argument("AGV_CORE_TOKEN can >=32 ky tu");
     }
@@ -815,6 +819,10 @@ int main(int argc, char** argv) {
     // Giữ cổng trước mọi ghi map/counter và MQTT: bản chạy trùng phải thoát
     // mà không đẩy core đang chạy khỏi broker có cùng client ID.
     const SOCKET listenSock = createWebSocketListener(WS_PORT);
+    struct ListenerGuard {
+        SOCKET socket;
+        ~ListenerGuard() {if(socket!=INVALID_SOCKET) closesocket(socket);}
+    } listenerGuard{listenSock};
     if (listenSock == INVALID_SOCKET) {
         cerr << "[LOI] Khong khoi dong duoc WebSocket server.\n";
         return 1;
@@ -861,9 +869,11 @@ int main(int argc, char** argv) {
         !std::filesystem::exists(counterPath) && std::filesystem::exists(legacyCounter))
         counterPath = legacyCounter;
     cout << "[COMMAND] Counter: " << std::filesystem::absolute(counterPath).string() << "\n";
+    g_startupStage="command counter: "+counterPath.string();
     CommandIds commandIds(counterPath);
     const auto taskCounterPath = std::getenv("AGV_TASK_ID_PATH") ? std::filesystem::path(std::getenv("AGV_TASK_ID_PATH"))
         : std::filesystem::path(MAP_SAVE_PATH).parent_path()/"task_sequence.json";
+    g_startupStage="task counter: "+taskCounterPath.string();
     CommandIds taskIds(taskCounterPath);
     g_fleet.setTaskIdAllocator([&taskIds] { return "task-"+to_string(taskIds.next()); });
     g_arbiter.setGrantIdAllocator([&commandIds] { return commandIds.next(); });
@@ -897,12 +907,13 @@ int main(int argc, char** argv) {
     const auto runtimePath = std::getenv("AGV_RUNTIME_STATE_PATH") ? std::filesystem::path(std::getenv("AGV_RUNTIME_STATE_PATH"))
         : std::filesystem::path(MAP_SAVE_PATH).parent_path()/"runtime_state.json";
     g_runtime = std::make_unique<RuntimeStore>(runtimePath);
+    g_startupStage="runtime checkpoint: "+runtimePath.string();
     if (auto saved = g_runtime->load()) {
         if (!RuntimeStore::mapsCompatible(g_map.toJson(),saved->at("map"))) {
             if (!RuntimeStore::migrateRoundedMap(g_map.toJson(),*saved)) {
                 cerr << "[RUNTIME] Checkpoint khong khop map: " << runtimePath << "\n"
                      << "Can doi soat map/checkpoint; giu nguyen file va counter.\n";
-                closesocket(listenSock);return 1;
+                return 1;
             }
             const auto backup = g_runtime->backupBeforeRoundedMigration();
             const auto message = "Da chuyen checkpoint map v3 -> v4; giu mutex/lich su, cho RFID va doi soat. Backup: " + backup.string();
@@ -911,22 +922,30 @@ int main(int argc, char** argv) {
         g_map.loadFromJson(saved->at("map"));g_arbiter.restore(saved->at("mutex"));g_fleet.restore(saved->at("fleet"));
         pushLog("Da khoi phuc queue/mutex; robot cho RFID va xac minh");
     }
-    std::unordered_map<string,string> homes = {{"01","S1"},{"02","S2"}};
+    auto homes = PhysicalLayout::homes();
     if (std::getenv("AGV_HOME_STATIONS")) homes = json::parse(std::getenv("AGV_HOME_STATIONS")).get<decltype(homes)>();
-    if (singleRobotTrial) homes = {{"01","S1"}};
-    if (!trialRobot.empty()) homes = {{trialRobot,trialRobot == "01" ? "S1" : "S2"}};
-    if (!mode.empty() && trialRobot.empty() && twoRobotTrial) homes = {{"01","S1"},{"02","S2"}};
-    if (mode == "active01") homes = {{"01","S1"}};
-    if (mode == "active02") homes = {{"02","S2"}};
-    if (mode == "active-both") homes = {{"01","S1"},{"02","S2"}};
+    if (singleRobotTrial) homes = {{"01",PhysicalLayout::home("01")}};
+    if (!trialRobot.empty()) homes = {{trialRobot,PhysicalLayout::home(trialRobot)}};
+    if (!mode.empty() && trialRobot.empty() && twoRobotTrial) homes = PhysicalLayout::homes();
+    if (mode == "active01") homes = {{"01",PhysicalLayout::home("01")}};
+    if (mode == "active02") homes = {{"02",PhysicalLayout::home("02")}};
+    if (mode == "active-both") homes = PhysicalLayout::homes();
     const auto shiftFile = std::getenv("AGV_SHIFT_STATE_PATH") ? std::filesystem::path(std::getenv("AGV_SHIFT_STATE_PATH"))
         : std::filesystem::path(MAP_SAVE_PATH).parent_path()/"shift_state.json";
+    g_startupStage="shift state: "+shiftFile.string();
     g_shift = std::make_unique<ShiftController>(g_map,g_fleet,g_arbiter,shiftFile,homes,singleRobotTrial,twoRobotTrial,trialRobot,activeRobots);
     if ((std::getenv("AGV_HOME_STATIONS") || !mode.empty()) && !homes.empty() && !g_shift->supported())
         throw std::invalid_argument("AGV_HOME_STATIONS phai dung robot ID va tram sac hop le/khong trung");
     g_commands.setShiftController(g_shift.get());
     g_commands.setSimulationMode(std::getenv("AGV_SIMULATION") && std::string(std::getenv("AGV_SIMULATION")) == "1");
+    // Named physical maps declare the firmware's fixed RFID-role contract.
+    // Small generic graphs remain usable by isolated simulations/fixtures.
+    if(!activeRobots.empty() && g_map.toJson().value("map_name",string{}).rfind("Kho AGV",0)==0) {
+        g_startupStage="doi soat layout voi firmware";
+        PhysicalLayout::validate(g_map.toJson());
+    }
     if (!g_shift->supported()) g_fleet.setAcceptingTasks(true);
+    g_startupStage="ghi checkpoint dau tien: "+runtimePath.string();
     checkpointAndPublish();
     cout << "[SHIFT] " << g_shift->snapshot().dump() << "\n";
 
@@ -982,9 +1001,17 @@ int main(int argc, char** argv) {
     mosquitto_disconnect(g_mosq);
     mosquitto_destroy(g_mosq);
     mosquitto_lib_cleanup();
-    closesocket(listenSock);
 #if defined(_WIN32)
     WSACleanup();
 #endif
     return 0;
+}
+
+int main(int argc,char** argv) {
+    try {return runCore(argc,argv);}
+    catch(const std::exception& error) {
+        std::cerr<<"[STARTUP] "<<g_startupStage<<": "<<error.what()<<"\n"
+            <<"Core dung; giu checkpoint/counter de doi soat, khong xoa hoac rewind file.\n";
+        return 1;
+    }
 }

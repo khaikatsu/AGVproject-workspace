@@ -29,7 +29,7 @@ async function main(){
     browser=await playwright.chromium.launch({headless:true,channel:process.env.AGV_BROWSER_CHANNEL||'msedge'});
     const page=await browser.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));await page.goto(base);
     await page.waitForFunction(()=>!document.querySelector('#warehouseTaskForm').hidden&& !document.querySelector('#pickupWarehouseBtn').disabled);
-    assert.equal(await page.locator('#orderModeBtn').isVisible(),false);assert.equal(await page.locator('#orderList').isVisible(),false);
+    assert.equal(await page.locator('#orderModeBtn').isVisible(),false);assert.equal(await page.locator('#missionBoard').isVisible(),true);
     for(const [button,warehouse,gate] of [['pickupWarehouseBtn','K5','G5'],['dropoffWarehouseBtn','K3','G3']]) {
       await page.selectOption('#warehouseTarget',warehouse);await page.locator('#'+button).click();
       await page.waitForFunction(()=>document.querySelector('#warehouseActionStatus').textContent.includes('Dừng tại'),null,{timeout:5000}).catch(async error=>{

@@ -2,6 +2,26 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <chrono>
+#include <atomic>
+#include <cstdio>
+
+struct AtomicCommitMetrics {
+    inline static std::atomic<long long> lastMs{0}, maxMs{0}, slowCount{0};
+};
+struct AtomicCommitTimer {
+    std::chrono::steady_clock::time_point started=std::chrono::steady_clock::now();
+    ~AtomicCommitTimer() noexcept {
+        const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
+        AtomicCommitMetrics::lastMs=elapsed;
+        auto maximum=AtomicCommitMetrics::maxMs.load();
+        while(elapsed>maximum && !AtomicCommitMetrics::maxMs.compare_exchange_weak(maximum,elapsed)) {}
+        if(elapsed>500) {
+            ++AtomicCommitMetrics::slowCount;
+            std::fprintf(stderr,"[STORAGE] Atomic commit cham: %lld ms (nguong 500 ms)\n",static_cast<long long>(elapsed));
+        }
+    }
+};
 #if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -17,6 +37,7 @@
 
 // Caller closes the temporary file before committing. Never remove the old file first.
 inline void durableReplaceFile(const std::filesystem::path& temporary,const std::filesystem::path& destination) {
+    const AtomicCommitTimer timer;
 #if defined(_WIN32)
     const auto started=GetTickCount64();
     auto retry = [&](auto operation) {

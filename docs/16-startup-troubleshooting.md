@@ -4,6 +4,12 @@
 
 CURRENT 16/10/2026: menu F5 1/2/3 chọn scope `active01`, `active02`, `active-both` của cùng Core thống nhất; không còn chọn luật trial bỏ qua pin. Tự động hóa có thể dùng `build/agv_core.exe --mode active01` (tương tự `active02`, `active-both`, `normal`). Các tham số `robot01|robot02|both` bên dưới được giữ tạm cho hồi quy lịch sử. Chọn scope không tự mở ca hoặc phát GOTO/CHARGE_START. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).
 
+### Build báo không tìm thấy `rg` — 25/10/2026
+
+Ảnh lỗi cho thấy `scripts/check-vendor.ps1` gọi `rg` trước compiler, trong khi Windows PowerShell của task VS Code không có ripgrep trong PATH. Script đã chuyển sang `Get-ChildItem` và `Select-String -SimpleMatch`, chỉ quét source/header ứng dụng và bỏ qua header JSON đã kiểm SHA256 riêng. Không cần cài thêm `rg` để build. `-VendorOnly` chỉ kiểm checksum và báo đúng phạm vi đó.
+
+Kiểm chứng bằng Windows PowerShell 5 với PATH chỉ có thư mục Windows: source hợp lệ PASS, include hỏng bị từ chối, JSON sai checksum bị từ chối cả với và không có `-VendorOnly`. Kết quả build tại [hồ sơ kiểm thử](../tests/README.md).
+
 ### Telemetry treo, lỗi/phục hồi lặp khi F5 — 14/10/2026
 
 Cấu hình F5 đã thêm `_NO_DEBUG_HEAP=1`: debug heap Windows làm cấp phát JSON lịch sử chậm, giữ lock MQTT và khiến heartbeat vượt watchdog3s. Đối chứng400task:314ms dưới GDB mặc định so với16ms khi tắt debug heap. Fixture1000task/encoder5Hz qua GDB PASS heartbeat max278ms. Không tăng timeout hoặc xóa lịch sử. [ADR-052](decisions/ADR-052-core-debug-heap-heartbeat.md).

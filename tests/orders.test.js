@@ -3,6 +3,44 @@ const assert = require('node:assert/strict');
 const {planOrder,shortestRoute} = require('../AGVwebserver/order-planner');
 const {createOrderService,SERVICE_MS} = require('../AGVwebserver/orders');
 
+test('deleting dashboard orders persists, preserves cargo holds and keeps hidden active orders supervised',async()=>{
+  const records=new Map(),commands=[];
+  records.set('held',{id:'held',status:'needs_attention',created:new Date().toISOString(),items:[
+    {number:1,pickup:'K1',dropoff:'K3',robot:'01',status:'interrupted',task_id:'old-task'}]});
+  let failSave=false;
+  const db={getOrders:()=>[...records.values()].map(order=>structuredClone(order)),saveOrder:order=>{
+    if(failSave)throw new Error('disk-test');records.set(order.id,structuredClone(order));
+  }};
+  const state={map,fleet:{agvs:[
+    liftCapable({id:'01',node:'K1',state:'IDLE',online:true,position_valid:true}),
+    liftCapable({id:'02',node:'K2',state:'IDLE',online:true,position_valid:true})
+  ],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
+  const service=createOrderService({db,getState:()=>state,getSession:()=> 'delete-test',publish:()=>{},send:async payload=>{
+    commands.push(payload);
+    return payload.cmd==='warehouse_lift'?{command_id:123}:{task_id:'new-task'};
+  }});
+  try {
+    failSave=true;assert.throws(()=>service.remove('held'),/disk-test/);assert.equal(service.list().length,1);
+    failSave=false;
+    const deleted=service.remove('held');assert.ok(deleted.deleted_at);
+    assert.deepEqual(service.remove('held'),deleted,'retry is idempotent');
+    assert.equal(service.list().length,0);assert.equal(service.list({includeDeleted:true}).length,1);
+    assert.throws(()=>service.remove('missing'),error=>error.status===404);
+    const order=service.create({pickups:[{pickup:'K2',quantity:1}],deliveries:[{dropoff:'K4',quantity:1}]});
+    await service.tick();await service.tick();
+    assert.equal(commands[0].agv_id,'02','hidden unresolved cargo still reserves robot 01');
+    service.remove(order.id);assert.equal(service.list().length,0);
+    state.fleet.agvs[1].state='ERROR';state.fleet.agvs[1].error='test-fault';
+    await service.tick();assert.equal(order.status,'needs_attention','hidden active order is still supervised');
+    await service.resolve(order.id,true);assert.equal(order.status,'closed');assert.equal(service.list().length,0);
+  } finally {await service.close();}
+  const restarted=createOrderService({db,getState:()=>null,getSession:()=> 'delete-test',send:async()=>{},publish:()=>{}});
+  try {
+    assert.equal(restarted.list().length,0,'deleted orders stay out of the list after restart');
+    assert.equal(restarted.list({includeDeleted:true}).length,2,'internal supervision records are retained');
+  } finally {await restarted.close();}
+});
+
 const liftCapable = robot=>({...robot,
   lift:{supported:true,ready:true,fresh:true,observed_node:robot.node,active:false,state:'IDLE',command_id:0},
   virtual_cargo_known:false,virtual_cargo:false});
@@ -126,6 +164,14 @@ test('multi-warehouse matching respects quantities, directed costs and validatio
   assert.throws(()=>planOrder(map,{pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K1',quantity:1}]}),/Không ghép/);
 });
 
+test('warehouse planning rejects station nodes outside K1-K6',()=>{
+  const extended=structuredClone(map);
+  extended.nodes.push({id:'MAINTENANCE',type:'station'});
+  extended.edges.push({from:'K1',to:'MAINTENANCE',weight:1},{from:'MAINTENANCE',to:'K2',weight:1});
+  assert.throws(()=>planOrder(extended,{pickups:[{pickup:'MAINTENANCE',quantity:1}],
+    deliveries:[{dropoff:'K2',quantity:1}]}),/không tồn tại/);
+});
+
 test('matching can reroute an earlier pair to minimize the whole order',()=>{
   const graph = {nodes:map.nodes,obstacles:[],edges:[
     {from:'K1',to:'K3',weight:1},{from:'K1',to:'K4',weight:2},
@@ -207,6 +253,29 @@ test('completed pickup and dropoff lifts gate movement; restart keeps unfinished
     state.fleet.tasks[2].status='completed';robot.node='G3';robot.state='IDLE';robot.task_id=null;
     await service.tick();
     assert.equal(order.status,'completed');
+    assert.deepEqual(order.items[0].task_links.map(link=>link.phase),['pickup','dropoff','exit']);
+    assert.ok(order.items[0].task_links.every(link=>link.status==='completed'));
+    const linked=service.linkTaskHistory(order.items[0].task_links.map((link,index)=>({id:index+1,core_task_id:link.task_id,core_session:link.core_session_id})));
+    assert.ok(linked.every(row=>row.order_id===order.id&&row.order_item===1));
+    assert.deepEqual(linked.map(row=>row.order_phase),['pickup','dropoff','exit']);
+  } finally {await service.close();}
+});
+
+test('persisted task references survive session adoption and never guess by target, robot, or task prefix',async()=>{
+  const stored={id:'linked-order',core_session_id:'old-session',status:'completed',created:new Date().toISOString(),items:[
+    {number:1,pickup:'K1',dropoff:'K2',robot:'01',status:'delivered',task_links:[
+      {task_id:'task-exact',core_session_id:'old-session',history_id:77,phase:'dropoff',status:'completed'}]}]};
+  const records=[structuredClone(stored)];
+  const service=createOrderService({db:{getOrders:()=>records,saveOrder:()=>{}},getState:()=>null,getSession:()=> 'new-session',send:async()=>{},publish:()=>{}});
+  try {
+    const rows=service.linkTaskHistory([
+      {id:77,core_task_id:'task-exact',core_session:'new-session'},
+      {id:78,core_task_id:'task-exact',core_session:'another-session'},
+      {id:77,core_task_id:'task-exact-other',core_session:'new-session'}]);
+    assert.equal(rows[0].order_id,stored.id);assert.equal(rows[0].order_phase,'dropoff');
+    assert.equal(rows[1].order_id,undefined);assert.equal(rows[2].order_id,undefined);
+    service.remove(stored.id);
+    assert.ok(service.linkTaskHistory([{id:77,core_task_id:'task-exact',core_session:'new-session'}])[0].order_deleted_at);
   } finally {await service.close();}
 });
 
@@ -220,8 +289,8 @@ test('only dispatched unresolved cargo reserves a robot; operator resolution rel
   try {
     const order=service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]});await service.tick();
     assert.match(order.items[0].waiting_reason,/old-cargo/);assert.equal(commands.length,0);
-    service.resolve('old-cargo',true);await service.tick();
-    assert.equal(commands.length,1);assert.equal(order.items[0].status,'to_pickup');
+    await service.resolve('old-cargo',true);await service.tick();
+    assert.equal(commands.length,2);assert.equal(commands[0].cmd,'reconcile_test_cargo');assert.equal(order.items[0].status,'to_pickup');
     assert.equal(service.list()[0].id,order.id,'newest order stays first after reading history');
   } finally {await service.close();}
 });
@@ -232,7 +301,7 @@ test('robot01 warehouse test never dispatches stored orders or accepts a new ord
   const queued={id:'old-queued',status:'active',items:[{number:1,pickup:'K1',dropoff:'K2',robot:'01',status:'queued',task_id:null}],core_session_id:'test-session'};
   const service=createOrderService({db:{getOrders:()=>[queued],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'test-session',
     send:async payload=>commands.push(payload),publish:()=>{}});
-  try {await service.tick();assert.equal(commands.length,0);assert.throws(()=>service.create({pickups:[],deliveries:[]}),/Lấy hàng \/ Hạ hàng/);}
+  try {await service.tick();assert.equal(commands.length,0);assert.throws(()=>service.create({pickups:[],deliveries:[]}),/Nâng kệ \/ Hạ kệ/);}
   finally {await service.close();}
 });
 
@@ -265,7 +334,9 @@ test('offline robot interrupts lift and cannot mark cargo delivered',async()=>{
     await service.tick();await service.tick();assert.equal(order.items[0].status,'pickup_lift');
     robot.online = false;
     await service.tick();assert.equal(order.status,'needs_attention');assert.equal(order.items[0].status,'interrupted');
-    assert.throws(()=>service.resolve(order.id,false),/Cần xác nhận/);
-    assert.equal(service.resolve(order.id,true).status,'closed');
+    await assert.rejects(()=>service.resolve(order.id,false),/Cần xác nhận/);
+    await assert.rejects(()=>service.resolve(order.id,true),/Dừng xe/);
+    robot.online=true;
+    assert.equal((await service.resolve(order.id,true)).status,'closed');
   } finally {await service.close();}
 });

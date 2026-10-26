@@ -30,8 +30,21 @@ void exercise(const std::string& id){
     d.liftElapsedMs=5000;fleet.observeMotionDiagnostic(id,d);
     CHECK(robot()["virtual_cargo"]==true&&robot()["virtual_cargo_known"]==true&&robot()["state"]=="IDLE");
     fleet.observeMotionDiagnostic(id,d);CHECK(commands.back()["cmd"]=="LIFT_UP");
+    WebCommands web(map,fleet,mutex);
+    json reset={{"cmd","reconcile_test_cargo"},{"physically_clear",true},{"robots",json::array({{{"id",id},{"lift_command_id",command}}})}};
+    CHECK(!web.execute(reset)["ok"].get<bool>()); // No stopped proof bound to encoder boot yet.
+    d.encoderBoot=1;d.encoderConnection=1;fleet.observeMotionDiagnostic(id,d);
+    auto wrong=reset;wrong["robots"][0]["lift_command_id"]=command+1;
+    CHECK(!web.execute(wrong)["ok"].get<bool>()&&robot()["virtual_cargo"]==true);
+    auto invalid=reset;invalid["robots"].push_back({{"id",id=="01"?"02":"01"},{"lift_command_id",0}});
+    CHECK(!web.execute(invalid)["ok"].get<bool>()&&robot()["virtual_cargo"]==true);
+    const auto writes=commands.size();const auto zonesBefore=mutex.toJson();
+    CHECK(web.execute(reset)["ok"]==true);CHECK(robot()["virtual_cargo"]==false&&robot()["virtual_cargo_known"]==true);
+    CHECK(web.execute(reset)["ok"]==true);CHECK(commands.size()==writes&&mutex.toJson()==zonesBefore);
+    fleet.observeMotionDiagnostic(id,d);CHECK(robot()["virtual_cargo"]==false); // Old MCU DONE_UP cannot undo operator reconciliation.
     CHECK(fleet.startLift(id,"K5",false,command).empty());fleet.reportAck(id,command);
-    CHECK(robot()["virtual_cargo"]==true);
+    CHECK(robot()["virtual_cargo"]==false);
+    CHECK(!web.execute(reset)["ok"].get<bool>()); // A new servo cycle invalidates the old confirmation.
     d.liftCommandId=command;d.liftBusy=d.taskActive=true;d.liftState="LOWERING";d.state="AGV_UNLOADING";
     fleet.observeMotionDiagnostic(id,d);CHECK(robot()["state"]=="LOWERING");
     std::this_thread::sleep_for(std::chrono::milliseconds(5010));
@@ -41,6 +54,13 @@ void exercise(const std::string& id){
     CHECK(fleet.startLift(id,"K5",true,command).empty());
     d.liftCommandId=command;d.liftState="INTERRUPTED";d.cargoKnown=false;fleet.observeMotionDiagnostic(id,d);
     CHECK(robot()["state"]=="ERROR"&&robot()["virtual_cargo_known"]==false&&commands.back()["cmd"]=="WAIT");
+    d.state="AGV_SAFE_STOP";d.error="SERVO_INTERRUPTED";d.encoderConnection=2;fleet.observeMotionDiagnostic(id,d);
+    reset["robots"][0]["lift_command_id"]=command;
+    CHECK(!web.execute(reset)["ok"].get<bool>());
+    d.encoderConnection=1;fleet.observeMotionDiagnostic(id,d);
+    const auto fault=robot()["error"];const auto stoppedWrites=commands.size();
+    CHECK(web.execute(reset)["ok"]==true&&robot()["state"]=="ERROR"&&robot()["error"]==fault);
+    CHECK(robot()["virtual_cargo"]==false&&robot()["virtual_cargo_known"]==true&&commands.size()==stoppedWrites);
     for(unsigned hazard=0;hazard<3;++hazard){
         MutexArbiter zones(map.mutexZones());FleetManager isolated(map,zones);isolated.setTrialRobot(id);
         isolated.updateTelemetry(id,"K5",80,false);isolated.bindEncoderSession(id,10,1,100);
@@ -55,6 +75,6 @@ void exercise(const std::string& id){
         CHECK(isolated.toJson()["agvs"][0]["state"]=="ERROR"); // Boot change, wrong node, unsolicited servo.
         CHECK(isolated.toJson()["agvs"][0]["virtual_cargo_known"]==false);
     }
-    std::cout<<"PASS Core servo: capability/ID/node, ACK not done, wrong/early result, motor lock, 5s up/down cargo, interruption\n";
+    std::cout<<"PASS Core servo/reconciliation "<<id<<": matched lift, 5s up/down, batch CAS/stop proof, no MQTT or mutex/fault reset, old DONE ignored\n";
 }
 int main(){try{exercise("01");exercise("02");}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

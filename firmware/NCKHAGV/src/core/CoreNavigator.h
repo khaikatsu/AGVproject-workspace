@@ -53,11 +53,12 @@ public:
             ? Config::RIGHT_TURN_CAPTURE_PWM : Config::LEFT_TURN_CAPTURE_PWM;
     }
     bool precisionPivot() const {
-        return g1TurnAroundPrecision() || recoveringLine() ||
+        return g1TurnAroundPrecision() || isDockingTurn() || recoveringLine() ||
             (turnCaptureEnabled() && phase_ == Phase::Turning && oldLineDeparted_);
     }
     int precisionPivotPwm() const {
         if (g1TurnAroundPrecision()) return Config::G1_TURN_AROUND_PWM;
+        if (isDockingTurn()) return (phase_ == Phase::TurnCapture) ? Config::GS_ALIGN_PWM : Config::GS_TURN_PWM;
         // Turn capture uses its direction-specific PWM; line-loss recovery keeps its own limit.
         return (phase_ == Phase::TurnCapture || (phase_ == Phase::Turning &&
                 turnCaptureEnabled() && oldLineDeparted_) ||
@@ -80,13 +81,19 @@ public:
     const char* nextNode() const;
     uint8_t pathIndex() const { return index_; }
     uint8_t pathLength() const { return length_; }
+    bool reverseAligned() const {
+        return !reverseAfterTurn_[index_] || Config::REVERSE_ALIGN_FORWARD_MS == 0 || reverseAligned_;
+    }
     bool segmentReverse() const {
         return active() && index_ < length_ && (turns_[index_] == RouteTurn::Reverse ||
-            (reverseAfterTurn_[index_] && (phase_ == Phase::Following ||
+            (reverseAfterTurn_[index_] && reverseAligned() && (phase_ == Phase::Following ||
              (phase_ == Phase::WaitingGrant && turns_[index_] == RouteTurn::Straight))));
     }
 private:
     enum class Phase { Idle, WaitingGrant, Turning, TurnCapture, TurnAroundCapture, Following, StationDwell, StationTurning, Fault };
+    bool isDockingTurn() const {
+        return RoutePlanner::reverseHome(current_, nextNode());
+    }
     bool g1TurnAroundPrecision() const {
         return Config::G1_TURN_AROUND_PWM > 0 && phase_ == Phase::Turning && index_ < length_ &&
             turns_[index_] == RouteTurn::TurnAround && std::strcmp(current_, "G1") == 0;
@@ -142,4 +149,6 @@ private:
     uint32_t obstaclePausedAtMs_ = 0;
     bool networkPaused_ = false;
     uint32_t networkPausedAtMs_ = 0;
+    bool reverseAligned_ = false;
+    uint32_t reverseAlignStartedMs_ = 0;
 };

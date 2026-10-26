@@ -1,6 +1,7 @@
 #pragma once
 #include "core/FLeetmanager.hpp"
-#include "commands/CommandIds.hpp" // filesystem/atomic Windows replacement, không cấp command ID ở đây
+#include "utils/AtomicFile.hpp"
+#include <fstream>
 #include <map>
 
 // Chỉ gọi dưới g_stateMtx. Lưu chế độ ca, tuyệt đối không lưu/khôi phục vị trí robot.
@@ -8,7 +9,7 @@ class ShiftController {
 public:
     ShiftController(MapGraph& map, FleetManager& fleet, MutexArbiter& arbiter,
                     std::filesystem::path file,
-                    std::unordered_map<std::string,std::string> homes = {{"01","S1"},{"02","S2"}},
+                    std::unordered_map<std::string,std::string> homes = PhysicalLayout::homes(),
                     bool singleRobotTrial = false, bool twoRobotTrial = false,
                     std::string trialRobotId = "",
                     std::unordered_set<std::string> activeRobotIds = {})
@@ -24,14 +25,14 @@ public:
                 !assigned.insert(home.second).second) supported_ = false;
         }
         if (singleRobotTrial_ &&
-            (homes_.size() != 1 || homes_.count("01") != 1 || homes_.at("01") != "S1")) supported_ = false;
+            (homes_.size() != 1 || homes_.count("01") != 1 || homes_.at("01") != PhysicalLayout::home("01"))) supported_ = false;
         if (twoRobotTrial_ &&
             (homes_.size() != 2 || homes_.count("01") != 1 || homes_.count("02") != 1 ||
-             homes_.at("01") != "S1" || homes_.at("02") != "S2")) supported_ = false;
+             homes_.at("01") != PhysicalLayout::home("01") || homes_.at("02") != PhysicalLayout::home("02"))) supported_ = false;
         if (!trialRobotId_.empty() &&
             ((trialRobotId_ != "01" && trialRobotId_ != "02") || singleRobotTrial_ || twoRobotTrial_ ||
              homes_.size() != 1 || !homes_.count(trialRobotId_) ||
-             homes_.at(trialRobotId_) != (trialRobotId_ == "01" ? "S1" : "S2"))) supported_ = false;
+             homes_.at(trialRobotId_) != PhysicalLayout::home(trialRobotId_))) supported_ = false;
         if (!activeRobotIds_.empty()) {
             if (singleRobotTrial_ || twoRobotTrial_ || !trialRobotId_.empty() || homes_.size() != activeRobotIds_.size())
                 supported_ = false;
@@ -79,7 +80,9 @@ public:
     }
     void tick() {
         if (!supported_ || phase_ == "RUNNING") return;
-        auto status = snapshot();
+        auto fleet = fleet_.toJson();
+        const auto zones = arbiter_.toJson();
+        auto status = snapshot(fleet,zones);
         if (trialRobotId_ == "01") {
             bool ready = status.value("inactive_robots_ready",true);
             for (const auto& robot : status["robots"]) if (robot.value("id","") == "01")
@@ -92,7 +95,6 @@ public:
             return; // Chon pham vi luc khoi dong khong duoc tu phat GOTO/CHARGE_START.
         }
         if (phase_ == "CLOSED" && !status["all_home"].get<bool>()) transition("CLOSING");
-        const auto fleet = fleet_.toJson();
         const auto homesInShift = knownHomes(fleet);
         const bool oneKnownRobot = homesInShift.size() == 1 && fleet["agvs"].size() == 1;
         const bool unmeasured = oneKnownRobot && !fleet["agvs"][0].value("battery_measured",false);
@@ -105,7 +107,7 @@ public:
         // Thứ tự ID ổn định; mutex và đặt chỗ trạm vẫn do các module hiện có quản lý.
         std::map<std::string,std::string> ordered(homes_.begin(),homes_.end());
         for (const auto& home : ordered) {
-            auto robots = fleet_.toJson()["agvs"];
+            const auto& robots = fleet["agvs"];
             auto a = std::find_if(robots.begin(),robots.end(),[&](const json& r){return r["id"] == home.first;});
             if (a == robots.end()) continue;
             if (a->value("node","") != home.second || !a->value("position_valid",false) ||
@@ -117,9 +119,13 @@ public:
                 if (error.empty() && a->value("node","") == home.second) parked_.insert(home.first);
             }
         }
-        if (snapshot()["all_home"].get<bool>() && phase_ == "CLOSING") transition("CLOSED");
+        // returnToHome mutates state: refresh once after the loop, not per robot.
+        if (snapshot(fleet_.toJson(),zones)["all_home"].get<bool>() && phase_ == "CLOSING") transition("CLOSED");
     }
     json snapshot() {
+        return snapshot(fleet_.toJson(),arbiter_.toJson());
+    }
+    json snapshot(const json& fleet,const json& zones) {
         json result = {{"supported",supported_},{"single_robot_trial",singleRobotTrial_},{"two_robot_trial",twoRobotTrial_},
             {"trial_robot_id",trialRobotId_},{"supervised_trial",twoRobotTrial_ || !trialRobotId_.empty()},
             {"test_mode",!trialRobotId_.empty() ? "robot" + trialRobotId_ : twoRobotTrial_ ? "both" : singleRobotTrial_ ? "legacy01" : "normal"},
@@ -134,12 +140,11 @@ public:
             for (const auto& id : active) result["active_robot_ids"].push_back(id);
         }
         if (!supported_) return result;
-        const auto fleet = fleet_.toJson(), zones = arbiter_.toJson();
         const auto homesInShift = knownHomes(fleet);
         const auto participatingCount = std::count_if(fleet["agvs"].begin(),fleet["agvs"].end(),[&](const json& robot) {
             return activeRobotIds_.empty() || activeRobotIds_.count(robot.value("id",std::string{}));
         });
-        bool allHome = !homesInShift.empty() && homesInShift.size() == participatingCount;
+        bool allHome = !homesInShift.empty() && homesInShift.size() == static_cast<size_t>(participatingCount);
         if (!trialRobotId_.empty()) allHome = homesInShift.size() == 1;
         if (twoRobotTrial_) allHome = allHome && homesInShift.size() == 2;
         bool batteriesReady = true, robot01Ready = false;
@@ -188,7 +193,7 @@ public:
             for (const auto& robot : fleet["agvs"]) {
                 const auto id = robot.value("id",std::string{});
                 if (id == trialRobotId_) continue;
-                const std::string home = id == "01" ? "S1" : id == "02" ? "S2" : "";
+                const std::string home = PhysicalLayout::home(id);
                 bool ownsZone = false;
                 for (const auto& zone : zones.items()) if (zone.value().value("owner",std::string{}) == id) ownsZone = true;
                 const bool safe = !home.empty() && robot.value("online",false) && robot.value("position_valid",false) &&
@@ -208,7 +213,7 @@ public:
             for (const auto& robot : fleet["agvs"]) {
                 const auto id = robot.value("id",std::string{});
                 if (activeRobotIds_.count(id)) continue;
-                const std::string home = id == "01" ? "S1" : id == "02" ? "S2" : "";
+                const std::string home = PhysicalLayout::home(id);
                 bool ownsZone = false;
                 for (const auto& zone : zones.items()) if (zone.value().value("owner",std::string{}) == id) ownsZone = true;
                 const bool safe = !home.empty() && robot.value("online",false) && robot.value("position_valid",false) &&

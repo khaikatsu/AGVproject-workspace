@@ -27,9 +27,8 @@
 #include <functional>
 #include <chrono>
 #include "utils/Identifiers.hpp"
-#include "utils/json.hpp"
+#include "utils/CoreTypes.hpp"
 
-using json = nlohmann::json;
 
 class MutexArbiter {
 public:
@@ -50,7 +49,8 @@ public:
     }
 
     // Xe agvId muốn vào zoneId.
-    // true = được cấp quyền ngay lập tức. false = phải chờ (đã xếp hàng đợi).
+    // Blocked/invalid requests are rejected without enqueue; firmware retries
+    // every second. An occupied, unblocked zone retains FIFO waiters.
     bool requestZone(const std::string& zoneId, const std::string& agvId) {
         std::lock_guard<std::mutex> lk(mtx_);
         auto it = owner_.find(zoneId);

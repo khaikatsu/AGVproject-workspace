@@ -12,6 +12,7 @@ const {createSecurity} = require('./security');
 const {createOrderService,SERVICE_MS,LIFT_READY_TIMEOUT_MS,LIFT_RESULT_TIMEOUT_MS} = require('./orders');
 const {createWarehouseActions}=require('./warehouse-actions');
 const {createWarehouseInventory}=require('./warehouse-inventory');
+const {createLocationNames}=require('./location-names');
 const INCIDENT_RE = /^AGV_(\S+)\s+(BAO LOI|KHONG ACK lenh|MAT KET NOI)/;
 const emptyState = () => ({map:{nodes:[],edges:[],obstacles:[]},fleet:{agvs:[],pending_tasks:[],tasks:[]},mutex:{},logs:[]});
 function batteryForDisplay(agv) {
@@ -36,6 +37,7 @@ function limit(req,fallback = 200,max = 1000) {
 }
 function createGateway(options = {}) {
     const db = options.db || createDatabase(options.dbPath);
+    const locationNames = createLocationNames(db);
     const coreUrl = options.coreUrl || process.env.AGV_WS_URL || 'ws://127.0.0.1:8080';
     const timeoutMs = options.commandTimeoutMs || Number(process.env.AGV_COMMAND_TIMEOUT_MS) || 5000;
     const staleMs = options.staleMs || 5000;
@@ -83,11 +85,20 @@ function createGateway(options = {}) {
     const fresh = () => connected && receivedAt > 0 && Date.now() - receivedAt <= staleMs;
     const supported = () => latestState.protocol_version === 1;
     const ready = () => fresh() && latestState.storage_healthy !== false;
-    const browserState = () => ({...latestState,agv_connected:connected,core_ready:ready(),protocol_supported:supported(),
+    const browserState = () => {
+        const history=orders.linkTaskHistory(db.getTaskHistory(50));
+        const referenced=new Set(history.map(row=>row.order_id).filter(Boolean));
+        const visibleOrders=orders.list({includeDeleted:true})
+            .filter(order=>!order.deleted_at||['active','needs_attention'].includes(order.status));
+        const namesReason=locationNamesBlockReason();
+        return {...latestState,agv_connected:connected,core_ready:ready(),protocol_supported:supported(),
         state_received_at:receivedAt ? new Date(receivedAt).toISOString() : null,stale_after_ms:staleMs,
         // Keep each broadcast immutable: the scheduler mutates order/item objects.
-        task_history:db.getTaskHistory(50),orders:JSON.parse(JSON.stringify(orders.list().slice(0,50))),
-        warehouse_actions:JSON.parse(JSON.stringify(warehouseActions.list())),warehouse:inventory.snapshot()});
+        task_history:history,orders:JSON.parse(JSON.stringify(visibleOrders.filter((order,index)=>index<50||referenced.has(order.id)))),
+        warehouse_actions:JSON.parse(JSON.stringify(warehouseActions.list())),warehouse:inventory.snapshot(),
+        location_names:{...locationNames.snapshot(),can_edit:ready()&&supported()&&latestState.mqtt_connected!==false&&!namesReason,
+            reason:namesReason}};
+    };
     function broadcast(extra = {},positionChanged = false) {
         Object.assign(broadcastExtra,extra);
         if (broadcastTimer) {
@@ -139,7 +150,7 @@ function createGateway(options = {}) {
         broadcast({},positionChanged);
         if(latestState.shift?.phase==='RUNNING')inventory.observeShift(latestState,session);
         void Promise.all([orders.tick(),warehouseActions.tick()]).then(()=>{
-            inventory.observeShift(latestState,session,{orders:orders.list(),actions:warehouseActions.list()});
+            inventory.observeShift(latestState,session,{orders:orders.list({includeDeleted:true}),actions:warehouseActions.list()});
         }).catch(error=>console.error('[WAREHOUSE]',error.message));
     }
     function failRequests(message) {
@@ -208,10 +219,25 @@ function createGateway(options = {}) {
     }
     const inventory=createWarehouseInventory({db,publish:()=>broadcast()});
     const orders = createOrderService({db,getState:()=>ready() && supported() ? latestState : null,
-        getSession:()=>session,send:command,publish:()=>broadcast(),inventory});
+        getSession:()=>session,send:command,publish:()=>broadcast(),inventory,getLocationNames:locationNames.snapshot});
     const warehouseActions=createWarehouseActions({getState:()=>ready()&&supported()?latestState:null,
       getSession:()=>session,send:command,publish:()=>broadcast(),inventory});
     const route = fn => (req,res,next) => Promise.resolve().then(()=>fn(req,res)).catch(next);
+    function locationNamesBlockReason() {
+        if (latestState.shift?.phase!=='CLOSED') return 'Đóng ca trước khi đổi tên kho/trạm.';
+        if (requests.size || latestState.fleet.pending_tasks.length ||
+            latestState.fleet.tasks.some(task=>['pending','dispatched'].includes(task.status)) ||
+            latestState.fleet.agvs.some(robot=>!['IDLE','CHARGING'].includes(robot.state) || robot.task_id || robot.path?.length ||
+                robot.error || robot.uncertain_path?.length || robot.cancel_waiting_for_node || robot.replan_waiting_for_node || robot.lift?.active || robot.virtual_cargo===true))
+            return 'Chờ xe rảnh và hoàn tất mọi nhiệm vụ/lệnh đang xử lý.';
+        if (Object.values(latestState.mutex).some(zone=>zone.owner)) return 'Chờ các vùng giao nhau được trả quyền.';
+        if (orders.list({includeDeleted:true}).some(order=>['active','needs_attention'].includes(order.status)) ||
+            warehouseActions.list().some(action=>!['completed','interrupted'].includes(action.status)) ||
+            inventory.snapshot().moves?.some(move=>['reserved','carrying','needs_attention'].includes(move.status)))
+            return 'Hoàn tất hoặc đối soát các lượt chuyển kệ trước khi đổi tên.';
+        return '';
+    }
+    const namedTarget = (value,body) => target(locationNames.resolve(value,body?.location_names_revision));
     function target(value) {
         const node = id(value,'target');
         if (!latestState.map.nodes.some(n=>n.id === node)) throw httpError(404,'Node không tồn tại trong bản đồ core');
@@ -219,7 +245,7 @@ function createGateway(options = {}) {
     }
     async function task(req,res,robot = null) {
         requireCore();
-        const destination = target(req.body.target),prio = number(req.body.priority ?? 0,'priority',0,100,true);
+        const destination = namedTarget(req.body.target,req.body),prio = number(req.body.priority ?? 0,'priority',0,100,true);
         if (robot) id(robot);
         const data = await command({cmd:robot ? 'direct_goto' : 'add_task',target:destination,priority:prio,...(robot ? {agv_id:robot} : {})});
         res.json({ok:true,...data});
@@ -229,9 +255,19 @@ function createGateway(options = {}) {
       warehouse_lift_result_timeout_ms:LIFT_RESULT_TIMEOUT_MS,warehouse_test_actions:true,agv_ws_url:coreUrl,time:new Date().toISOString()}));
     app.get('/api/state',(req,res)=>res.json(browserState()));
     app.get('/api/shift',(req,res)=>res.json(latestState.shift || {supported:false,phase:'UNAVAILABLE'}));
-    app.post('/api/shift/start',route(async (req,res)=>res.json({ok:true,...await command({cmd:'start_shift'})})));
+    app.post('/api/shift/start',route(async (req,res)=>{
+        if(req.body.location_names_revision!==undefined)locationNames.assertRevision(req.body.location_names_revision);
+        res.json({ok:true,...await command({cmd:'start_shift'})});
+    }));
     app.post('/api/shift/end',route(async (req,res)=>res.json({ok:true,...await command({cmd:'end_shift'})})));
     app.get('/api/map',(req,res)=>res.json(latestState.map));
+    app.get('/api/map/location-names',(req,res)=>res.json(browserState().location_names));
+    app.post('/api/map/location-names/swap',route((req,res)=>{
+        requireCore();
+        const reason=locationNamesBlockReason();if(reason)throw httpError(409,reason);
+        const saved=locationNames.swap(req.body,latestState.map);
+        broadcast({},true);res.json({ok:true,location_names:{...saved,can_edit:true,reason:''}});
+    }));
     app.get('/api/mutex',(req,res)=>res.json(latestState.mutex));
     app.post('/api/mutex/:zone/confirm-clear',route(async(req,res)=>{
         if (req.body.physically_clear !== true) throw httpError(400,'Cần xác nhận xe đã dừng và vùng trống');
@@ -240,12 +276,19 @@ function createGateway(options = {}) {
     }));
     app.get('/api/agvs',(req,res)=>res.json(latestState.fleet.agvs));
     app.get('/api/tasks',(req,res)=>res.json(latestState.fleet.pending_tasks));
-    app.get('/api/tasks/history',route((req,res)=>res.json(db.getTaskHistory(limit(req)))));
+    app.get('/api/tasks/history',route((req,res)=>res.json(orders.linkTaskHistory(db.getTaskHistory(limit(req))))));
+    app.delete('/api/tasks/history/:id',route((req,res)=>{
+        if(!/^[1-9]\d*$/.test(req.params.id))throw httpError(400,'history id phải là số nguyên dương');
+        const historyId=number(Number(req.params.id),'history id',1,Number.MAX_SAFE_INTEGER,true);
+        if(!db.deleteTaskHistory(historyId))throw httpError(404,'Không tìm thấy dòng lịch sử');
+        broadcast();res.json({ok:true,id:historyId,scope:'dashboard'});
+    }));
     app.get('/api/orders',(req,res)=>res.json(orders.list()));
     app.get('/api/warehouse',(req,res)=>res.json(inventory.snapshot()));
     app.post('/api/warehouse/configure',route((req,res)=>{
         requireCore();
-        const unresolved=orders.list().some(order=>order.status==='active')||
+        if(req.body.location_names_revision!==undefined)locationNames.assertRevision(req.body.location_names_revision);
+        const unresolved=orders.list({includeDeleted:true}).some(order=>order.status==='active')||
             warehouseActions.list().some(action=>!['completed','interrupted'].includes(action.status));
         inventory.configure(req.body,latestState,unresolved);res.json({ok:true,warehouse:inventory.snapshot()});
     }));
@@ -256,9 +299,21 @@ function createGateway(options = {}) {
         if(req.query.download==='1')res.attachment(`warehouse-${report.id}.json`);
         res.json(report);
     }));
-    app.post('/api/agvs/:id/warehouse-action',route(async(req,res)=>{requireCore();res.status(201).json({ok:true,action:await warehouseActions.create(id(req.params.id),req.body)});}));
-    app.post('/api/orders',route((req,res)=>{requireCore();res.status(201).json({ok:true,order:orders.create(req.body)});}));
-    app.post('/api/orders/:id/resolve',route((req,res)=>res.json({ok:true,order:orders.resolve(id(req.params.id,'order id'),req.body.physically_clear)})));
+    app.post('/api/agvs/:id/warehouse-action',route(async(req,res)=>{
+        requireCore();const body={...req.body,warehouse:locationNames.resolve(req.body.warehouse,req.body.location_names_revision)};
+        res.status(201).json({ok:true,action:await warehouseActions.create(id(req.params.id),body)});
+    }));
+    app.post('/api/orders',route((req,res)=>{
+        requireCore();
+        if(req.body.location_names_revision!==undefined)locationNames.assertRevision(req.body.location_names_revision);
+        const body={...req.body};
+        if(req.body.location_names_revision!==undefined)for(const [field,key] of [['pickups','pickup'],['deliveries','dropoff']])if(Array.isArray(body[field]))
+            body[field]=body[field].map(line=>({...line,[key]:locationNames.resolve(line?.[key],req.body.location_names_revision)}));
+        res.status(201).json({ok:true,order:orders.create(body)});
+    }));
+    app.post('/api/orders/:id/resolve',route(async(req,res)=>res.json({ok:true,order:await orders.resolve(
+        id(req.params.id,'order id'),req.body.physically_clear,req.body.expected_revision)})));
+    app.delete('/api/orders/:id',route((req,res)=>res.json({ok:true,...orders.remove(id(req.params.id,'order id')),scope:'dashboard'})));
     app.get('/api/agvs/:id/history',route((req,res)=>res.json(db.getAgvHistory(id(req.params.id),limit(req)))));
     app.get('/api/logs',route((req,res)=>res.json(db.getRecentSystemLogs(limit(req,100)))));
     app.post('/api/tasks',route((req,res)=>task(req,res)));

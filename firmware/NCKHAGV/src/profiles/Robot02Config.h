@@ -42,6 +42,14 @@
 
 // Rieng quay dau 180 do tai G1: giam 30 PWM truoc trim.
 #define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 20)
+// Tốc độ xoay tại GS2 khi quay trái để lùi vào base S2 (giảm tốc để bắt chuẩn 010 không văng quán tính)
+#define AGV_GS_TURN_PWM 170
+// Tốc độ nhích vi chỉnh bắt chuẩn 010 tại GS2 khi vào TurnCapture
+#define AGV_GS_ALIGN_PWM 155
+// Thời gian hãm dừng xác nhận chuẩn 010 tại GS2 trước khi lùi vào base
+#define AGV_GS_CONFIRM_MS 100
+// Thời gian tiến thêm bám line PD (ms) sau khi bắt line tại GS2 để nắn thẳng xe trước khi lùi vào S2 (1000 - 2000ms)
+#define AGV_REVERSE_ALIGN_FORWARD_MS 1500
 // Xac nhan line sau quay 180 do; dong bo hai xe.
 #define AGV_TURN_AROUND_CONFIRM_MS 100
 
