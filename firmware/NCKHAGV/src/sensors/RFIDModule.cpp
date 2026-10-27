@@ -13,6 +13,7 @@ bool RFIDModule::validUid(const char* uid) {
 void RFIDModule::begin() {
     SPI.begin(Config::RFID_SCK_PIN, Config::RFID_MISO_PIN, Config::RFID_MOSI_PIN, Config::RFID_SS_PIN);
     reader_.PCD_Init();
+    reader_.PCD_SetAntennaGain(MFRC522::RxGain_max);
     for (size_t i = 0; i < Config::RFID_NODES.size(); ++i) {
         const char* uid = Config::RFID_NODES[i].uid;
         if (!uid[0]) continue;
@@ -44,7 +45,14 @@ bool RFIDModule::readCard() {
     byte atqa[2];
     byte atqaLength = sizeof(atqa);
     const auto presence = reader_.PICC_WakeupA(atqa, &atqaLength);
-    if (presence != MFRC522::STATUS_OK && presence != MFRC522::STATUS_COLLISION) return false;
+    if (presence != MFRC522::STATUS_OK && presence != MFRC522::STATUS_COLLISION) {
+        if (!noCardSinceMs_) noCardSinceMs_ = millis();
+        else if (static_cast<uint32_t>(millis() - noCardSinceMs_) >= 100) {
+            lastNode_[0] = '\0';
+        }
+        return false;
+    }
+    noCardSinceMs_ = 0;
     if (!reader_.PICC_ReadCardSerial()) return false;
     if (reader_.uid.size != 4 && reader_.uid.size != 7 && reader_.uid.size != 10) {
         reader_.PICC_HaltA();

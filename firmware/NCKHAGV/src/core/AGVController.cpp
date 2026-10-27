@@ -22,6 +22,9 @@ void AGVController::updateSonars() {
 }
 void AGVController::logSonars() {
     if (!Config::DEBUG_ENABLED || Config::REAR_ULTRASONIC_ECHO_PIN < 0) return;
+    static uint32_t lastSonarLogMs = 0;
+    if (millis() - lastSonarLogMs < 1000) return;
+    lastSonarLogMs = millis();
     const auto print = [](const char* side, const SensorModule& sensor, bool active, int trigPin, int echoPin) {
         const auto d = sensor.diagnostic();
         Serial.printf("[SONAR] side=%s active=%d trig=%d echoPin=%d echo=%d waiting=%d rise=%d ready=%d pulse_us=%lu result_age_ms=%lu triggers=%lu edges=%lu result=%s valid=%d cm=%.2f\n",
@@ -233,6 +236,7 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
             control_.safeStop(lockReason);
             return;
         }
+        rfid_.clearLastNode();
         if (route.count && !navigator_.start(control_.currentNode(), command, route, millis(), trialRoute, true))
             control_.safeStop(ErrorCode::InvalidCommand);
         return;
@@ -275,9 +279,13 @@ void AGVController::update() {
         !(Config::ULTRASONIC_MOTION_GUARD && Config::REAR_ULTRASONIC_ECHO_PIN >= 0 && sonars_.acquiring())) {
         MotorAction early = MotorAction::Stop;
         const ControlInput earlyInput = input();
-        if (navigator_.refreshFollowing(earlyInput,early))
-            movement_.apply(early, false, Config::LINE_RECOVERY_PWM, false,
+        if (navigator_.refreshFollowing(earlyInput,early)) {
+            movement_.apply(early, navigator_.precisionPivot(), navigator_.precisionPivotPwm(), false,
                 {navigator_.forwardLineTracking(), earlyInput.linePattern, earlyInput.now});
+            if (startupBoostActive_ && currentBoostPwm_ > 0) {
+                motor_.applyStartupBoost(currentBoostPwm_);
+            }
+        }
     }
     // A stationary pivot cannot arrive at a new route node. Defer blocking
     // RC522 transactions until the 180-degree turn and STOP confirmation finish.
@@ -446,6 +454,7 @@ void AGVController::update() {
     if (navigator_.state() == AGV_SAFE_STOP ||
         (!navigator_.active() && control_.state() != AGV_MOVING)) movement_.stop();
     const MotorAction motorAction = movement_.action();
+    applyStartupBoostCheck(motorAction);
     const bool motionLog = motorAction != lastMotorAction_ && (!Config::FAST_LINE_RESPONSE ||
         motorAction == MotorAction::Stop ||
         static_cast<uint32_t>(millis()-lastMotionLogMs_) >= Config::MOTION_LOG_INTERVAL_MS);
@@ -577,4 +586,91 @@ void AGVController::publishTelemetry() {
     snapshot.virtualCargoKnown=lift_.cargoKnown();snapshot.virtualCargo=lift_.cargo();
     mqtt_.publishStatus(snapshot);
     lastTelemetryMs_ = snapshot.uptimeMs;
+}
+
+void AGVController::applyStartupBoostCheck(MotorAction motorAction) {
+    if (!Config::ENCODER_ENABLED || Config::STARTUP_BOOST_PWM <= 0) {
+        startupBoostActive_ = false;
+        currentBoostPwm_ = 0;
+        motionCommandStartedMs_ = 0;
+        lastBoostGroup_ = MotionGroup::Stop;
+        return;
+    }
+    const MotionGroup curGroup = getMotionGroup(motorAction);
+    const uint32_t curLeft = encoder_.leftTicks();
+    const uint32_t curRight = encoder_.rightTicks();
+
+    // Khi dung dong co: reset toan bo trang thai de-pa
+    if (curGroup == MotionGroup::Stop || (motor_.leftDuty() == 0 && motor_.rightDuty() == 0)) {
+        startupBoostActive_ = false;
+        currentBoostPwm_ = 0;
+        motionCommandStartedMs_ = 0;
+        startupLeftTicks_ = curLeft;
+        startupRightTicks_ = curRight;
+        lastBoostGroup_ = MotionGroup::Stop;
+        return;
+    }
+
+    // Khi nhom hanh dong thay doi (VD: tu dung sang lui, tu lui sang tien, hoac tu tien sang quay):
+    // Khoi dong lai cua so giam sat ket banh cho huong chuyen dong moi.
+    // Giu nguyen timer khi chi vi chinh bam line (Backward <-> ReverseCorrectLeft <-> ReverseCorrectRight).
+    if (motionCommandStartedMs_ == 0 || curGroup != lastBoostGroup_) {
+        motionCommandStartedMs_ = millis();
+        startupLeftTicks_ = curLeft;
+        startupRightTicks_ = curRight;
+        startupBoostActive_ = false;
+        currentBoostPwm_ = 0;
+        lastBoostGroup_ = curGroup;
+        return;
+    }
+
+    // Kiem tra xem banh xe da nhuc nhich chua
+    const uint32_t leftDelta = static_cast<uint32_t>(curLeft - startupLeftTicks_);
+    const uint32_t rightDelta = static_cast<uint32_t>(curRight - startupRightTicks_);
+    bool encoderMoved = false;
+    if (curGroup == MotionGroup::Forward || curGroup == MotionGroup::Backward) {
+        // Chuyen dong tinh tien: Can ca hai banh cung lan hoac mot banh lan ro rang (>= 2 xung)
+        encoderMoved = (leftDelta >= 1 && rightDelta >= 1) || (leftDelta >= 2) || (rightDelta >= 2);
+    } else {
+        // Quay tai cho (PivotLeft / PivotRight)
+        encoderMoved = (leftDelta >= 1) || (rightDelta >= 1);
+    }
+
+    if (encoderMoved) {
+        // Da co xung encoder: Xe da thoat ket -> LAP TUC NHA VE 0 DE CHAY DUNG TOC DO GOC CU
+        if (startupBoostActive_) {
+            startupBoostActive_ = false;
+            currentBoostPwm_ = 0;
+            if (Config::DEBUG_ENABLED) {
+                Serial.printf("[BOOST] Breakaway successful on %s! Ticks L=%lu R=%lu. Dropping back to original speed.\n",
+                    motorActionName(motorAction),
+                    static_cast<unsigned long>(leftDelta),
+                    static_cast<unsigned long>(rightDelta));
+            }
+        }
+    } else {
+        // Xe chua co xung encoder: Kiem tra thoi gian ket
+        const uint32_t stallElapsed = millis() - motionCommandStartedMs_;
+        if (stallElapsed >= Config::STARTUP_BOOST_DELAY_MS) {
+            startupBoostActive_ = true;
+            // Leo doc thong minh: cu moi STARTUP_BOOST_INTERVAL_MS tiep tuc ket thi nhoi them +STARTUP_BOOST_STEP_PWM
+            const uint32_t overTime = stallElapsed - Config::STARTUP_BOOST_DELAY_MS;
+            const uint32_t rampInterval = (Config::STARTUP_BOOST_INTERVAL_MS > 0) ? Config::STARTUP_BOOST_INTERVAL_MS : 50;
+            const uint32_t rampSteps = overTime / rampInterval;
+            currentBoostPwm_ = Config::STARTUP_BOOST_PWM + static_cast<int>(rampSteps * Config::STARTUP_BOOST_STEP_PWM);
+            if (currentBoostPwm_ > Config::STARTUP_BOOST_MAX_PWM) currentBoostPwm_ = Config::STARTUP_BOOST_MAX_PWM;
+            if (currentBoostPwm_ > 255) currentBoostPwm_ = 255;
+
+            const uint32_t now = millis();
+            if (Config::DEBUG_ENABLED && (now - lastBoostLogMs_ >= 200)) {
+                Serial.printf("[BOOST] Stall detected on %s (%lums no pulses) -> Ramping PWM boost: +%d (up to 255)\n",
+                    motorActionName(motorAction), static_cast<unsigned long>(stallElapsed), currentBoostPwm_);
+                lastBoostLogMs_ = now;
+            }
+        }
+    }
+
+    if (startupBoostActive_ && currentBoostPwm_ > 0) {
+        motor_.applyStartupBoost(currentBoostPwm_);
+    }
 }

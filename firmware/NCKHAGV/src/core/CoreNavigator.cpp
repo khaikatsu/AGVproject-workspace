@@ -8,12 +8,16 @@ void CoreNavigator::resetLineTracking() {
     turnSampleReady_ = stationTurnCapture_ = false;
     turnMaxSampleGapMs_ = 0;
     lineLossPending_ = lineRecoveryUsed_ = false;
+    lineLossStartedMs_ = 0;
     searchPulse_ = false;
     captureHistory_ = captureCount_ = 0;
     turnSettling_ = false;
     lastLinePattern_ = centerSamples_ = 0;
     recoveryCandidate_ = 0;
     lastLineMotor_ = lastCorrection_ = searchDirection_ = MotorAction::Stop;
+    cornerRecovering_ = false;
+    cornerRecoveryDirection_ = lastCornerDirection_ = MotorAction::Stop;
+    lastCornerDriftMs_ = 0;
 }
 void CoreNavigator::rememberLine(const ControlInput& in, MotorAction action) {
     lastLinePattern_ = in.linePattern;
@@ -26,6 +30,20 @@ void CoreNavigator::rememberLine(const ControlInput& in, MotorAction action) {
                action == MotorAction::ReverseCorrectRight) {
         lastCorrection_ = MotorAction::PivotRight;
         lastCorrectionMs_ = in.now;
+    }
+    // Ghi nhớ hướng văng khi đang bám line tiến trong khúc cua:
+    if (phase_ == Phase::Following && !segmentReverse()) {
+        if (in.linePattern == 4 || in.linePattern == 6) {
+            // Mắt trái chạm line (100 / 110) -> xe đang cua sang phải, văng ra thì quay phải về lại line
+            lastCornerDirection_ = (Config::CORNER_RECOVERY_STEERING_SIGN >= 0)
+                ? MotorAction::PivotRight : MotorAction::PivotLeft;
+            lastCornerDriftMs_ = in.now;
+        } else if (in.linePattern == 1 || in.linePattern == 3) {
+            // Mắt phải chạm line (001 / 011) -> xe đang cua sang trái, văng ra thì quay trái về lại line
+            lastCornerDirection_ = (Config::CORNER_RECOVERY_STEERING_SIGN >= 0)
+                ? MotorAction::PivotLeft : MotorAction::PivotRight;
+            lastCornerDriftMs_ = in.now;
+        }
     }
 }
 MotorAction CoreNavigator::recoverLine(const ControlInput& in) {
@@ -807,6 +825,7 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
                 segmentStartedMs_ = in.now;
                 reverseAlignStartedMs_ = in.now;
                 reverseAligned_ = (Config::REVERSE_ALIGN_FORWARD_MS == 0);
+                resetLineTracking();
                 // Give the controller one STOP cycle to switch to the rear
                 // sonar and acquire a fresh sample before any reverse PWM.
                 if (reverseAfterTurn_[index_]) return MotorAction::Stop;
@@ -830,6 +849,13 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
         if (!reverseAlignStartedMs_) reverseAlignStartedMs_ = in.now;
         const uint32_t alignElapsed = in.now - reverseAlignStartedMs_;
         if (alignElapsed < Config::REVERSE_ALIGN_FORWARD_MS) {
+            if (in.linePattern == 0) {
+                reverseAligned_ = true;
+                resetLineTracking();
+                lineLossStartedMs_ = 0;
+                segmentStartedMs_ = in.now;
+                return MotorAction::Stop;
+            }
             const MotorAction action = AGVMath::lineAction(in.linePattern);
             rememberLine(in, action);
             return action;
@@ -847,8 +873,63 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
 #endif
         return MotorAction::Stop;
     }
+    if (isBayExit() || (reverseAfterTurn_[index_] && reverseAligned_)) {
+        if (in.linePattern == 0) {
+            if (!lineLossStartedMs_) lineLossStartedMs_ = in.now;
+            const uint32_t reverseGrace = reverseAfterTurn_[index_] ? 2000 : 2000;
+            if (static_cast<uint32_t>(in.now - lineLossStartedMs_) < reverseGrace) {
+                return MotorAction::Backward;
+            }
+            fault(ErrorCode::LineLost);
+            return MotorAction::Stop;
+        }
+        lineLossStartedMs_ = 0;
+        lineLossPending_ = false;
+        if (in.linePattern == 7 || in.linePattern == 6 || in.linePattern == 3) {
+            return MotorAction::Backward;
+        }
+    }
     const MotorAction action = segmentReverse()
         ? AGVMath::reverseLineAction(in.linePattern) : AGVMath::lineAction(in.linePattern);
+
+    if (Config::CORNER_RECOVERY_ENABLED && !segmentReverse()) {
+        if (cornerRecovering_) {
+            if (in.linePattern != 0) {
+                // Đã bắt lại được line trong khúc cua, tiếp tục bám line PD ngay lập tức!
+                cornerRecovering_ = false;
+                cornerRecoveryDirection_ = MotorAction::Stop;
+#if defined(ARDUINO)
+                if (Config::DEBUG_ENABLED) Serial.printf(
+                    "[CORNER] recovered pattern=%u node=%s next=%s after=%lums\n",
+                    in.linePattern, current_, nextNode(),
+                    static_cast<unsigned long>(in.now - cornerRecoveryStartedMs_));
+#endif
+                rememberLine(in, action);
+                return action;
+            }
+            if (static_cast<uint32_t>(in.now - cornerRecoveryStartedMs_) < Config::CORNER_RECOVERY_MS) {
+                return cornerRecoveryDirection_;
+            }
+            // Hết thời gian cứu văng cua mà vẫn chưa thấy line -> chuyển qua bộ phục hồi mất line chuẩn
+            cornerRecovering_ = false;
+            cornerRecoveryDirection_ = MotorAction::Stop;
+        } else if (in.linePattern == 0 && !lineLossPending_ && lastCornerDirection_ != MotorAction::Stop &&
+                   static_cast<uint32_t>(in.now - lastCornerDriftMs_) <= Config::CORNER_RECOVERY_MEMORY_MS) {
+            // Vừa bị văng khỏi line (000) từ một góc cua gần nhất:
+            cornerRecovering_ = true;
+            cornerRecoveryStartedMs_ = in.now;
+            cornerRecoveryDirection_ = lastCornerDirection_;
+            lastCornerDirection_ = MotorAction::Stop;
+#if defined(ARDUINO)
+            if (Config::DEBUG_ENABLED) Serial.printf(
+                "[CORNER] activate dir=%s lastPattern=%u node=%s next=%s limit=%lums\n",
+                motorActionName(cornerRecoveryDirection_), lastLinePattern_, current_, nextNode(),
+                static_cast<unsigned long>(Config::CORNER_RECOVERY_MS));
+#endif
+            return cornerRecoveryDirection_;
+        }
+    }
+
     if (Config::LINE_RECOVERY_ENABLED && (lineLossPending_ || in.linePattern == 0))
         return recoverLine(in);
     if (in.linePattern == 0 && Config::LINE_LOSS_CONFIRM_MS > 0) {
@@ -908,3 +989,4 @@ bool CoreNavigator::authorizeNodeOrder(const CoreCommand& order) {
     nodeOrderReceived_ = true;
     return true;
 }
+

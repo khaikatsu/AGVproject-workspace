@@ -51,6 +51,20 @@ void MotorModule::drive(int left, int right) {
     appliedLeft_ = left;
     appliedRight_ = right;
 }
+void MotorModule::applyStartupBoost(int boost) {
+    if (!initialized_ || boost <= 0) return;
+    if (appliedLeft_ == 0 && appliedRight_ == 0) return;
+    int newLeft = appliedLeft_;
+    int newRight = appliedRight_;
+    if (newLeft > 0) newLeft = constrain(newLeft + boost, 0, 255);
+    else if (newLeft < 0) newLeft = constrain(newLeft - boost, -255, 0);
+    if (newRight > 0) newRight = constrain(newRight + boost, 0, 255);
+    else if (newRight < 0) newRight = constrain(newRight - boost, -255, 0);
+    if (newLeft != appliedLeft_) writeSide(true, newLeft);
+    if (newRight != appliedRight_) writeSide(false, newRight);
+    appliedLeft_ = newLeft;
+    appliedRight_ = newRight;
+}
 void MotorModule::writeSide(bool left, int duty) {
     const int enable = left ? Config::LEFT_ENA : Config::RIGHT_ENB;
     const int a = left ? Config::LEFT_IN1 : Config::RIGHT_IN3;

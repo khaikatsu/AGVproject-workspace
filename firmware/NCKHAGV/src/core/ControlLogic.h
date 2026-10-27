@@ -12,6 +12,7 @@ struct MotionStartConditions {
     ErrorCode previousError = ErrorCode::None;
 };
 ErrorCode motionStartError(const MotionStartConditions& conditions);
+float distanceCm(int32_t ticks, int32_t ppr, float wheelDiameterCm);
 float batteryVoltage(uint32_t adcMv, float scale, float offset);
 float batteryPercentage(float voltage, float emptyVoltage, float fullVoltage);
 uint8_t normalizeLine(int left, int center, int right, int activeState);

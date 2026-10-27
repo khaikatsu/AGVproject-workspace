@@ -123,6 +123,10 @@ bool reverseBuzzerRequired(MotorAction action, int leftDuty, int rightDuty) {
             action == MotorAction::ReverseCorrectRight) &&
            leftDuty <= 0 && rightDuty <= 0 && (leftDuty < 0 || rightDuty < 0);
 }
+float distanceCm(int32_t ticks, int32_t ppr, float wheelDiameterCm) {
+    if (ppr <= 0 || wheelDiameterCm <= 0) return std::numeric_limits<float>::quiet_NaN();
+    return (static_cast<float>(ticks) / static_cast<float>(ppr)) * 3.14159265358979323846f * wheelDiameterCm;
+}
 float batteryVoltage(uint32_t adcMv, float scale, float offset) {
     if (!std::isfinite(scale) || scale <= 0 || !std::isfinite(offset)) return UNKNOWN_VALUE;
     const float value = adcMv / 1000.0f * scale + offset;

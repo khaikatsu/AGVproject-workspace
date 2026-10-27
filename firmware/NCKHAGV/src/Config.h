@@ -293,6 +293,38 @@ static_assert(!REVERSE_GENTLE_CORRECTION ||
                REVERSE_CORRECTION_SPEED + REVERSE_LEFT_SPEED_TRIM - REVERSE_CORRECTION_DELTA > 0 &&
                REVERSE_CORRECTION_SPEED + REVERSE_RIGHT_SPEED_TRIM - REVERSE_CORRECTION_DELTA > 0),
               "Gentle reverse correction must keep both wheels powered");
+
+#if defined(AGV_STARTUP_BOOST_PWM)
+constexpr int STARTUP_BOOST_PWM = AGV_STARTUP_BOOST_PWM;
+#else
+constexpr int STARTUP_BOOST_PWM = 0;
+#endif
+static_assert(STARTUP_BOOST_PWM >= 0 && STARTUP_BOOST_PWM <= 255, "Invalid startup boost PWM");
+
+#if defined(AGV_STARTUP_BOOST_DELAY_MS)
+constexpr uint32_t STARTUP_BOOST_DELAY_MS = AGV_STARTUP_BOOST_DELAY_MS;
+#else
+constexpr uint32_t STARTUP_BOOST_DELAY_MS = 150;
+#endif
+
+#if defined(AGV_STARTUP_BOOST_STEP_PWM)
+constexpr int STARTUP_BOOST_STEP_PWM = AGV_STARTUP_BOOST_STEP_PWM;
+#else
+constexpr int STARTUP_BOOST_STEP_PWM = 8;
+#endif
+
+#if defined(AGV_STARTUP_BOOST_INTERVAL_MS)
+constexpr uint32_t STARTUP_BOOST_INTERVAL_MS = AGV_STARTUP_BOOST_INTERVAL_MS;
+#else
+constexpr uint32_t STARTUP_BOOST_INTERVAL_MS = 60;
+#endif
+
+#if defined(AGV_STARTUP_BOOST_MAX_PWM)
+constexpr int STARTUP_BOOST_MAX_PWM = AGV_STARTUP_BOOST_MAX_PWM;
+#else
+constexpr int STARTUP_BOOST_MAX_PWM = 180;
+#endif
+
 constexpr uint32_t MOTOR_PWM_HZ = 5000;
 constexpr int MOTOR_PWM_BITS = 8;
 constexpr std::array<int, 4> MOTOR_PWM_CHANNELS = {0, 1, 2, 3};
@@ -348,6 +380,40 @@ static_assert(LINE_RECOVERY_PWM > 0 && LINE_RECOVERY_PWM <= 255 &&
               LINE_RECOVERY_TIMEOUT_MS > LINE_RECOVERY_STOP_MS + LINE_RECOVERY_CENTER_MS &&
               LINE_RECOVERY_PULSE_MS > 0 && LINE_RECOVERY_REST_MS > 0,
               "Invalid line recovery limits");
+
+// ----------------------------------------------------------------------------
+// Phục hồi khi xe văng khỏi line ở khúc cua (Corner Lost-Line Recovery)
+// ----------------------------------------------------------------------------
+#if defined(AGV_CORNER_RECOVERY_ENABLED)
+constexpr bool CORNER_RECOVERY_ENABLED = AGV_CORNER_RECOVERY_ENABLED == 1;
+#else
+constexpr bool CORNER_RECOVERY_ENABLED = true;
+#endif
+
+#if defined(AGV_CORNER_RECOVERY_MS)
+constexpr uint32_t CORNER_RECOVERY_MS = AGV_CORNER_RECOVERY_MS;
+#else
+constexpr uint32_t CORNER_RECOVERY_MS = 350; // Thời gian quay về line (ms)
+#endif
+
+#if defined(AGV_CORNER_RECOVERY_PWM)
+constexpr int CORNER_RECOVERY_PWM = AGV_CORNER_RECOVERY_PWM;
+#else
+constexpr int CORNER_RECOVERY_PWM = 165; // Tốc độ PWM khi quay về line
+#endif
+
+#if defined(AGV_CORNER_RECOVERY_MEMORY_MS)
+constexpr uint32_t CORNER_RECOVERY_MEMORY_MS = AGV_CORNER_RECOVERY_MEMORY_MS;
+#else
+constexpr uint32_t CORNER_RECOVERY_MEMORY_MS = 600; // Thời gian nhớ hướng văng trước khi mất line (ms)
+#endif
+
+#if defined(AGV_CORNER_RECOVERY_STEERING_SIGN)
+constexpr int CORNER_RECOVERY_STEERING_SIGN = AGV_CORNER_RECOVERY_STEERING_SIGN;
+#else
+constexpr int CORNER_RECOVERY_STEERING_SIGN = 1;
+#endif
+
 // Operator requests stop at or below 15 cm; verify on the physical sensor.
 constexpr float OBSTACLE_DISTANCE_CM = 15.0f;
 constexpr float OBSTACLE_CLEAR_CM = 20.0f;

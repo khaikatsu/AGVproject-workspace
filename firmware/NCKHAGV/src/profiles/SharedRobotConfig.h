@@ -27,3 +27,28 @@
 // He so rieng duoc luu tach khoi profile PWM.
 #include "BatteryCalibration.h"
 #define AGV_BENCH_BATTERY_VOLTAGE_OFFSET 0.0f
+
+// ----------------------------------------------------------------------------
+// CẤU HÌNH PHỤC HỒI KHI VĂNG KHỎI LINE Ở KHÚC CUA (Corner Lost-Line Recovery)
+// ----------------------------------------------------------------------------
+// Khi xe chạy nhanh vào cua bị văng khỏi line (mắt đọc thấy 000 từ 100/110 hoặc 001/011):
+// Xe sẽ tự động quay ngược lại hướng văng để bắt lại line trong khoảng thời gian đã định.
+#ifndef AGV_CORNER_RECOVERY_ENABLED
+#define AGV_CORNER_RECOVERY_ENABLED 1           // 1: Bật tính năng cứu văng line; 0: Tắt
+#endif
+
+#ifndef AGV_CORNER_RECOVERY_MS
+#define AGV_CORNER_RECOVERY_MS 350              // Thời gian quay về line (ms) - tăng nếu cua rộng, giảm nếu muốn dừng sớm
+#endif
+
+#ifndef AGV_CORNER_RECOVERY_PWM
+#define AGV_CORNER_RECOVERY_PWM 165             // Tốc độ PWM bánh xe khi quay tìm lại line
+#endif
+
+#ifndef AGV_CORNER_RECOVERY_MEMORY_MS
+#define AGV_CORNER_RECOVERY_MEMORY_MS 600       // Thời gian lưu nhớ hướng văng trước đó (ms)
+#endif
+
+#ifndef AGV_CORNER_RECOVERY_STEERING_SIGN
+#define AGV_CORNER_RECOVERY_STEERING_SIGN 1     // 1: Chuẩn (+100/110 -> quay phải; 001/011 -> quay trái)
+#endif

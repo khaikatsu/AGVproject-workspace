@@ -16,6 +16,7 @@ public:
     bool configured() const;
     int leftDuty() const { return appliedLeft_; }
     int rightDuty() const { return appliedRight_; }
+    void applyStartupBoost(int boost);
 private:
     void drive(int left, int right);
     void writeSide(bool left, int duty);

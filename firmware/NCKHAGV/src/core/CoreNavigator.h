@@ -53,12 +53,13 @@ public:
             ? Config::RIGHT_TURN_CAPTURE_PWM : Config::LEFT_TURN_CAPTURE_PWM;
     }
     bool precisionPivot() const {
-        return g1TurnAroundPrecision() || isDockingTurn() || recoveringLine() ||
+        return g1TurnAroundPrecision() || isDockingTurn() || recoveringLine() || cornerRecovering() ||
             (turnCaptureEnabled() && phase_ == Phase::Turning && oldLineDeparted_);
     }
     int precisionPivotPwm() const {
         if (g1TurnAroundPrecision()) return Config::G1_TURN_AROUND_PWM;
         if (isDockingTurn()) return (phase_ == Phase::TurnCapture) ? Config::GS_ALIGN_PWM : Config::GS_TURN_PWM;
+        if (cornerRecovering()) return Config::CORNER_RECOVERY_PWM;
         // Turn capture uses its direction-specific PWM; line-loss recovery keeps its own limit.
         return (phase_ == Phase::TurnCapture || (phase_ == Phase::Turning &&
                 turnCaptureEnabled() && oldLineDeparted_) ||
@@ -70,10 +71,11 @@ public:
     bool active() const { return phase_ != Phase::Idle && phase_ != Phase::Fault; }
     bool following() const { return phase_ == Phase::Following && !recoveringLine(); }
     bool recoveringLine() const { return Config::LINE_RECOVERY_ENABLED && lineLossPending_; }
+    bool cornerRecovering() const { return cornerRecovering_; }
     bool obstaclePaused() const { return obstaclePaused_; }
     bool networkPaused() const { return networkPaused_; }
     bool forwardLineTracking() const {
-        return following() && !segmentReverse() && !obstaclePaused_ && !networkPaused_ && !missingZone();
+        return following() && !cornerRecovering_ && !segmentReverse() && !obstaclePaused_ && !networkPaused_ && !missingZone();
     }
     bool stationOriented() const { return stationOriented_; }
     AGVState state() const;
@@ -93,6 +95,9 @@ private:
     enum class Phase { Idle, WaitingGrant, Turning, TurnCapture, TurnAroundCapture, Following, StationDwell, StationTurning, Fault };
     bool isDockingTurn() const {
         return RoutePlanner::reverseHome(current_, nextNode());
+    }
+    bool isBayExit() const {
+        return active() && index_ < length_ && RoutePlanner::dockingReverse(current_, path_[index_]);
     }
     bool g1TurnAroundPrecision() const {
         return Config::G1_TURN_AROUND_PWM > 0 && phase_ == Phase::Turning && index_ < length_ &&
@@ -151,4 +156,10 @@ private:
     uint32_t networkPausedAtMs_ = 0;
     bool reverseAligned_ = false;
     uint32_t reverseAlignStartedMs_ = 0;
+    bool cornerRecovering_ = false;
+    uint32_t cornerRecoveryStartedMs_ = 0;
+    MotorAction cornerRecoveryDirection_ = MotorAction::Stop;
+    MotorAction lastCornerDirection_ = MotorAction::Stop;
+    uint32_t lastCornerDriftMs_ = 0;
 };
+

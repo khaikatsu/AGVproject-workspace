@@ -10,6 +10,18 @@ public:
                  uint32_t session, bool tracking, bool translating, bool reverse);
     OdometrySnapshot snapshot() { return tracker_.snapshot(++seq_); }
     OdometryTracker::TranslationTicks translationTicks() const { return tracker_.translationTicks(); }
+    uint32_t leftTicks() {
+        portENTER_CRITICAL(&lock_);
+        const uint32_t val = leftTicks_;
+        portEXIT_CRITICAL(&lock_);
+        return val;
+    }
+    uint32_t rightTicks() {
+        portENTER_CRITICAL(&lock_);
+        const uint32_t val = rightTicks_;
+        portEXIT_CRITICAL(&lock_);
+        return val;
+    }
 private:
     static void IRAM_ATTR leftInterrupt(void* self);
     static void IRAM_ATTR rightInterrupt(void* self);

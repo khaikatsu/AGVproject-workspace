@@ -29,6 +29,7 @@ private:
     void observeState();
     void updateSonars();
     void logSonars();
+    void applyStartupBoostCheck(MotorAction motorAction);
     MotorModule motor_;
     SensorModule sensor_;
     SensorModule rearSensor_{Config::REAR_ULTRASONIC_TRIG_PIN, Config::REAR_ULTRASONIC_ECHO_PIN};
@@ -66,4 +67,33 @@ private:
     bool previousSegmentReverse_ = false;
     RobotHeading heading_ = RobotHeading::Unknown;
     bool headingBayDefault_ = false;
+    enum class MotionGroup { Stop, Forward, Backward, PivotLeft, PivotRight };
+    static MotionGroup getMotionGroup(MotorAction action) {
+        switch (action) {
+            case MotorAction::Forward:
+            case MotorAction::CorrectLeft:
+            case MotorAction::CorrectRight:
+            case MotorAction::GentleCorrectLeft:
+            case MotorAction::GentleCorrectRight:
+                return MotionGroup::Forward;
+            case MotorAction::Backward:
+            case MotorAction::ReverseCorrectLeft:
+            case MotorAction::ReverseCorrectRight:
+                return MotionGroup::Backward;
+            case MotorAction::PivotLeft:
+                return MotionGroup::PivotLeft;
+            case MotorAction::PivotRight:
+                return MotionGroup::PivotRight;
+            case MotorAction::Stop:
+            default:
+                return MotionGroup::Stop;
+        }
+    }
+    bool startupBoostActive_ = false;
+    int currentBoostPwm_ = 0;
+    uint32_t motionCommandStartedMs_ = 0;
+    uint32_t startupLeftTicks_ = 0;
+    uint32_t startupRightTicks_ = 0;
+    MotionGroup lastBoostGroup_ = MotionGroup::Stop;
+    uint32_t lastBoostLogMs_ = 0;
 };

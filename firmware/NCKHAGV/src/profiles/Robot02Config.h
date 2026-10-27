@@ -1,68 +1,121 @@
 #pragma once
 
-// Xe 02, môi trường esp32dev_two_robot_bench_02.
+// ============================================================================
+// PROFILE CẤU HÌNH XE 02 (Môi trường build: esp32dev_two_robot_bench_02)
+// ============================================================================
+// Tất cả thông số điều khiển vận hành, cảm biến, động cơ và thuật toán cho Xe 02.
+// Sử dụng thang PWM từ 0 đến 255.
+// ============================================================================
+
 #define AGV_PROFILE_ID "02"
-// Servo xe02 giống xe01 theo xác nhận người dùng21/10/2026.
-// Mặc định/hạ180°, nâng100°; boot không tự phát góc.
-#define AGV_SERVO_MIN_PULSE_US 544
-#define AGV_SERVO_MAX_PULSE_US 2400
-#define AGV_SERVO_LIFT_DOWN_ANGLE 180
-#define AGV_SERVO_LIFT_UP_ANGLE 100
 
-// PD tien.
-#define AGV_LINE_PD_ENABLED 1
-#define AGV_BENCH_LINE_KP 75.0f // Khả năng kéo xe trở về line
-#define AGV_BENCH_LINE_KD 35.0f // Điều chỉnh dao động khi bám line
-#define AGV_LINE_PD_BASE_SPEED 115 // toc do bam line tien
-#define AGV_LINE_PD_CONTROL_MS 15 // chu ky tinh PD, ms
-#define AGV_LINE_PD_RESET_GAP_MS 50
-// +1 giu quan he GPIO->ENA/ENB cua bang dieu khien hien tai.
-#define AGV_LINE_PD_STEERING_SIGN 1
+// ----------------------------------------------------------------------------
+// 1. CƠ CẤU BÀN NÂNG SERVO (Servo Lift Mechanism)
+// ----------------------------------------------------------------------------
+// Điều khiển servo nâng hạ pallet / kệ hàng (cấu hình đồng bộ giống Xe 01).
+#define AGV_SERVO_MIN_PULSE_US 544      // Độ rộng xung nhỏ nhất của servo (microgiây)
+#define AGV_SERVO_MAX_PULSE_US 2400     // Độ rộng xung lớn nhất của servo (microgiây)
+#define AGV_SERVO_LIFT_DOWN_ANGLE 180   // Góc quay khi HẠ bàn nâng xuống (độ)
+#define AGV_SERVO_LIFT_UP_ANGLE 100     // Góc quay khi NÂNG bàn nâng lên (độ)
 
-// 1. TÌM LẠI LINE: tối đa 7s chờ xác nhận; quét motor vẫn giới hạn 600ms.
-#define AGV_LINE_LOSS_GRACE_MS 7000
-#include "SharedRobotConfig.h"
-// Bắt line sau quay trái, riêng xe02; khác recovery mất line trên chặng.
-#define AGV_LEFT_TURN_CAPTURE_ENABLED 1
-#define AGV_LEFT_TURN_CAPTURE_PWM 190 // PWM bat lai line sau cua trai
-#define AGV_RIGHT_TURN_CAPTURE_ENABLED 1
-#define AGV_RIGHT_TURN_CAPTURE_PWM 95 // PWM bat lai line sau cua phai
+// ----------------------------------------------------------------------------
+// 2. THUẬT TOÁN BÁM LINE TIẾN BẰNG BỘ ĐIỀU KHIỂN PD (Line Following PD)
+// ----------------------------------------------------------------------------
+// Giúp xe bám line mượt mà, tự động điều tiết tốc độ hai bánh, chống rung lắc.
+#define AGV_LINE_PD_ENABLED 1           // 1: Bật bám line bằng PD; 0: Dùng bảng điều khiển cơ bản
+#define AGV_BENCH_LINE_KP 70.0f         // Hệ số tỉ lệ P: Lực kéo xe trở về tâm line (càng lớn kéo càng gắt)
+#define AGV_BENCH_LINE_KD 40.0f         // Hệ số vi phân D: Dập tắt dao động lắc lư (càng lớn xe bẻ lái càng êm)
+#define AGV_LINE_PD_BASE_SPEED 130      // Tốc độ chạy thẳng cơ sở (PWM 0..255) khi bám line tiến
+#define AGV_LINE_PD_CONTROL_MS 10       // Chu kỳ tính toán thuật toán PD (ms, 10ms = 100Hz)
+#define AGV_LINE_PD_RESET_GAP_MS 50     // Thời gian mất line (ms) trước khi reset tích lũy vi phân
+#define AGV_LINE_PD_STEERING_SIGN 1     // Chiều lái bánh xe (+1: Bình thường; -1: Đảo chiều hai bánh)
 
-// 2. Di thang du phong: ENA/ENB =
-#define AGV_BENCH_MOTOR_SPEED 160
-#define AGV_BENCH_LEFT_SPEED_TRIM 0 // kênh ENA bánh phải
-#define AGV_BENCH_RIGHT_SPEED_TRIM 0 // kênh ENB bánh trái
-#define AGV_BENCH_TURN_MIN_MS 300 // thời gian tối thiểu quay tại chỗ (ms) trước khi bắt line mới
+// ----------------------------------------------------------------------------
+// 3. TÌM LẠI LINE VÀ BẮT LINE SAU CUA (Line Recovery & Turn Capture)
+// ----------------------------------------------------------------------------
+#define AGV_LINE_LOSS_GRACE_MS 7000     // Thời gian tối đa (ms) chờ tìm lại line trước khi báo lỗi LINE_LOST
 
-// 3. Quay tai node: ENA/ENB = 205/210, hai kenh chay nguoc chieu.
-//cùng áp dụng cho cả quay trái và quay phải.
-#define AGV_BENCH_TURN_SPEED 220 // quay tai cho
-#define AGV_BENCH_TURN_LEFT_SPEED_TRIM 0 // kenh ENA khi quay
-#define AGV_BENCH_TURN_RIGHT_SPEED_TRIM 0 // kenh ENB khi quay
+// Phục hồi khi xe vào cua chạy nhanh bị văng khỏi line (Corner Lost-Line Recovery):
+#define AGV_CORNER_RECOVERY_ENABLED 1   // 1: Bật tự động cứu line khi vào cua; 0: Tắt
+#define AGV_CORNER_RECOVERY_MS 350      // Chỉnh thời gian quay về line tại đây (ms, ví dụ 250 - 450ms)
+#define AGV_CORNER_RECOVERY_PWM 165     // Tốc độ PWM bánh xe khi quay về bắt line
+#include "SharedRobotConfig.h"          // Nạp cấu hình phần cứng chung
 
-// Rieng quay dau 180 do tai G1: giam 30 PWM truoc trim.
-#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 20)
-// Tốc độ xoay tại GS2 khi quay trái để lùi vào base S2 (giảm tốc để bắt chuẩn 010 không văng quán tính)
+// Bắt lại line sau khi hoàn thành rẽ trái / phải:
+#define AGV_LEFT_TURN_CAPTURE_ENABLED 1 // 1: Bật cơ chế hãm bắt lại line sau khi cua trái
+#define AGV_LEFT_TURN_CAPTURE_PWM 190    // Tốc độ PWM bánh xe để bắt lại line sau cua trái
+#define AGV_RIGHT_TURN_CAPTURE_ENABLED 1// 1: Bật cơ chế hãm bắt lại line sau khi cua phải
+#define AGV_RIGHT_TURN_CAPTURE_ENAB 165   // Tốc độ PWM bánh xe để bắt lại line sau cua phải
+
+// ----------------------------------------------------------------------------
+// 4. CHẠY THẲNG CƠ BẢN DỰ PHÒNG (Fallback Motor Speed)
+// ----------------------------------------------------------------------------
+// Dùng khi không kích hoạt PD hoặc trong các chặng chạy thẳng đặc biệt.
+#define AGV_BENCH_MOTOR_SPEED 130       // Tốc độ chạy thẳng dự phòng (PWM)
+#define AGV_BENCH_LEFT_SPEED_TRIM 0     // Bù lệch tốc độ bánh phải (kênh ENA)
+#define AGV_BENCH_RIGHT_SPEED_TRIM 0    // Bù lệch tốc độ bánh trái (kênh ENB)
+
+// ----------------------------------------------------------------------------
+// 5. QUAY TẠI GIAO LỘ & XOAY ĐẦU 180 ĐỘ (Pivot Turning & Turn 180)
+// ----------------------------------------------------------------------------
+// Tốc độ quay tại chỗ: ENA/ENB = 210/200 sau khi trừ trim.
+#define AGV_BENCH_TURN_SPEED 255        // Tốc độ PWM quay tại chỗ thông thường (góc 90 độ, hai bánh chạy ngược chiều)
+#define AGV_BENCH_TURN_LEFT_SPEED_TRIM 0    // Bù tốc độ kênh ENA khi quay tại chỗ
+#define AGV_BENCH_TURN_RIGHT_SPEED_TRIM 0 // Bù tốc độ kênh ENB khi quay tại chỗ
+#define AGV_BENCH_TURN_MIN_MS 700       // Thời gian tối thiểu quay góc 90 độ (ms) trước khi bắt line mới
+
+// Riêng quay đầu 180 độ (tại G1/G2 hoặc quay đầu chặng):
+#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 30) // PWM quay 180 độ (giảm 30 PWM để chống trượt bánh)
+
+// [CHỐNG ĂN LINE PHỤ KHI XOAY 180 ĐỘ]:
+// Thời gian xe quay mù tối thiểu (ms) trong quá trình xoay 180 độ.
+// Trong suốt thời gian này, xe ép quay tròn liên tục và BỎ QUA mọi vạch nhánh/line phụ ở giữa.
+// Tăng lên (ví dụ 450 - 1000ms) nếu xe bị dừng sớm do ăn line phụ.
+#define AGV_TURN_180_MIN_MS 800
+
+// [PHANH DỪNG XÁC NHẬN SAU KHI XOAY 180 ĐỘ]:
+// Sau khi đã xoay đủ góc và mắt đọc bắt trúng vạch line đích, xe phanh đứng yên trong bao lâu (ms)
+// để triệt tiêu toàn bộ quán tính xoay và xác nhận chuẩn tâm 010 trước khi tiếp tục chạy.
+#define AGV_TURN_AROUND_CONFIRM_MS 100  // Chuẩn 100ms (không nên để 1000ms vì xe sẽ bị đứng đơ 1 giây)
+
+// ----------------------------------------------------------------------------
+// 6. ĐIỀU KHIỂN DOCKING VÀO BASE S2 (GS2 -> S2 Reversing)
+// ----------------------------------------------------------------------------
+// Tốc độ xoay tại trạm GS2 khi chuẩn bị lùi vào base S2 (giảm tốc để bắt chuẩn tâm không văng trớn):
 #define AGV_GS_TURN_PWM 170
-// Tốc độ nhích vi chỉnh bắt chuẩn 010 tại GS2 khi vào TurnCapture
+// Tốc độ nhích vi chỉnh bắt chuẩn tâm '010' tại GS2 khi vào TurnCapture:
 #define AGV_GS_ALIGN_PWM 155
-// Thời gian hãm dừng xác nhận chuẩn 010 tại GS2 trước khi lùi vào base
+// Thời gian hãm dừng xác nhận chuẩn tâm '010' tại GS2 trước khi bắt đầu lùi vào base (ms):
 #define AGV_GS_CONFIRM_MS 100
-// Thời gian tiến thêm bám line PD (ms) sau khi bắt line tại GS2 để nắn thẳng xe trước khi lùi vào S2 (1000 - 2000ms)
-#define AGV_REVERSE_ALIGN_FORWARD_MS 1500
-// Xac nhan line sau quay 180 do; dong bo hai xe.
-#define AGV_TURN_AROUND_CONFIRM_MS 100
+// Thời gian tiến thêm bám line PD (ms) sau khi bắt line tại GS2 để nắn thẳng xe trước khi lùi:
+// Khuyên dùng 200 - 300ms (nhích nhẹ ~5cm nắn thẳng bánh). Đặt 0 nếu muốn xe quay xong lùi ngay lập tức.
+// Tuyệt đối không đặt quá 500ms vì nhánh line GS2 ngắn, xe sẽ chạy văng ra ngoài khoảng trống!
+#define AGV_REVERSE_ALIGN_FORWARD_MS 600
 
-// 4. BÁM LINE TIẾN:
-// Xe02 không bật AGV_GENTLE_FORWARD_CORRECTION
-#define AGV_BENCH_CORRECTION_SPEED 160
-// Giá trị dự phòng; không dùng bởi bảng lineAction tiến của profile02 hiện tại.
-#define AGV_BENCH_GENTLE_CORRECTION_SPEED 160
+// ----------------------------------------------------------------------------
+// 7. BÁM LINE TIẾN CƠ BẢN (Khi không dùng PD)
+// ----------------------------------------------------------------------------
+#define AGV_BENCH_CORRECTION_SPEED 160        // Tốc độ vi chỉnh bẻ lái khi lệch khỏi tâm line
+#define AGV_BENCH_GENTLE_CORRECTION_SPEED 160 // Tốc độ vi chỉnh nhẹ (dự phòng)
 
-// 5. Lui thang: ENA/ENB = 150/95; trim rieng voi di tien.
-#define AGV_REVERSE_LEFT_SPEED_TRIM 0 // kenh ENA
-#define AGV_REVERSE_RIGHT_SPEED_TRIM -10 // kênh ENB
-#define AGV_REVERSE_SPEED 130 // lui thang
-#define AGV_REVERSE_CORRECTION_SPEED 120 // chinh lech khi lui con line
-#define AGV_REVERSE_GENTLE_CORRECTION 1 // 0: dừng 1 bánh, 1: cả 2 bánh đều lùi, 1 bánh chậm
-#define AGV_REVERSE_CORRECTION_DELTA 20 // giam PWM kenh cham khi lui chinh lech
+// ----------------------------------------------------------------------------
+// 8. ĐIỀU KHIỂN CHẠY LÙI (Reverse Line Following)
+// ----------------------------------------------------------------------------
+#define AGV_REVERSE_SPEED 130           // Tốc độ PWM khi lùi thẳng
+#define AGV_REVERSE_CORRECTION_SPEED 115// Tốc độ PWM khi vi chỉnh nắn lệch lúc đang lùi theo line
+#define AGV_REVERSE_LEFT_SPEED_TRIM  -20 // Bù tốc độ lùi kênh ENA (bánh phải)
+#define AGV_REVERSE_RIGHT_SPEED_TRIM 0 // Bù tốc độ lùi kênh ENB (bánh trái)
+#define AGV_REVERSE_GENTLE_CORRECTION 1 // Chế độ nắn lệch lùi: 0 = dừng 1 bánh để cua; 1 = cả 2 bánh đều lùi, 1 bánh chậm
+#define AGV_REVERSE_CORRECTION_DELTA 10 // Độ giảm tốc bánh chậm khi nắn lệch lùi (áp dụng cho chế độ 1)
+
+// ----------------------------------------------------------------------------
+// 9. TÍNH NĂNG CHỐNG KẸT ĐỀ-BA (Startup Unstick Boost)
+// ----------------------------------------------------------------------------
+// Khi có lệnh chạy nhưng xung encoder chưa nhảy (xe bị kẹt ma sát đứng yên tại chỗ),
+// firmware tự động cộng thêm lượng PWM này để kích xe lăn bánh tức thì.
+// Ngay khi encoder nhảy xung (xe đã lăn bánh), PWM lập tức tự động trả về mức ban đầu.
+#define AGV_STARTUP_BOOST_PWM 10          // Mức PWM khởi điểm khi vừa phát hiện kẹt (0..255; đặt 0 để tắt)
+#define AGV_STARTUP_BOOST_DELAY_MS 150    // Thời gian chờ xe tự lăn bánh (ms) trước khi bắt đầu nhồi đề-ba
+#define AGV_STARTUP_BOOST_STEP_PWM 8      // Độ dốc tăng lực: Mỗi nấc nhồi thêm bao nhiêu PWM (đặt 5..10 để tăng từ từ êm ái)
+#define AGV_STARTUP_BOOST_INTERVAL_MS 60  // Khoảng cách thời gian (ms) giữa các nấc tăng (đặt 50..100ms để tăng chậm, không bị vọt giật)
+#define AGV_STARTUP_BOOST_MAX_PWM 180     // Giới hạn PWM boost tối đa (chống vọt xe quá mạnh)
