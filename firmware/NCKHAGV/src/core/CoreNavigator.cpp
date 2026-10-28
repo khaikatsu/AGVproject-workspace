@@ -34,14 +34,14 @@ void CoreNavigator::rememberLine(const ControlInput& in, MotorAction action) {
     // Ghi nhớ hướng văng khi đang bám line tiến trong khúc cua:
     if (phase_ == Phase::Following && !segmentReverse()) {
         if (in.linePattern == 4 || in.linePattern == 6) {
-            // Mắt trái chạm line (100 / 110) -> xe đang cua sang phải, văng ra thì quay phải về lại line
-            lastCornerDirection_ = (Config::CORNER_RECOVERY_STEERING_SIGN >= 0)
-                ? MotorAction::PivotRight : MotorAction::PivotLeft;
-            lastCornerDriftMs_ = in.now;
-        } else if (in.linePattern == 1 || in.linePattern == 3) {
-            // Mắt phải chạm line (001 / 011) -> xe đang cua sang trái, văng ra thì quay trái về lại line
+            // Mắt trái chạm line (100 / 110) -> vạch line ở bên trái xe, khi văng ra 000 cần quay TRÁI về line
             lastCornerDirection_ = (Config::CORNER_RECOVERY_STEERING_SIGN >= 0)
                 ? MotorAction::PivotLeft : MotorAction::PivotRight;
+            lastCornerDriftMs_ = in.now;
+        } else if (in.linePattern == 1 || in.linePattern == 3) {
+            // Mắt phải chạm line (001 / 011) -> vạch line ở bên phải xe, khi văng ra 000 cần quay PHẢI về line
+            lastCornerDirection_ = (Config::CORNER_RECOVERY_STEERING_SIGN >= 0)
+                ? MotorAction::PivotRight : MotorAction::PivotLeft;
             lastCornerDriftMs_ = in.now;
         }
     }

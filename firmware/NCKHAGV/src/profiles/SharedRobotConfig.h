@@ -50,5 +50,5 @@
 #endif
 
 #ifndef AGV_CORNER_RECOVERY_STEERING_SIGN
-#define AGV_CORNER_RECOVERY_STEERING_SIGN 1     // 1: Chuẩn (+100/110 -> quay phải; 001/011 -> quay trái)
+#define AGV_CORNER_RECOVERY_STEERING_SIGN 1     // 1: Chuẩn (+100/110 -> quay trái về line; 001/011 -> quay phải về line)
 #endif

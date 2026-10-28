@@ -70,19 +70,19 @@ int main() {
         in.now += 10;
         in.linePattern = 0;
         CHECK(nav.refreshFollowing(in, early));
-        CHECK(early == MotorAction::PivotRight); // Should immediately steer/pivot right!
+        CHECK(early == MotorAction::PivotLeft); // Line was on left -> steer/pivot left to return to line!
         CHECK(nav.cornerRecovering());
         CHECK(nav.precisionPivot());
         CHECK(nav.precisionPivotPwm() == Config::CORNER_RECOVERY_PWM);
 
         move.apply(early, nav.precisionPivot(), nav.precisionPivotPwm(), false,
                    {nav.forwardLineTracking(), in.linePattern, in.now});
-        CHECK(move.action() == MotorAction::PivotRight);
+        CHECK(move.action() == MotorAction::PivotLeft);
 
         // Continue in corner recovery during blank (under Config::CORNER_RECOVERY_MS):
         in.now += 50;
         CHECK(nav.refreshFollowing(in, early));
-        CHECK(early == MotorAction::PivotRight);
+        CHECK(early == MotorAction::PivotLeft);
         CHECK(nav.cornerRecovering());
 
         // 4. Line re-acquired at t + 100ms: pattern 2 (010) or 6 (110) appears!
@@ -96,7 +96,7 @@ int main() {
                    {nav.forwardLineTracking(), in.linePattern, in.now});
         CHECK(move.action() == MotorAction::Forward);
 
-        std::cout << "PASS: Left-drift (100/110) -> blank (000) -> PivotRight at "
+        std::cout << "PASS: Left-line (100/110) -> blank (000) -> PivotLeft at "
                   << Config::CORNER_RECOVERY_PWM << " PWM -> line re-caught -> Forward PD resumed!" << std::endl;
 
         // 5. Test opposite side: curve drifting left (line on right: pattern 3 = 011 or 1 = 001):
@@ -116,7 +116,7 @@ int main() {
         in.now += 10;
         in.linePattern = 0;
         CHECK(nav.refreshFollowing(in, early));
-        CHECK(early == MotorAction::PivotLeft); // Steers/pivots left!
+        CHECK(early == MotorAction::PivotRight); // Line was on right -> steer/pivot right to return to line!
         CHECK(nav.cornerRecovering());
 
         // Catches line again:
@@ -126,7 +126,7 @@ int main() {
         CHECK(early == MotorAction::Forward);
         CHECK(!nav.cornerRecovering());
 
-        std::cout << "PASS: Right-drift (001/011) -> blank (000) -> PivotLeft -> line re-caught -> Forward!" << std::endl;
+        std::cout << "PASS: Right-line (001/011) -> blank (000) -> PivotRight -> line re-caught -> Forward!" << std::endl;
 
         // 6. Test timeout fallback: if line is not found within Config::CORNER_RECOVERY_MS:
         in.now += 50;
@@ -137,7 +137,7 @@ int main() {
         in.linePattern = 0;
         const uint32_t lostAt = in.now;
         CHECK(nav.refreshFollowing(in, early));
-        CHECK(early == MotorAction::PivotRight);
+        CHECK(early == MotorAction::PivotLeft);
         CHECK(nav.cornerRecovering());
 
         // Advance past CORNER_RECOVERY_MS:
