@@ -1,0 +1,20 @@
+param()
+$ErrorActionPreference = 'Stop'
+$turnRoot = Split-Path -Parent $PSScriptRoot
+$turnFw = if (Test-Path (Join-Path $turnRoot 'firmware/NCKHAGVmoi1/src')) { Join-Path $turnRoot 'firmware/NCKHAGVmoi1/src' } elseif (Test-Path (Join-Path $turnRoot 'firmware/NCKHAGV/src')) { Join-Path $turnRoot 'firmware/NCKHAGV/src' } else { Join-Path $turnRoot 'firmware/NCKHAGV/NCKHAGV/src' }
+$turnOut = Join-Path $turnRoot '.qa/docking-align'
+New-Item -ItemType Directory -Force -Path $turnOut | Out-Null
+$gpp = if (Get-Command 'g++.exe' -ErrorAction SilentlyContinue) { (Get-Command 'g++.exe').Source } elseif (Test-Path 'C:/msys64/ucrt64/bin/g++.exe') { 'C:/msys64/ucrt64/bin/g++.exe' } elseif (Test-Path 'C:\Program Files\CodeBlocks\MinGW\bin\g++.exe') { 'C:\Program Files\CodeBlocks\MinGW\bin\g++.exe' } else { 'g++.exe' }
+try {
+    foreach ($turnProfile in @('01','02')) {
+        $turnBinary = Join-Path $turnOut "docking-align-$turnProfile.exe"
+        & $gpp '-std=c++17' '-I' "$turnRoot/tests/motor-host" '-I' $turnFw `
+            '-DAGV_TWO_ROBOT_BENCH_TRIAL=1' "-DAGV_ROBOT_PROFILE_$turnProfile=1" `
+            "$turnRoot/tests/motor-host/docking_align.cpp" "$turnFw/core/CoreNavigator.cpp" `
+            "$turnFw/core/ControlLogic.cpp" "$turnFw/motion/MovementModule.cpp" `
+            "$turnFw/motion/LineFollowModule.cpp" "$turnFw/motion/MotorModule.cpp" '-o' $turnBinary
+        if ($LASTEXITCODE -ne 0) { throw "Build docking-align profile $turnProfile failed" }
+        & $turnBinary
+        if ($LASTEXITCODE -ne 0) { throw "docking-align profile $turnProfile failed" }
+    }
+} finally { }
