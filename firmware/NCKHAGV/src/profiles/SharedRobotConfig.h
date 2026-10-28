@@ -94,3 +94,20 @@
 #ifndef AGV_BATTERY_PWM_OFFSET_LOW
 #define AGV_BATTERY_PWM_OFFSET_LOW 15           // Pin yếu (< 30%): tăng thêm 15 PWM chống ỳ
 #endif
+
+// ----------------------------------------------------------------------------
+// CẤU HÌNH CỨU LINE KHI XOAY 180 ĐỘ BỊ LỐ (Turn 180 Overshoot Recovery)
+// ----------------------------------------------------------------------------
+// Khi xe xoay 180 độ ở tốc độ cao, trớn quán tính có thể làm xe xoay lướt qua khỏi vạch.
+// Tính năng này giúp xe tự động quay ngược lại (PivotLeft) để bắt lại chuẩn tâm 010.
+#ifndef AGV_TURN_180_RECOVERY_ENABLED
+#define AGV_TURN_180_RECOVERY_ENABLED 1         // 1: Bật tự động cứu line khi xoay 180 lố; 0: Tắt
+#endif
+
+#ifndef AGV_TURN_180_RECOVERY_PWM
+#define AGV_TURN_180_RECOVERY_PWM 165           // Tốc độ PWM bánh xe khi quay ngược lại tìm line (êm ái)
+#endif
+
+#ifndef AGV_TURN_180_RECOVERY_DELAY_MS
+#define AGV_TURN_180_RECOVERY_DELAY_MS 100      // Thời gian phanh dừng chờ ban đầu (ms) trước khi kích hoạt cứu line
+#endif

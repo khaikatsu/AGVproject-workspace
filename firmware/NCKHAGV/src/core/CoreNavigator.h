@@ -54,9 +54,10 @@ public:
     }
     bool precisionPivot() const {
         return g1TurnAroundPrecision() || isDockingTurn() || recoveringLine() || cornerRecovering() ||
-            (turnCaptureEnabled() && phase_ == Phase::Turning && oldLineDeparted_);
+            turn180Recovering() || (turnCaptureEnabled() && phase_ == Phase::Turning && oldLineDeparted_);
     }
     int precisionPivotPwm() const {
+        if (turn180Recovering()) return Config::TURN_180_RECOVERY_PWM;
         if (g1TurnAroundPrecision()) return Config::G1_TURN_AROUND_PWM;
         if (isDockingTurn()) return (phase_ == Phase::TurnCapture) ? Config::GS_ALIGN_PWM : Config::GS_TURN_PWM;
         if (cornerRecovering()) return Config::CORNER_RECOVERY_PWM;
@@ -72,6 +73,7 @@ public:
     bool following() const { return phase_ == Phase::Following && !recoveringLine(); }
     bool recoveringLine() const { return Config::LINE_RECOVERY_ENABLED && lineLossPending_; }
     bool cornerRecovering() const { return cornerRecovering_; }
+    bool turn180Recovering() const { return turn180Recovering_; }
     bool obstaclePaused() const { return obstaclePaused_; }
     bool networkPaused() const { return networkPaused_; }
     bool forwardLineTracking() const {
@@ -161,5 +163,7 @@ private:
     MotorAction cornerRecoveryDirection_ = MotorAction::Stop;
     MotorAction lastCornerDirection_ = MotorAction::Stop;
     uint32_t lastCornerDriftMs_ = 0;
+    bool turn180Recovering_ = false;
+    uint32_t turnAroundCaptureMs_ = 0;
 };
 

@@ -78,6 +78,15 @@
 // để triệt tiêu toàn bộ quán tính xoay và xác nhận chuẩn tâm 010 trước khi tiếp tục chạy.
 #define AGV_TURN_AROUND_CONFIRM_MS 100  // Chuẩn 100ms (không nên để 1000ms vì xe sẽ bị đứng đơ 1 giây)
 
+// [TỰ ĐỘNG CỨU LINE KHI XOAY 180 ĐỘ BỊ LỐ (Turn 180 Overshoot Recovery)]:
+// Khi xe xoay 180 độ trớn quán tính quăng lướt qua khỏi vạch (vào 000 hoặc 110/100):
+// Xe sẽ tự động quay ngược chiều (PivotLeft) để kéo mắt đọc về lại chuẩn tâm 010.
+// Mặc định nạp từ SharedRobotConfig.h: Bật cứu line (1), tốc độ quay ngược 165 PWM, độ trễ phanh 100ms.
+// Bỏ comment nếu muốn tinh chỉnh riêng cho Xe 01:
+// #define AGV_TURN_180_RECOVERY_ENABLED 1
+// #define AGV_TURN_180_RECOVERY_PWM 165
+// #define AGV_TURN_180_RECOVERY_DELAY_MS 100
+
 // ----------------------------------------------------------------------------
 // 6. ĐIỀU KHIỂN DOCKING VÀO BASE S1 (GS1 -> S1 Reversing)
 // ----------------------------------------------------------------------------

@@ -201,11 +201,54 @@ static void ordinaryTurnsKeepTheirWindow() {
     }
 }
 
+static void overshootAndRecover() {
+    Rig r; r.start();
+    const auto at = r.candidate(); // observeTurnAroundLine caught candidate
+
+    // 1. Phanh dừng ban đầu 100ms: Xe phanh nhưng quán tính đẩy trôi vào 000
+    for (uint32_t dt = 2; dt < Config::TURN_AROUND_CONFIRM_MS; dt += 2) {
+        CHECK(r.step(0, at + dt) == MotorAction::Stop);
+        r.stopped();
+        CHECK(!r.nav.following());
+    }
+
+    // 2. Sau 100ms phanh dừng: Xe vẫn ở 000 (xoay lố sang phải qua khỏi vạch)
+    // Thuật toán Recovery kích hoạt PivotLeft để quay ngược lại kéo vạch về!
+    CHECK(r.step(0, at + Config::TURN_AROUND_CONFIRM_MS + 2) == MotorAction::PivotLeft);
+    CHECK(r.nav.turn180Recovering());
+    CHECK(r.nav.precisionPivot());
+    CHECK(r.nav.precisionPivotPwm() == Config::TURN_180_RECOVERY_PWM);
+
+    // 3. Mắt trái chạm vạch trước: pattern = 4 (100) -> tiếp tục PivotLeft
+    CHECK(r.step(4, at + Config::TURN_AROUND_CONFIRM_MS + 20) == MotorAction::PivotLeft);
+    CHECK(r.nav.turn180Recovering());
+
+    // 4. Vạch vào trúng tâm: pattern = 2 (010)!
+    // Lập tức ngắt lệnh quay và PHANH DỪNG để xác nhận tâm
+    const auto catchAt = at + Config::TURN_AROUND_CONFIRM_MS + 40;
+    CHECK(r.step(2, catchAt) == MotorAction::Stop);
+    CHECK(!r.nav.turn180Recovering());
+    r.stopped();
+
+    // 5. Giữ yên trên line 2 để confirm
+    for (uint32_t dt = 2; dt < ConfirmMs; dt += 2) {
+        CHECK(r.step(2, catchAt + dt) == MotorAction::Stop);
+        r.stopped();
+        CHECK(!r.nav.following());
+    }
+
+    // 6. Xác nhận hoàn tất -> Chuyển sang Following thành công!
+    CHECK(r.step(2, catchAt + ConfirmMs) == MotorAction::Stop);
+    r.stopped();
+    CHECK(r.nav.following());
+}
+
 int main() {
     try {
         static_assert(Config::TURN_AROUND_CAPTURE_ENABLED && Config::TURN_LINE_SAMPLE_MS==2,"Run with two-robot profiles");
         fastStopAndConfirm();countBranchesAndRejectEdges();noiseAndDeadline();safety();stationStop();
         ordinaryRecoveryKeepsItsWindow();ordinaryTurnsKeepTheirWindow();
+        overshootAndRecover();
         std::cout<<"PASS "<<Config::AGV_ID<<": 180 early STOP, 2ms fresh samples/"<<Config::TURN_AROUND_CONFIRM_MS<<"ms at rest, narrow only, branch count, "
                  <<"forward cap/station ready, stale/noise/wrap, original deadline, grant/STOP/network/sonar, ordinary recovery/active turn capture 100ms\n";
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}

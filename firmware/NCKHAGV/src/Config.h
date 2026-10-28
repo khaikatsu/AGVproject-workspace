@@ -468,6 +468,25 @@ constexpr int G1_TURN_AROUND_PWM = AGV_G1_TURN_AROUND_PWM;
 #else
 constexpr int G1_TURN_AROUND_PWM = 0; // Khong override o cac profile khac.
 #endif
+
+#if defined(AGV_TURN_180_RECOVERY_ENABLED)
+constexpr bool TURN_180_RECOVERY_ENABLED = AGV_TURN_180_RECOVERY_ENABLED == 1;
+#else
+constexpr bool TURN_180_RECOVERY_ENABLED = true;
+#endif
+
+#if defined(AGV_TURN_180_RECOVERY_PWM)
+constexpr int TURN_180_RECOVERY_PWM = AGV_TURN_180_RECOVERY_PWM;
+#else
+constexpr int TURN_180_RECOVERY_PWM = 165;
+#endif
+
+#if defined(AGV_TURN_180_RECOVERY_DELAY_MS)
+constexpr uint32_t TURN_180_RECOVERY_DELAY_MS = AGV_TURN_180_RECOVERY_DELAY_MS;
+#else
+constexpr uint32_t TURN_180_RECOVERY_DELAY_MS = 100;
+#endif
+static_assert(TURN_180_RECOVERY_PWM > 0 && TURN_180_RECOVERY_PWM <= 255, "Invalid turn 180 recovery PWM");
 static_assert(G1_TURN_AROUND_PWM == 0 ||
               (G1_TURN_AROUND_PWM > 0 && G1_TURN_AROUND_PWM <= 255 &&
                G1_TURN_AROUND_PWM <= TURN_SPEED), "Invalid G1 turn-around PWM");
