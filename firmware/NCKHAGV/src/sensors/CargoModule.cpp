@@ -1,7 +1,7 @@
 #include "CargoModule.h"
 
 void CargoModule::begin() {
-    pinMode(Config::CARGO_IR_PIN, INPUT);
+    pinMode(Config::CARGO_IR_PIN, INPUT_PULLUP);
     raw_ = digitalRead(Config::CARGO_IR_PIN) == Config::CARGO_IR_ACTIVE_STATE;
     changedAtMs_ = millis();
     stable_ = false;

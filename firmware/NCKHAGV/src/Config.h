@@ -91,7 +91,8 @@ constexpr int SERVO_3_PIN = REAR_ULTRASONIC_ECHO_PIN < 0 ? 21 : -1;
 constexpr int BUZZER_PIN = REAR_ULTRASONIC_ECHO_PIN < 0 ? 0 : 21;
 constexpr int CARGO_IR_PIN = 2;
 constexpr int BUZZER_ACTIVE_STATE = 0;
-constexpr int CARGO_IR_ACTIVE_STATE = 1;
+// Flying Fish IR sensor (LM393): Active-LOW (0 = co vat can/hang, 1 = trong trai)
+constexpr int CARGO_IR_ACTIVE_STATE = 0;
 constexpr uint32_t CARGO_IR_STABLE_MS = 150;
 constexpr uint32_t REVERSE_STOP_MS = 150;
 // Front-mounted line sensors have not been validated for backward steering.
@@ -830,7 +831,7 @@ static_assert(!MUTEX_ENCODER_RELEASE_ENABLED ||
               "Mutex release pulse threshold must round the measured clearance upward");
 static_assert(LINE_LEFT_PIN >= 34 && LINE_CENTER_PIN >= 34 && LINE_RIGHT_PIN >= 34, "Line inputs must remain input-only pins");
 static_assert(BATTERY_ADC_PIN == 36, "Battery must remain on ADC1 GPIO36");
-static_assert(BUZZER_ACTIVE_STATE == 0 && CARGO_IR_ACTIVE_STATE == 1, "Unexpected buzzer/IR polarity");
+static_assert(BUZZER_ACTIVE_STATE == 0 && (CARGO_IR_ACTIVE_STATE == 0 || CARGO_IR_ACTIVE_STATE == 1), "Unexpected buzzer/IR polarity");
 static_assert(CARGO_IR_STABLE_MS > 0 && REVERSE_STOP_MS > 0, "Safety debounce/hold must be nonzero");
 static_assert(BASE_SPEED >= 0 && BASE_SPEED <= 255 &&
               BASE_SPEED + LEFT_SPEED_TRIM > 0 && BASE_SPEED + LEFT_SPEED_TRIM <= 255 &&

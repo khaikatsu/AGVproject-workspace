@@ -265,6 +265,17 @@ void AGVController::update() {
         clearance_.reset();
     }
     cargo_.update(millis());
+    if (Config::DEBUG_ENABLED) {
+        static bool lastReportedCargoStable = false;
+        static bool lastReportedCargoPresent = false;
+        if (cargo_.stable() != lastReportedCargoStable || cargo_.present() != lastReportedCargoPresent) {
+            lastReportedCargoStable = cargo_.stable();
+            lastReportedCargoPresent = cargo_.present();
+            Serial.printf("[CARGO_IR] gpio=%d stable=%d present=%d -> %s\n",
+                          Config::CARGO_IR_PIN, cargo_.stable() ? 1 : 0, cargo_.present() ? 1 : 0,
+                          cargo_.present() ? "CO HANG / VAT CAN" : "TRONG TRAI");
+        }
+    }
     updateSonars();
     battery_.update(motor_.leftDuty() != 0 || motor_.rightDuty() != 0);
     const float batteryPct = battery_.getBatteryPercentage();
@@ -517,9 +528,10 @@ void AGVController::update() {
         static_cast<uint32_t>(millis() - lastBenchPrintMs_) >= 1000) {
         lastBenchPrintMs_ = millis();
         const LineReadings line = line_.readSensors();
-        Serial.printf("[BENCH] line=%d%d%d pattern=%u; ultrasonic=%.1fcm valid=%d; battery_adc=%lumV\n",
+        Serial.printf("[BENCH] line=%d%d%d pattern=%u; ultrasonic=%.1fcm valid=%d; cargo=%d; battery_adc=%lumV\n",
                       line.left, line.center, line.right, static_cast<unsigned int>(line.pattern),
                       sensor_.readDistanceCm(), sensor_.valid() ? 1 : 0,
+                      cargo_.present() ? 1 : 0,
                       static_cast<unsigned long>(battery_.adcMillivolts()));
     }
 }
