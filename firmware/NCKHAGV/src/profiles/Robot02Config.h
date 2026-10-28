@@ -119,3 +119,22 @@
 #define AGV_STARTUP_BOOST_STEP_PWM 8      // Độ dốc tăng lực: Mỗi nấc nhồi thêm bao nhiêu PWM (đặt 5..10 để tăng từ từ êm ái)
 #define AGV_STARTUP_BOOST_INTERVAL_MS 60  // Khoảng cách thời gian (ms) giữa các nấc tăng (đặt 50..100ms để tăng chậm, không bị vọt giật)
 #define AGV_STARTUP_BOOST_MAX_PWM 180     // Giới hạn PWM boost tối đa (chống vọt xe quá mạnh)
+
+// ----------------------------------------------------------------------------
+// 10. BÙ TỐC ĐỘ THEO BẬC THANG % PIN (Battery Step Speed Compensation)
+// ----------------------------------------------------------------------------
+// Giúp xe luôn giữ vận tốc ổn định xuyên suốt từ 100% xuống 20% pin (chống phóng nhanh lúc đầy, ỳ lúc yếu).
+// Mặc định nạp từ SharedRobotConfig.h:
+//   Pin >= 80%: -10 PWM
+//   Pin 50% - 79%: 0 PWM (chuẩn đã căn chỉnh)
+//   Pin 30% - 49%: +8 PWM
+//   Pin < 30%: +15 PWM
+// Bỏ comment các dòng dưới nếu muốn tinh chỉnh riêng cho Xe 02:
+// #define AGV_BATTERY_SPEED_COMP_ENABLED 1
+// #define AGV_BATTERY_STEP_HIGH_PERCENT 80.0f
+// #define AGV_BATTERY_PWM_OFFSET_HIGH -10
+// #define AGV_BATTERY_STEP_MID_PERCENT 50.0f
+// #define AGV_BATTERY_PWM_OFFSET_NOMINAL 0
+// #define AGV_BATTERY_STEP_LOW_PERCENT 30.0f
+// #define AGV_BATTERY_PWM_OFFSET_MID 8
+// #define AGV_BATTERY_PWM_OFFSET_LOW 15

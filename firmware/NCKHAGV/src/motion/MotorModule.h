@@ -17,11 +17,14 @@ public:
     int leftDuty() const { return appliedLeft_; }
     int rightDuty() const { return appliedRight_; }
     void applyStartupBoost(int boost);
+    void setBatteryCompOffset(int offset) { batteryCompOffset_ = offset; }
+    int batteryCompOffset() const { return batteryCompOffset_; }
 private:
     void drive(int left, int right);
     void writeSide(bool left, int duty);
     int leftSpeed_ = Config::DEFAULT_MOTOR_SPEED;
     int rightSpeed_ = Config::DEFAULT_MOTOR_SPEED;
     int appliedLeft_ = 0, appliedRight_ = 0;
+    int batteryCompOffset_ = 0;
     bool initialized_ = false;
 };

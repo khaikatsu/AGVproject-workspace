@@ -62,6 +62,12 @@ void AGVController::begin() {
                       Config::BATTERY_SERIES_CELLS, Config::BATTERY_EMPTY_VOLTAGE,
                       Config::BENCH_MAX_VOLTAGE, Config::BATTERY_FULL_VOLTAGE,
                       Config::BATTERY_VOLTAGE_SCALE, Config::BATTERY_VOLTAGE_OFFSET);
+        Serial.printf("[BATTERY_COMP] enabled=%d high>=%.0f%%(%+d) mid>=%.0f%%(%+d) low>=%.0f%%(%+d) crit=(%+d)\n",
+                      Config::BATTERY_SPEED_COMP_ENABLED ? 1 : 0,
+                      Config::BATTERY_STEP_HIGH_PERCENT, Config::BATTERY_PWM_OFFSET_HIGH,
+                      Config::BATTERY_STEP_MID_PERCENT, Config::BATTERY_PWM_OFFSET_NOMINAL,
+                      Config::BATTERY_STEP_LOW_PERCENT, Config::BATTERY_PWM_OFFSET_MID,
+                      Config::BATTERY_PWM_OFFSET_LOW);
         Serial.printf("[AGV] Core motion %s; mutex encoder release=%d threshold=%lu pulses/wheel\n",
                       Config::ENABLE_CORE_MOTION ? "configured" : "locked",
                       Config::MUTEX_ENCODER_RELEASE_ENABLED,
@@ -261,6 +267,8 @@ void AGVController::update() {
     cargo_.update(millis());
     updateSonars();
     battery_.update(motor_.leftDuty() != 0 || motor_.rightDuty() != 0);
+    const float batteryPct = battery_.getBatteryPercentage();
+    motor_.setBatteryCompOffset(Config::batteryStepPwmOffset(batteryPct));
     servo_.update();
     bool inhibited = consumePriority();
     if (controlArmed_) control_.checkSafety(input());

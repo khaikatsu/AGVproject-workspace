@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -662,6 +663,73 @@ inline bool benchVoltageReady(float voltage) {
            (voltage >= BATTERY_EMPTY_VOLTAGE && voltage <= BENCH_MAX_VOLTAGE);
 }
 constexpr uint32_t BATTERY_SAMPLE_INTERVAL_MS = 500;
+
+// ----------------------------------------------------------------------------
+// Bù tốc độ theo bậc thang % pin (Battery Step Speed Compensation)
+// ----------------------------------------------------------------------------
+#if defined(AGV_BATTERY_SPEED_COMP_ENABLED)
+constexpr bool BATTERY_SPEED_COMP_ENABLED = AGV_BATTERY_SPEED_COMP_ENABLED == 1;
+#else
+constexpr bool BATTERY_SPEED_COMP_ENABLED = true;
+#endif
+
+#if defined(AGV_BATTERY_STEP_HIGH_PERCENT)
+constexpr float BATTERY_STEP_HIGH_PERCENT = AGV_BATTERY_STEP_HIGH_PERCENT;
+#else
+constexpr float BATTERY_STEP_HIGH_PERCENT = 80.0f;
+#endif
+
+#if defined(AGV_BATTERY_STEP_MID_PERCENT)
+constexpr float BATTERY_STEP_MID_PERCENT = AGV_BATTERY_STEP_MID_PERCENT;
+#else
+constexpr float BATTERY_STEP_MID_PERCENT = 50.0f;
+#endif
+
+#if defined(AGV_BATTERY_STEP_LOW_PERCENT)
+constexpr float BATTERY_STEP_LOW_PERCENT = AGV_BATTERY_STEP_LOW_PERCENT;
+#else
+constexpr float BATTERY_STEP_LOW_PERCENT = 30.0f;
+#endif
+
+#if defined(AGV_BATTERY_PWM_OFFSET_HIGH)
+constexpr int BATTERY_PWM_OFFSET_HIGH = AGV_BATTERY_PWM_OFFSET_HIGH;
+#else
+constexpr int BATTERY_PWM_OFFSET_HIGH = -10;
+#endif
+
+#if defined(AGV_BATTERY_PWM_OFFSET_NOMINAL)
+constexpr int BATTERY_PWM_OFFSET_NOMINAL = AGV_BATTERY_PWM_OFFSET_NOMINAL;
+#else
+constexpr int BATTERY_PWM_OFFSET_NOMINAL = 0;
+#endif
+
+#if defined(AGV_BATTERY_PWM_OFFSET_MID)
+constexpr int BATTERY_PWM_OFFSET_MID = AGV_BATTERY_PWM_OFFSET_MID;
+#else
+constexpr int BATTERY_PWM_OFFSET_MID = 8;
+#endif
+
+#if defined(AGV_BATTERY_PWM_OFFSET_LOW)
+constexpr int BATTERY_PWM_OFFSET_LOW = AGV_BATTERY_PWM_OFFSET_LOW;
+#else
+constexpr int BATTERY_PWM_OFFSET_LOW = 15;
+#endif
+
+inline int batteryStepPwmOffset(float batteryPercent) {
+    if (!BATTERY_SPEED_COMP_ENABLED || !std::isfinite(batteryPercent) || batteryPercent < 0.0f) {
+        return 0;
+    }
+    if (batteryPercent >= BATTERY_STEP_HIGH_PERCENT) {
+        return BATTERY_PWM_OFFSET_HIGH;
+    }
+    if (batteryPercent >= BATTERY_STEP_MID_PERCENT) {
+        return BATTERY_PWM_OFFSET_NOMINAL;
+    }
+    if (batteryPercent >= BATTERY_STEP_LOW_PERCENT) {
+        return BATTERY_PWM_OFFSET_MID;
+    }
+    return BATTERY_PWM_OFFSET_LOW;
+}
 
 // Runtime MQTT topics are built from the robot ID using the Core v0 contract.
 #if defined(AGV_PROFILE_ID)
