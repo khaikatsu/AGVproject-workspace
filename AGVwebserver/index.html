@@ -4,7 +4,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hệ thống Giám sát AGV</title>
+  <title>Hệ thống Giám sát AGV · PTIT</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     html,
     body {
@@ -573,18 +576,28 @@
   <link rel="stylesheet" href="/warehouse-operations.css?v=20261026-layout-inventory">
   <link rel="stylesheet" href="/dashboard-missions.css?v=20261026-layout-inventory">
   <link rel="stylesheet" href="/dashboard-reports.css?v=20261026-compact-reports">
+  <link rel="stylesheet" href="/theme-ptit.css?v=20261030-ptit-highcontrast">
 </head>
 
-<body data-view="overview" data-map-expanded="true">
+<body data-view="overview" data-map-expanded="true" data-theme="ptit">
   <header id="topbar">
     <div class="brand-lockup">
+      <img src="/ptit-icon.png" alt="PTIT" class="brand-logo-img" id="brandLogoImg" />
       <span class="brand-mark" aria-hidden="true">AGV</span>
-      <div><div class="brand-title">Trung tâm điều phối</div><div class="brand-subtitle">Kho AGV · Hai xe tự hành</div></div>
+      <div>
+        <div class="brand-title">Trung tâm điều phối AGV</div>
+        <div class="brand-subtitle" id="brandSubtitle">PTIT Smart Logistics · Học viện CN Bưu chính Viễn thông</div>
+      </div>
     </div>
     <div class="header-status" aria-label="Trạng thái kết nối">
       <span id="status" class="status-indicator bad">Web: Đang kết nối</span>
       <span id="agvLinkStatus" class="status-indicator bad">Core: Đang chờ</span>
       <span id="mqttStatus" class="status-indicator bad">MQTT: Đang chờ</span>
+    </div>
+    <div class="theme-switcher">
+      <button id="themeToggleBtn" type="button" class="btn-theme-toggle" title="Chuyển đổi phong cách PTIT / Chuẩn">
+        <span>🎓</span> <span class="theme-pill-badge" id="themeBadge">PTIT</span> <span id="themeToggleLabel">Gu PTIT</span>
+      </button>
     </div>
     <details id="connectionSettings" class="connection-settings">
       <summary>Thiết lập kết nối</summary>
@@ -648,7 +661,7 @@
       </section>
     </aside>
     <section id="center-panel" aria-label="Bản đồ kho">
-      <div class="map-heading"><div><span class="eyebrow">SƠ ĐỒ VẬN HÀNH</span><div id="mapTitle">Bản đồ kho</div></div><div class="map-actions"><span id="robot01Speed" class="map-live">Xe 01: chưa có tốc độ</span><button id="mapExpandBtn" type="button" class="btn-outline" aria-pressed="true" onclick="toggleMapExpanded()">Thu gọn</button><button id="mapZoomBtn" type="button" class="btn-outline" aria-pressed="false" onclick="toggleMapZoom()">Phóng to</button></div></div>
+      <div class="map-heading"><div><span class="eyebrow map-heading-title">SƠ ĐỒ VẬN HÀNH</span><div id="mapTitle" style="display:none" hidden></div></div><div class="map-actions"><span id="robot01Speed" class="map-live">Xe 01: chưa có tốc độ</span><button id="mapExpandBtn" type="button" class="btn-outline" aria-pressed="true" onclick="toggleMapExpanded()">Thu gọn</button><button id="mapZoomBtn" type="button" class="btn-outline" aria-pressed="false" onclick="toggleMapZoom()">Phóng to</button></div></div>
       <div id="selectionBar" class="idle"><span id="selectionText">Bấm node để Core chọn xe gần nhất; bấm robot trước nếu muốn chỉ định xe.</span><button id="cancelSelectBtn" onclick="cancelSelection()" style="display:none">Huỷ chọn (Esc)</button></div>
       <div id="mapViewport" class="map-viewport" data-zoom="fit">
         <svg id="mapSvg" viewBox="20 20 1020 720" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Đồ thị kho, hướng đường, RFID và vị trí xe">

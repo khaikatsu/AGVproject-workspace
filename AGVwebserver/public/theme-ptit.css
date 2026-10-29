@@ -1,0 +1,1048 @@
+/* ==========================================================================
+   MINIMALIST TECH SAAS - INDUSTRIAL SHARP EDITION (TRẮNG - ĐỎ SON - ĐEN)
+   Học viện Công nghệ Bưu chính Viễn thông · PTIT Smart Logistics
+   - Nền web: Ngả xám sâu chống chói (#CFD4DC), thẻ trắng tách bạch rõ rệt (#FFFFFF)
+   - Thẻ Xe 01 & Xe 02: NỀN ĐỎ SON PTIT (#C4122F), chữ trắng tinh, nút trắng chữ đỏ
+   - Hộp Lấy/Giao: Nền đỏ sẫm (#991B1B) / (#C4122F), chữ "LẤY TỪ/GIAO ĐẾN" và "K1/K4/K6" đều màu Trắng
+   - Modal Khôi phục xe: Nền trắng tinh tế (#FFFFFF), chữ đen rõ nét, khử sạch màu đen navy cũ
+   - Kệ trên xe (Cần đối soát): Nền hồng nhạt (#FEF2F2), viền đỏ (#F87171), chữ đỏ đậm (#991B1B) cực kỳ dễ đọc
+   - Map lines: Mỏng thanh thoát (2.8px), xám than công nghiệp (#374151)
+   - Bo góc: Bầu mềm mại 12px / 8px thanh lịch ("bầu xíu")
+   ========================================================================== */
+
+/* 1. Core Variables */
+:root[data-theme="ptit"],
+body[data-theme="ptit"] {
+  --bg-main: #cfd4dc;           /* Nền xám sâu dịu mắt, tách biệt hoàn hảo với thẻ trắng */
+  --bg-panel: #ffffff;          /* Thẻ trắng tinh tế nổi bật trên nền xám */
+  --bg-card: #ffffff;
+  --bg-subtle: #bcc4cf;
+
+  --text-main: #111827;         /* Chữ đen than đậm rõ ràng */
+  --text-muted: #374151;        /* Chữ phụ xám than đậm nét */
+  --text-dim: #4b5563;
+
+  --border-color: #bcc4cf;      /* Viền xám định hình khung rõ rệt */
+  --border-hover: #9ca3af;
+
+  /* Đỏ Son PTIT */
+  --accent-blue: #c4122f;
+  --accent-blue-hover: #a60e26;
+  --ptit-red: #c4122f;
+  --ptit-red-dark: #991b1b;
+  --ptit-red-soft: #fef2f2;
+  --ptit-red-border: #fecaca;
+  --ptit-charcoal: #374151;
+
+  /* Status Colors */
+  --status-ok: #16a34a;
+  --status-warn: #d97706;
+  --status-error: #c4122f;
+  --status-blocked: #ea580c;
+  --status-offline: #6b7280;
+  --status-working: #c4122f;
+  --status-good-text: #15803d;
+  --status-warn-text: #b45309;
+  --status-error-text: #c4122f;
+  --status-current: #c4122f;
+
+  /* Vehicles on Map */
+  --vehicle-primary: #c4122f;
+  --vehicle-secondary: #1f2937;
+  --vehicle-selected: #c4122f;
+  --node-mutex: #ea580c;
+  --node-charging: #16a34a;
+  --node-station: #c4122f;
+}
+
+[data-theme="ptit"],
+[data-theme="ptit"] * {
+  font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+/* Nền web ngả xám dịu mắt chống chói */
+[data-theme="ptit"] body,
+body[data-theme="ptit"] {
+  background-color: #cfd4dc !important;
+  color: #111827 !important;
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-theme="ptit"] #main-container {
+  background: #cfd4dc !important;
+}
+
+/* 2. Bo góc bầu mềm mại ("cho cái khung này bầu xíu") */
+[data-theme="ptit"] .card,
+[data-theme="ptit"] .card.compact,
+[data-theme="ptit"] .panel-card,
+[data-theme="ptit"] .operations-board,
+[data-theme="ptit"] .mission-board,
+[data-theme="ptit"] #center-panel,
+[data-theme="ptit"] .robot-transfer-card {
+  border-radius: 12px !important;       /* Các khung chính bo góc bầu 12px hiện đại */
+}
+
+[data-theme="ptit"] .stat-card,
+[data-theme="ptit"] .warehouse-slot-card,
+[data-theme="ptit"] .transfer-route-end,
+[data-theme="ptit"] .transfer-preview,
+[data-theme="ptit"] .mission-item,
+[data-theme="ptit"] .report-metric,
+[data-theme="ptit"] #brandLogoImg {
+  border-radius: 8px !important;        /* Khối con và hộp lộ trình bo góc 8px */
+}
+
+[data-theme="ptit"] .btn,
+[data-theme="ptit"] .btn-outline,
+[data-theme="ptit"] button,
+[data-theme="ptit"] .btn-theme-toggle {
+  border-radius: 8px !important;        /* Nút bấm bo góc 8px */
+}
+
+[data-theme="ptit"] input,
+[data-theme="ptit"] select,
+[data-theme="ptit"] textarea,
+[data-theme="ptit"] .status-indicator,
+[data-theme="ptit"] .operation-badge,
+[data-theme="ptit"] .mission-badge,
+[data-theme="ptit"] .mission-count,
+[data-theme="ptit"] .theme-pill-badge,
+[data-theme="ptit"] .warehouse-cargo-tag,
+[data-theme="ptit"] .transfer-step-number,
+[data-theme="ptit"] .task-mode-switch,
+[data-theme="ptit"] .task-mode-switch button,
+[data-theme="ptit"] .report-tabs button,
+[data-theme="ptit"] .connection-settings > summary {
+  border-radius: 6px !important;        /* Badge, tag và form input 6px */
+}
+
+dialog,
+[data-theme="ptit"] dialog {
+  border-radius: 14px !important;       /* Modal bầu 14px */
+}
+
+/* 2. Topbar Header */
+[data-theme="ptit"] #topbar {
+  background: #ffffff !important;
+  border-bottom: 1px solid #d1d5db !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="ptit"] #brandLogoImg {
+  display: block !important;
+  width: 42px;
+  height: 42px;
+  border: 1px solid #d1d5db;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+[data-theme="ptit"] .brand-mark {
+  display: none !important;
+}
+
+[data-theme="ptit"] .brand-title {
+  color: #111827 !important;
+  font-size: 16px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.01em !important;
+}
+
+[data-theme="ptit"] .brand-subtitle {
+  color: #c4122f !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="ptit"] .connection-settings > summary {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  color: #111827 !important;
+  font-weight: 650 !important;
+}
+
+[data-theme="ptit"] .connection-popover {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1) !important;
+  color: #111827 !important;
+}
+
+/* Status Indicators */
+[data-theme="ptit"] .status-indicator {
+  background: #f3f4f6 !important;
+  border: 1px solid #d1d5db !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="ptit"] .status-indicator.ok {
+  background: #f0fdf4 !important;
+  color: #15803d !important;
+  border-color: #bbf7d0 !important;
+}
+
+[data-theme="ptit"] .status-indicator.bad {
+  background: #fef2f2 !important;
+  color: #991b1b !important;
+  border-color: #fecaca !important;
+}
+
+[data-theme="ptit"] .status-indicator.warn {
+  background: #fffbeb !important;
+  color: #92400e !important;
+  border-color: #fde68a !important;
+}
+
+/* 3. Navigation Bar */
+[data-theme="ptit"] #workspaceNav {
+  background: #ffffff !important;
+  border-bottom: 1px solid #d1d5db !important;
+  gap: 6px !important;
+}
+
+[data-theme="ptit"] #workspaceNav button {
+  color: #4b5563 !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  font-weight: 650 !important;
+}
+
+[data-theme="ptit"] #workspaceNav button:hover {
+  background: #f3f4f6 !important;
+  color: #111827 !important;
+}
+
+[data-theme="ptit"] #workspaceNav button[aria-current="page"] {
+  background: #fef2f2 !important;
+  border-color: #fecaca !important;
+  color: #c4122f !important;
+  font-weight: 800 !important;
+}
+
+/* 4. Overview KPI Stats */
+[data-theme="ptit"] #overviewStats {
+  background: #cfd4dc !important;
+  border-bottom: 1px solid #bcc4cf !important;
+  gap: 12px !important;
+}
+
+[data-theme="ptit"] .stat-card {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="ptit"] .stat-label {
+  color: #4b5563 !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+}
+
+[data-theme="ptit"] .stat-card strong {
+  color: #111827 !important;
+  font-size: 22px !important;
+  font-weight: 800 !important;
+}
+
+[data-theme="ptit"] .stat-card small {
+  color: #6b7280 !important;
+}
+
+/* ==========================================================================
+   5. ẢNH 3 & ẢNH 4: THẺ XE 01 VÀ XE 02 -> NỀN ĐỎ SON PTIT (#C4122F)
+   ========================================================================== */
+[data-theme="ptit"] .robot-transfer-card,
+[data-theme="ptit"] .robot-transfer-card[data-tone="bad"],
+[data-theme="ptit"] .robot-transfer-card[data-robot-transfer="01"],
+[data-theme="ptit"] .robot-transfer-card[data-robot-transfer="02"] {
+  background: #c4122f !important;       /* NỀN ĐỎ SON PTIT RỰC RỠ CHO CẢ 2 XE */
+  border: 1px solid #991b1b !important;
+  border-top: 4px solid #7f1d1d !important;
+  box-shadow: 0 4px 14px rgba(196, 18, 47, 0.22) !important;
+  color: #ffffff !important;
+}
+
+[data-theme="ptit"] .robot-transfer-card[data-robot-transfer="02"] {
+  background: #c4122f !important;       /* XE 02 CŨNG MANG NỀN ĐỎ SON ĐỒNG BỘ */
+  border: 1px solid #991b1b !important;
+  border-top: 4px solid #7f1d1d !important;
+}
+
+/* Header & Tên Xe */
+[data-theme="ptit"] .robot-transfer-card .transfer-card-heading strong {
+  color: #ffffff !important;            /* Chữ "Xe 01", "Xe 02" màu trắng nổi bật */
+  font-size: 16px !important;
+  font-weight: 850 !important;
+}
+
+/* Huy hiệu trạng thái trên thẻ xe */
+[data-theme="ptit"] .robot-transfer-card .operation-badge {
+  background: rgba(0, 0, 0, 0.25) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  font-weight: 700 !important;
+}
+
+/* Các đoạn văn bản thông tin bên trong thẻ xe */
+[data-theme="ptit"] .robot-transfer-card .vehicle-telemetry,
+[data-theme="ptit"] .robot-transfer-card .transfer-metadata,
+[data-theme="ptit"] .robot-transfer-card p {
+  color: #ffffff !important;
+  opacity: 0.95 !important;
+  font-size: 12px !important;
+}
+
+[data-theme="ptit"] .robot-transfer-card .transfer-phase {
+  color: #ffffff !important;
+  font-weight: 800 !important;
+}
+
+/* Thông báo cảnh báo bên trong thẻ xe */
+[data-theme="ptit"] .robot-transfer-card .transfer-alert {
+  color: #fef08a !important;            /* Chữ vàng sáng cảnh báo trên nền đỏ */
+  font-weight: 750 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Các hộp lộ trình (LẤY TỪ / GIAO ĐẾN) bên trong thẻ xe */
+[data-theme="ptit"] .robot-transfer-card .transfer-route-end,
+[data-theme="ptit"] .transfer-preview .transfer-route-end {
+  background: #991b1b !important;       /* Khối đỏ sẫm tạo độ nổi trên nền đỏ son */
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2) !important;
+  padding: 8px 12px !important;
+}
+
+[data-theme="ptit"] .robot-transfer-card .transfer-route-end span,
+[data-theme="ptit"] .transfer-preview .transfer-route-end span {
+  color: #ffffff !important;            /* Chữ "LẤY TỪ", "GIAO ĐẾN" màu trắng */
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+}
+
+[data-theme="ptit"] .robot-transfer-card .transfer-route-end strong,
+[data-theme="ptit"] .transfer-preview .transfer-route-end strong {
+  color: #ffffff !important;            /* Tên Kệ "K1", "K4", "K6" màu trắng tinh cỡ lớn */
+  font-size: 22px !important;
+  font-weight: 900 !important;
+  line-height: 1.2 !important;
+}
+
+[data-theme="ptit"] .robot-transfer-card .transfer-route-arrow {
+  color: #ffffff !important;            /* Mũi tên màu trắng */
+  font-size: 20px !important;
+  font-weight: 800 !important;
+}
+
+/* Thanh chặng di chuyển */
+[data-theme="ptit"] .robot-transfer-card .transfer-stage-list li {
+  border-top: 3px solid rgba(255, 255, 255, 0.3) !important;
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+
+[data-theme="ptit"] .robot-transfer-card .transfer-stage-list li[data-stage="done"] {
+  border-color: #ffffff !important;
+  color: #ffffff !important;
+  font-weight: 750 !important;
+}
+
+[data-theme="ptit"] .robot-transfer-card .transfer-stage-list li[data-stage="current"] {
+  border-color: #fef08a !important;
+  color: #fef08a !important;
+  font-weight: 850 !important;
+}
+
+/* Các nút bấm bên trong thẻ xe (Nền trắng chữ đỏ son) */
+[data-theme="ptit"] .robot-transfer-card .vehicle-actions button,
+[data-theme="ptit"] .robot-transfer-card button {
+  background: #ffffff !important;       /* Nút trắng tinh */
+  color: #c4122f !important;            /* Chữ đỏ son PTIT */
+  border: 1px solid #ffffff !important;
+  font-weight: 800 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15) !important;
+}
+
+[data-theme="ptit"] .robot-transfer-card .vehicle-actions button:hover,
+[data-theme="ptit"] .robot-transfer-card button:hover {
+  background: #fef2f2 !important;
+  color: #991b1b !important;
+}
+
+/* Khung Giám sát vận hành */
+[data-theme="ptit"] .operations-board,
+[data-theme="ptit"] #warehouseOperationsBoard {
+  background: #ffffff !important;
+  border: 1px solid #bcc4cf !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+}
+
+[data-theme="ptit"] .operations-heading h2 {
+  color: #111827 !important;
+  font-size: 16px !important;
+  font-weight: 850 !important;
+}
+
+[data-theme="ptit"] .operations-subtitle,
+[data-theme="ptit"] .operations-section-heading > span {
+  color: #374151 !important;            /* Chữ phụ xám than đậm rõ ràng */
+  font-weight: 700 !important;
+  font-size: 12px !important;
+}
+
+[data-theme="ptit"] .eyebrow {
+  color: #c4122f !important;
+  font-size: 11px !important;
+  font-weight: 850 !important;
+  letter-spacing: 0.08em !important;
+}
+
+[data-theme="ptit"] .operations-section-heading h3 {
+  color: #111827 !important;
+  font-size: 14px !important;
+  font-weight: 850 !important;
+}
+
+/* Kệ K1-K6 (Ảnh 3) */
+[data-theme="ptit"] .warehouse-slot-card {
+  background: #ffffff !important;
+  border: 1px solid #bcc4cf !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="ptit"] .warehouse-slot-card[data-tone="good"] {
+  background: #f0fdf4 !important;
+  border-color: #86efac !important;
+}
+
+[data-theme="ptit"] .warehouse-slot-card[data-tone="warn"] {
+  background: #fffbeb !important;
+  border-color: #fde68a !important;
+}
+
+[data-theme="ptit"] .warehouse-slot-card[data-tone="bad"] {
+  background: #fef2f2 !important;
+  border-color: #fca5a5 !important;
+}
+
+[data-theme="ptit"] .warehouse-slot-header strong {
+  color: #111827 !important;
+  font-size: 16px !important;
+  font-weight: 850 !important;
+}
+
+[data-theme="ptit"] .warehouse-slot-header span {
+  color: #374151 !important;            /* "Trống" đậm nét thay vì #bed0e5 mờ */
+  font-weight: 750 !important;
+  font-size: 12px !important;
+}
+
+[data-theme="ptit"] .warehouse-slot-rack,
+[data-theme="ptit"] .warehouse-slot-detail,
+[data-theme="ptit"] .warehouse-slot-baseline {
+  color: #1f2937 !important;            /* Chữ đen than đậm nét thay vì #c2cfe0 mờ nhạt */
+  font-weight: 650 !important;
+  font-size: 12px !important;
+}
+
+/* ==========================================================================
+   6. ẢNH 1: KỆ TRÊN XE, GHI CHÚ CHÂN TRANG & ĐỐI SOÁT -> CHỮ ĐẬM SẮC NÉT
+   ========================================================================== */
+[data-theme="ptit"] .warehouse-carried-racks {
+  border-top: 1px solid #d1d5db !important;
+  color: #111827 !important;
+  font-weight: 750 !important;
+}
+
+[data-theme="ptit"] .warehouse-carried-racks > strong {
+  color: #111827 !important;            /* "Kệ trên xe" màu đen đậm */
+  font-weight: 850 !important;
+  font-size: 12.5px !important;
+}
+
+[data-theme="ptit"] .warehouse-cargo-tag {
+  background: #ffffff !important;
+  border: 1px solid #bcc4cf !important;
+  color: #111827 !important;
+  font-weight: 750 !important;
+  padding: 5px 9px !important;
+}
+
+[data-theme="ptit"] .warehouse-cargo-tag[data-tone="bad"] {
+  background: #fef2f2 !important;       /* Nền hồng nhạt */
+  border-color: #f87171 !important;     /* Viền đỏ rõ nét */
+  color: #991b1b !important;            /* Chữ đỏ đậm tương phản cao 100% */
+  font-weight: 850 !important;
+}
+
+[data-theme="ptit"] .operations-footnote {
+  color: #374151 !important;            /* "Vị trí theo chu kỳ nâng/hạ..." đậm rõ nét */
+  font-weight: 650 !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}
+
+[data-theme="ptit"] #warehouseConfig summary {
+  color: #111827 !important;            /* "▶ Nhập / đối soát vị trí kệ..." chữ đen than đậm */
+  font-weight: 800 !important;
+  font-size: 13px !important;
+}
+
+[data-theme="ptit"] #warehouseConfigFields label {
+  color: #1f2937 !important;
+  font-weight: 700 !important;
+}
+
+/* ==========================================================================
+   7. ẢNH 1: MODAL DIALOG "KHÔI PHỤC XE 01" -> KHỬ HOÀN TOÀN MÀU XANH ĐEN NAVY
+   ========================================================================== */
+dialog,
+dialog#vehicleRecoveryDialog,
+dialog#shiftReviewDialog,
+dialog#shiftWarehouseDialog,
+dialog#loginDialog,
+[data-theme="ptit"] dialog {
+  background: #ffffff !important;       /* Nền trắng tinh thay thế #182234 cũ */
+  color: #111827 !important;
+  border: 1px solid #d1d5db !important;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.05) !important;
+}
+
+dialog::backdrop,
+[data-theme="ptit"] dialog::backdrop {
+  background: rgba(17, 24, 39, 0.5) !important;
+  backdrop-filter: blur(4px) !important;
+}
+
+dialog h2,
+#vehicleRecoveryDialog h2,
+#vehicleRecoveryTitle {
+  color: #111827 !important;
+  font-weight: 800 !important;
+  font-size: 18px !important;
+}
+
+dialog label,
+dialog p,
+#vehicleRecoveryDialog label,
+#vehicleRecoveryDialog p {
+  color: #374151 !important;
+  font-weight: 650 !important;
+  font-size: 13px !important;
+}
+
+dialog select,
+#vehicleRecoveryDialog select,
+#vehicleRecoveryMoved,
+#vehicleRecoveryDirection {
+  background: #ffffff !important;
+  color: #111827 !important;
+  border: 1px solid #d1d5db !important;
+  border-radius: 8px !important;
+  font-weight: 600 !important;
+  padding: 8px 10px !important;
+}
+
+#vehicleRecoveryDialog .row-btn button.btn,
+#vehicleRecoverySubmit {
+  background: #c4122f !important;       /* Nút đỏ son */
+  color: #ffffff !important;
+  border: 1px solid #a60e26 !important;
+  font-weight: 800 !important;
+  border-radius: 8px !important;
+}
+
+#vehicleRecoveryDialog .row-btn button.btn-outline {
+  background: #f3f4f6 !important;
+  color: #111827 !important;
+  border: 1px solid #d1d5db !important;
+  font-weight: 700 !important;
+  border-radius: 8px !important;
+}
+
+/* ==========================================================================
+   8. ẢNH 2: KHUNG SƠ ĐỒ VẬN HÀNH & TỐC ĐỘ XE -> CHỮ ĐEN THẬM ĐẬM, NỀN TRẮNG RÕ NÉT
+   ========================================================================== */
+[data-theme="ptit"] #center-panel {
+  background: #ffffff !important;       /* Nền trắng tinh khôi đi chung với màu nền xám */
+  border: 1px solid #bcc4cf !important;
+  border-radius: 12px !important;       /* Khung bo góc bầu hiện đại */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+  overflow: hidden !important;
+}
+
+[data-theme="ptit"] .map-heading {
+  background: #ffffff !important;       /* Header nền trắng đồng bộ */
+  border-bottom: 1px solid #e5e7eb !important;
+  border-radius: 12px 12px 0 0 !important;
+  padding: 12px 16px !important;
+}
+
+[data-theme="ptit"] .map-heading .eyebrow,
+[data-theme="ptit"] .map-heading .map-heading-title {
+  color: #111827 !important;            /* Tiêu đề chữ đen than đậm rõ nét */
+  font-size: 15px !important;
+  font-weight: 850 !important;
+  letter-spacing: 0.03em !important;
+  text-transform: uppercase !important;
+}
+
+/* TỐC ĐỘ XE TRÊN THANH BẢN ĐỒ (ẢNH 2) -> ĐỔI MÀU CHỮ SANG ĐEN ĐẬM */
+[data-theme="ptit"] .map-live {
+  color: #111827 !important;            /* Thay thế #b4d4ff xanh nhạt mờ thành chữ đen than đậm */
+  background: #f3f4f6 !important;
+  border: 1px solid #9ca3af !important;
+  font-weight: 800 !important;
+  font-size: 11.5px !important;
+}
+
+[data-theme="ptit"] .map-actions button {
+  color: #111827 !important;
+  border: 1px solid #bcc4cf !important;
+  background: #ffffff !important;
+  font-weight: 750 !important;
+}
+
+[data-theme="ptit"] .map-actions button:hover {
+  background: #f3f4f6 !important;
+  color: #c4122f !important;
+}
+
+/* XÓA NGAY GHI CHÚ "Kho AGV v4 – bo goc (cm) • phiên bản 2" THEO YÊU CẦU */
+[data-theme="ptit"] #mapTitle {
+  display: none !important;
+}
+
+[data-theme="ptit"] #mapViewport {
+  background: #ffffff !important;
+}
+
+[data-theme="ptit"] #mapSvg {
+  background-color: #ffffff !important;
+  background-image: radial-gradient(#d1d5db 1px, transparent 1px) !important;
+  background-size: 20px 20px !important;
+}
+
+[data-theme="ptit"] .map-foot {
+  background: #ffffff !important;
+  border-top: 1px solid #e5e7eb !important;
+  border-radius: 0 0 12px 12px !important;
+  color: #374151 !important;
+  font-weight: 650 !important;
+}
+
+[data-theme="ptit"] #dataFreshness,
+[data-theme="ptit"] #robot01Position,
+[data-theme="ptit"] #mapLegend {
+  color: #374151 !important;
+  font-weight: 650 !important;
+}
+
+/* Đường bám line mỏng lại, thanh thoát, màu xám than sang trọng */
+[data-theme="ptit"] #mapSvg .edge,
+[data-theme="ptit"] #mapSvg path[data-rounded-edge],
+[data-theme="ptit"] #mapSvg line {
+  stroke: #374151 !important;           /* Xám than công nghiệp, không bị đen gắt */
+  stroke-width: 2.8px !important;       /* Mỏng thanh thoát chuẩn kỹ thuật */
+}
+
+/* Đầu mũi tên xám than */
+[data-theme="ptit"] #arrow path,
+[data-theme="ptit"] #previewArrow path {
+  fill: #374151 !important;
+}
+
+/* Số khoảng cách trên cạnh */
+[data-theme="ptit"] #mapSvg .edge-label {
+  fill: #374151 !important;
+  font-weight: 750 !important;
+  font-size: 11px !important;
+  paint-order: stroke !important;
+  stroke: #ffffff !important;
+  stroke-width: 3px !important;
+}
+
+/* Các vòng tròn Node */
+[data-theme="ptit"] #mapSvg circle.node-clickable {
+  fill: #ffffff !important;
+  stroke-width: 2.5px !important;
+}
+
+[data-theme="ptit"] #mapSvg circle.node-clickable:hover {
+  stroke: #c4122f !important;
+  stroke-width: 3px !important;
+}
+
+[data-theme="ptit"] #mapSvg text.node-label {
+  fill: #111827 !important;
+  font-weight: 800 !important;
+  font-size: 11.5px !important;
+  paint-order: stroke !important;
+  stroke: #ffffff !important;
+  stroke-width: 2.5px !important;
+}
+
+/* THANH SELECTIONBAR TRÊN MAP -> KHỬ MÀU ĐEN CŨ SANG XÁM NHẸ */
+[data-theme="ptit"] #selectionBar {
+  background: #f3f4f6 !important;
+  border-bottom: 1px solid #d1d5db !important;
+  color: #1f2937 !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+}
+
+/* ==========================================================================
+   9. BẢNG HÀNG ĐỢI & TOÀN BỘ TIÊU ĐỀ BẢNG TH -> KHỬ MÀU XANH ĐEN CŨ (#16253A)
+   ========================================================================== */
+[data-theme="ptit"] th,
+[data-theme="ptit"] #taskTable th,
+[data-theme="ptit"] #missionTable th,
+[data-theme="ptit"] .report-table th {
+  background: #f3f4f6 !important;       /* Xám nhẹ dịu mắt thay vì đen navy */
+  color: #374151 !important;
+  border-bottom: 1px solid #d1d5db !important;
+  font-weight: 750 !important;
+  text-transform: uppercase !important;
+  font-size: 11px !important;
+  letter-spacing: 0.05em !important;
+}
+
+[data-theme="ptit"] td,
+[data-theme="ptit"] #taskTable td,
+[data-theme="ptit"] #missionTable td,
+[data-theme="ptit"] .report-table td {
+  background: #ffffff !important;
+  color: #111827 !important;
+  border-bottom: 1px solid #f3f4f6 !important;
+}
+
+[data-theme="ptit"] tr:hover td {
+  background: #f9fafb !important;
+}
+
+/* ==========================================================================
+   10. BÁO CÁO & NHẬT KÝ -> KHỬ HOÀN TOÀN MÀU XANH ĐEN Ở 4 Ô THỐNG KÊ & TABS
+   ========================================================================== */
+[data-theme="ptit"] .report-metric {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02) !important;
+}
+
+[data-theme="ptit"] .report-metric span {
+  color: #4b5563 !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+}
+
+[data-theme="ptit"] .report-metric strong {
+  color: #111827 !important;
+  font-size: 22px !important;
+  font-weight: 850 !important;
+}
+
+[data-theme="ptit"] .report-tabs {
+  background: #f3f4f6 !important;
+  border: 1px solid #d1d5db !important;
+}
+
+[data-theme="ptit"] .report-tabs button {
+  color: #4b5563 !important;
+  font-weight: 650 !important;
+}
+
+[data-theme="ptit"] .report-tabs button[aria-pressed="true"] {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  color: #c4122f !important;
+  font-weight: 800 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+}
+
+[data-theme="ptit"] .report-toolbar select {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  color: #111827 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="ptit"] .report-details {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+}
+
+[data-theme="ptit"] .report-details > summary {
+  background: #f9fafb !important;
+  color: #111827 !important;
+  font-weight: 700 !important;
+  border-bottom: 1px solid #d1d5db !important;
+}
+
+/* ==========================================================================
+   11. BẢNG ĐIỀU KHIỂN BÊN PHẢI (TẠO LƯỢT CHUYỂN KỆ - ẢNH 4) -> CHỮ ĐẬM SẮC NÉT
+   ========================================================================== */
+[data-theme="ptit"] #right-panel .card-header,
+[data-theme="ptit"] .card-header {
+  color: #111827 !important;            /* "Tạo lượt chuyển kệ" đen than đậm */
+  font-size: 14px !important;
+  font-weight: 850 !important;
+}
+
+[data-theme="ptit"] .card-caption {
+  color: #4b5563 !important;            /* "Ưu tiên · FIFO" chữ xám đậm rõ */
+  font-weight: 750 !important;
+}
+
+[data-theme="ptit"] .transfer-form-step {
+  color: #111827 !important;            /* "1 Chọn kho lấy có kệ", "2 Chọn kho giao còn trống" */
+  font-weight: 800 !important;
+  font-size: 13px !important;
+}
+
+[data-theme="ptit"] .transfer-step-number {
+  background: #c4122f !important;       /* Số bước 1, 2 đỏ son PTIT nổi bật */
+  color: #ffffff !important;
+  font-weight: 850 !important;
+  width: 22px !important;
+  height: 22px !important;
+}
+
+[data-theme="ptit"] .transfer-form-hint {
+  color: #9a3412 !important;            /* Thay thế #ffd18c vàng nhạt mờ sang cam cháy đậm sắc nét */
+  font-weight: 750 !important;
+  font-size: 12px !important;
+}
+
+[data-theme="ptit"] .transfer-preview {
+  background: #ffffff !important;
+  border: 1px solid #bcc4cf !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  padding: 12px !important;
+  margin: 14px 0 8px !important;
+}
+
+[data-theme="ptit"] .transfer-preview p,
+[data-theme="ptit"] #right-panel p,
+[data-theme="ptit"] #right-panel small,
+[data-theme="ptit"] .add-transfer-panel p {
+  color: #374151 !important;            /* Chữ xám than đậm thay vì #c1d7f3 */
+  font-weight: 650 !important;
+}
+
+[data-theme="ptit"] .order-progress summary {
+  color: #374151 !important;            /* "Tiến độ đơn đã tạo" đậm rõ */
+  font-weight: 700 !important;
+  font-size: 12px !important;
+}
+
+[data-theme="ptit"] .order-progress summary strong {
+  color: #111827 !important;            /* "0/2 kệ" màu đen đậm */
+  font-weight: 850 !important;
+}
+
+[data-theme="ptit"] .task-mode-switch {
+  background: #f3f4f6 !important;
+  border: 1px solid #d1d5db !important;
+}
+
+[data-theme="ptit"] .task-mode-switch button {
+  color: #4b5563 !important;
+  font-weight: 750 !important;
+}
+
+[data-theme="ptit"] .task-mode-switch button[aria-pressed="true"] {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  color: #c4122f !important;
+  font-weight: 850 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+}
+
+[data-theme="ptit"] #missionSearch::placeholder,
+[data-theme="ptit"] input::placeholder {
+  color: #4b5563 !important;            /* Placeholder đậm hơn, dễ nhìn */
+  font-weight: 600 !important;
+}
+
+/* Nút bấm (Buttons) */
+[data-theme="ptit"] .btn,
+[data-theme="ptit"] #topbar button:not(.btn-outline):not(.btn-theme-toggle),
+[data-theme="ptit"] button[type="submit"] {
+  background: #c4122f !important;
+  color: #ffffff !important;
+  border: 1px solid #a60e26 !important;
+  font-weight: 750 !important;
+  box-shadow: 0 1px 2px rgba(196, 18, 47, 0.18) !important;
+  transition: all 0.15s ease !important;
+}
+
+[data-theme="ptit"] .btn:hover,
+[data-theme="ptit"] #topbar button:not(.btn-outline):not(.btn-theme-toggle):hover,
+[data-theme="ptit"] button[type="submit"]:hover {
+  background: #a60e26 !important;
+  box-shadow: 0 2px 6px rgba(196, 18, 47, 0.28) !important;
+}
+
+[data-theme="ptit"] .btn-outline {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  color: #111827 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="ptit"] .btn-outline:hover {
+  background: #f3f4f6 !important;
+  border-color: #9ca3af !important;
+}
+
+[data-theme="ptit"] input,
+[data-theme="ptit"] select,
+[data-theme="ptit"] textarea {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  color: #111827 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="ptit"] input:focus,
+[data-theme="ptit"] select:focus,
+[data-theme="ptit"] textarea:focus {
+  border-color: #c4122f !important;
+  box-shadow: 0 0 0 2px rgba(196, 18, 47, 0.15) !important;
+  outline: none !important;
+}
+
+/* 12. Mission Board */
+[data-theme="ptit"] .mission-board,
+[data-theme="ptit"] #missionBoard {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+}
+
+[data-theme="ptit"] .mission-heading h2 {
+  color: #111827 !important;
+  font-size: 16px !important;
+  font-weight: 800 !important;
+}
+
+[data-theme="ptit"] .mission-count {
+  background: #f3f4f6 !important;
+  border: 1px solid #d1d5db !important;
+  color: #111827 !important;
+  font-weight: 750 !important;
+}
+
+[data-theme="ptit"] .mission-filters button {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  color: #4b5563 !important;
+  font-weight: 650 !important;
+}
+
+[data-theme="ptit"] .mission-filters button[aria-pressed="true"] {
+  background: #fef2f2 !important;
+  border-color: #fecaca !important;
+  color: #c4122f !important;
+  font-weight: 800 !important;
+}
+
+[data-theme="ptit"] .mission-filters button[aria-pressed="true"] span {
+  background: #fee2e2 !important;
+  color: #c4122f !important;
+}
+
+[data-theme="ptit"] #missionSearch {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+  color: #111827 !important;
+}
+
+[data-theme="ptit"] .mission-toggle strong,
+[data-theme="ptit"] .mission-route-cell strong {
+  color: #111827 !important;
+  font-weight: 800 !important;
+}
+
+[data-theme="ptit"] .mission-vehicle {
+  background: #f3f4f6 !important;
+  border: 1px solid #d1d5db !important;
+  color: #111827 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="ptit"] .mission-vehicle[data-vehicle="01"] {
+  background: #fef2f2 !important;
+  border-color: #fecaca !important;
+  color: #c4122f !important;
+}
+
+[data-theme="ptit"] .mission-vehicle[data-vehicle="02"] {
+  background: #f3f4f6 !important;
+  border-color: #d1d5db !important;
+  color: #111827 !important;
+}
+
+[data-theme="ptit"] .mission-detail {
+  background: #f9fafb !important;
+  border-bottom: 1px solid #d1d5db !important;
+  color: #111827 !important;
+}
+
+[data-theme="ptit"] .mission-item {
+  background: #ffffff !important;
+  border: 1px solid #d1d5db !important;
+}
+
+/* 13. Theme Switcher Badge Button */
+.btn-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  min-height: 34px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+  user-select: none;
+}
+
+[data-theme="ptit"] .btn-theme-toggle {
+  background: #fef2f2 !important;
+  border: 1px solid #fecaca !important;
+  color: #991b1b !important;
+}
+
+.theme-pill-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+[data-theme="ptit"] .theme-pill-badge {
+  background: #c4122f;
+  color: #ffffff;
+}
+
+/* 14. Minimalist Scrollbar */
+[data-theme="ptit"] ::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+[data-theme="ptit"] ::-webkit-scrollbar-track {
+  background: #cfd4dc;
+}
+[data-theme="ptit"] ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+[data-theme="ptit"] ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
