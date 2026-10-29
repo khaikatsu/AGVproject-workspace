@@ -1,5 +1,11 @@
 # Chẩn đoán khởi động gateway và core — 29/09/2026
 
+### Build báo thiếu `mosquitto/mqtt_protocol.h` — 29/10/2026
+
+Sau khi hợp nhất `main`, header trung gian `include/mosquitto.h` che header Mosquitto của MSYS2 UCRT64 vì script truyền `-I include`. Header này gọi `mosquitto/mqtt_protocol.h`, không có trong bộ thư viện trên máy. Đã bỏ header trung gian để `#include <mosquitto.h>` trong Core dùng trực tiếp header của compiler, giữ nguyên liên kết `-lmosquitto`.
+
+Tái hiện đúng lỗi trước sửa; sau sửa, `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-core.ps1 -OutputDirectory .qa/core-build-fix-20261029` build thành công (exit0). Chưa thay hoặc khởi chạy binary vận hành, không sửa firmware hay dữ liệu. Có thể build/F5 lại; nếu binary đích đang chạy thì dừng đúng phiên cũ hoặc dùng thư mục đầu ra riêng như hướng dẫn bên dưới.
+
 17/10/2026: dừng tại kiểm tra checkpoint không luôn là breakpoint vô hại. Khi đổi map26node sang22node, Core cũ từ chối runtime_state.json v3 dù mapv4 trên đĩa còn nguyên. Bản sửa [ADR-065](decisions/ADR-065-rounded-map-checkpoint-recovery.md) nhận diện riêng phép chuyển này, backup checkpoint và giữ owner/token/lịch sử trước khi phục vụ mapv4. Xe phải có RFID mới và đối soát vùng như trước; không xóa runtime/counter để gỡ lỗi. Cần build lại binary và dừng đúng phiên cũ trước khi F5 bản mới.
 
 CURRENT 16/10/2026: menu F5 1/2/3 chọn scope `active01`, `active02`, `active-both` của cùng Core thống nhất; không còn chọn luật trial bỏ qua pin. Tự động hóa có thể dùng `build/agv_core.exe --mode active01` (tương tự `active02`, `active-both`, `normal`). Các tham số `robot01|robot02|both` bên dưới được giữ tạm cho hồi quy lịch sử. Chọn scope không tự mở ca hoặc phát GOTO/CHARGE_START. [ADR-058](decisions/ADR-058-unified-core-active-robot-scope.md).
