@@ -35,6 +35,7 @@ public:
     bool authorizeLift(const AGVCommand& command, const ControlInput& input, ErrorCode& reason);
     bool start(const ControlInput& input, ErrorCode& reason);
     bool restart(const ControlInput& input, ErrorCode& reason);
+    bool restartAtMaintenance(const ControlInput& input,ErrorCode& reason);
     void pause();
     void cancelTask();
     void reachedNode(const char* node, uint32_t now);

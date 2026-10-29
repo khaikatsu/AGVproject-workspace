@@ -4,21 +4,21 @@
     "encoderSupported": true, "encoderBootId": 789, "encoderCoreSessionId": "current-core-session",
     "cargoSensorSupported": true, "cargoStable": true, "cargoPresent": true,
     "cargoSampleSeq": 1000, "cargoSampleAgeMs": 5, "cargoStableMs": 150,
-    "cargoRawLevel": 1, "cargoActiveLevel": 1, "cargoPin": 2
+    "cargoRawLevel": 0, "cargoActiveLevel": 0, "cargoPin": 2
   },
   "unstable_extension": {"cargoStable": false, "cargoPresent": null, "cargoStableMs": 0},
   "lowered_at_warehouse_extension": {
     "node": "K2", "state": "AGV_IDLE", "taskActive": false, "motor": "STOP", "leftDuty": 0, "rightDuty": 0,
     "dropoffExitSupported": true, "liftSupported": true, "liftCommandId": 211,
     "liftBusy": false, "liftState": "LOWERED", "liftElapsedMs": 5000, "virtualCargo": true,
-    "cargoStable": true, "cargoPresent": true, "cargoRawLevel": 1, "cargoActiveLevel": 1
+    "cargoStable": true, "cargoPresent": true, "cargoRawLevel": 0, "cargoActiveLevel": 0
   },
   "exit_route": {"cmd": "GOTO", "cmd_id": 212, "path": ["G2"], "target": "G2"},
   "done_at_gate_extension": {
     "node": "G2", "state": "AGV_IDLE", "taskActive": false, "motor": "STOP", "leftDuty": 0, "rightDuty": 0,
     "dropoffExitSupported": true, "liftSupported": true, "liftCommandId": 211,
     "liftBusy": false, "liftState": "DONE_DOWN", "liftElapsedMs": 5000, "virtualCargo": false,
-    "cargoStable": true, "cargoPresent": false, "cargoRawLevel": 0, "cargoActiveLevel": 1
+    "cargoStable": true, "cargoPresent": false, "cargoRawLevel": 1, "cargoActiveLevel": 0
   },
   "lowered_fleet_extension": {
     "lift": {"state": "LOWERED", "command_id": 211, "node": "K2", "observed_node": "K2",

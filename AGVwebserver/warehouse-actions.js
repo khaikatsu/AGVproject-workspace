@@ -126,10 +126,21 @@ function createWarehouseActions({getState,getSession,send,publish,inventory}) {
   }
   async function advance(){
     if(endingShift)return;
+    const recoveryState=getState();
+    for(const old of actions.filter(a=>a.status==='interrupted'&&!a.closed_by_shift&&['to_warehouse','to_gate'].includes(a.suspended_status))) {
+      const r=recoveryState?.fleet.agvs.find(r=>r.id===old.robot);
+      if(r?.recovery_auto_resume&&r.state==='IDLE'&&r.recovery_node_verified&&!r.heading_confirmation_required&&!r.heading_confirmation_pending&&!r.recovery_reset_pending) {
+        const task=recoveryState.fleet.tasks.find(t=>t.task_id===old.task_id);
+        if(task?.resume_node===r.node)old.resume_node=r.node;
+        await resume(old.id,true,inventory?.snapshot().revision);return;
+      }
+    }
     const action=actions.find(action=>!finished(action));if(!action||action.status.startsWith('dispatching'))return;
     const state=getState();
     if(!state||getSession()!==action.core_session_id||state.shift?.phase!=='RUNNING'){interrupt(action,'Mất dữ liệu Core hoặc ca đã thay đổi; không phát lại thao tác');return;}
     const robot=state.fleet.agvs.find(robot=>robot.id===action.robot);
+    if(action.status==='handling'&&robot?.lift?.recovery_supported&&robot.lift.command_id===action.lift_command_id&&
+        (robot.lift.waiting_recovery||robot.online===false||robot.lift.fresh===false)) {action.lift_sent_at=Date.now();return;}
     if(!robot||robot.online===false||robot.position_valid===false||robot.state==='ERROR'||robot.error){interrupt(action,'Xe mất vị trí tin cậy hoặc đang lỗi');return;}
     if(robot.heading_confirmation_required||robot.heading_confirmation_pending||robot.recovery_reset_pending)return;
     if(action.status==='waiting_servo'){

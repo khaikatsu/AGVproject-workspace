@@ -639,6 +639,9 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                     const auto command=diagnostic["liftCommandId"].get<int64_t>(),elapsed=diagnostic["liftElapsedMs"].get<int64_t>();
                     if(command>=0 && command<=INT_MAX && elapsed>=0 && elapsed<=UINT32_MAX) {
                         motion.liftPresent=true;motion.liftSupported=diagnostic["liftSupported"].get<bool>();
+                        motion.liftRecoverySupported=diagnostic.value("liftRecoverySupported",false);
+                        motion.maintenanceRecoverySupported=diagnostic.value("maintenanceRecoverySupported",false);
+                        motion.maintenanceReady=diagnostic.value("maintenanceReady",false);
                         motion.dropoffExitSupported=diagnostic.contains("dropoffExitSupported") &&
                             diagnostic["dropoffExitSupported"].is_boolean() && diagnostic["dropoffExitSupported"].get<bool>();
                         motion.liftBusy=diagnostic["liftBusy"].get<bool>();motion.liftCommandId=static_cast<long>(command);

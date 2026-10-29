@@ -43,6 +43,8 @@ struct CoreCommand {
     uint8_t pathIndex = 0, turnCrossings = 0;
     bool reverseAfterTurn = false;
     RobotHeading confirmedHeading = RobotHeading::Unknown;
+    bool preserveLift=false;
+    bool verifiedRecovery=false;
 };
 struct CoreGrant {
     char zone[NODE_TEXT_SIZE]{};
@@ -124,6 +126,7 @@ struct TelemetrySnapshot {
     bool awaitingNodeOrder = false, stationTurnRequired = false;
     int32_t routeCmdId = 0;
     bool liftSupported = false, liftBusy = false, virtualCargoKnown = false, virtualCargo = false;
+    bool maintenanceReady=false;
     int32_t liftCmdId = 0;
     uint32_t liftElapsedMs = 0;
     const char* liftState = "IDLE";

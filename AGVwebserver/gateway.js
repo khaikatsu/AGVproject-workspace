@@ -98,7 +98,11 @@ function createGateway(options = {}) {
         const visibleOrders=orders.list({includeDeleted:true})
             .filter(order=>!order.deleted_at||['active','needs_attention'].includes(order.status)||warehousePending(order));
         const namesReason=locationNamesBlockReason();
-        return {...latestState,agv_connected:connected,core_ready:ready(),protocol_supported:supported(),
+        const fleetFault=latestState.fleet.agvs.some(r=>r.participating!==false&&
+            (r.online===false||['ERROR','OFFLINE','UNLOCALIZED'].includes(r.state)||r.recovery_reset_pending));
+        const fleetHold=visibleOrders.some(o=>o.fleet_recovery_hold&&!o.closed_by_shift);
+        const working=visibleOrders.some(o=>o.items.some(i=>!['queued','delivered','interrupted'].includes(i.status)));
+        return {...latestState,fleet_recovery:{state:fleetFault||fleetHold?(working?'DEGRADED':'WAITING_FLEET'):'NORMAL'},agv_connected:connected,core_ready:ready(),protocol_supported:supported(),
         state_received_at:receivedAt ? new Date(receivedAt).toISOString() : null,stale_after_ms:staleMs,
         // Keep each broadcast immutable: the scheduler mutates order/item objects.
         task_history:history,orders:JSON.parse(JSON.stringify(visibleOrders
@@ -134,6 +138,7 @@ function createGateway(options = {}) {
         const state = browserState();ws.previous = state;ws.sequence = browserSequence;
         ws.send(JSON.stringify({...state,state_seq:browserSequence}));
     });
+    const autoResumingTasks=new Set();
     function onState(state) {
         if (!state || !state.map || !state.fleet || !Array.isArray(state.map.nodes) ||
             !Array.isArray(state.map.edges) || !Array.isArray(state.fleet.agvs)) return;
@@ -151,7 +156,7 @@ function createGateway(options = {}) {
         receivedAt = Date.now();
         db.enqueueState(latestState,session,INCIDENT_RE);
         if (latestState.mqtt_connected === false) {
-            orders.interruptAll('Mất MQTT; đối soát xe và kiện hàng');inventory.observationGap('Mất MQTT trong ca');
+            inventory.observationGap('Mất MQTT trong ca');
         }
         if (latestState.storage_healthy === false) {
             orders.interruptAll('Core lỗi ghi checkpoint; đối soát xe và kiện hàng');inventory.observationGap('Core lỗi ghi checkpoint trong ca');
@@ -159,7 +164,17 @@ function createGateway(options = {}) {
         broadcast({},positionChanged);
         if(latestState.shift?.phase==='RUNNING') {inventory.observeShift(latestState,session);shiftReview.observe();}
         else if(['CLOSING','CLOSED'].includes(latestState.shift?.phase)) {orders.endShift();warehouseActions.endShift();}
-        void Promise.all([orders.tick(),warehouseActions.tick()]).then(()=>{
+        void Promise.all([orders.tick(),warehouseActions.tick()]).then(async()=>{
+            for(const task of latestState.fleet.tasks) {
+                const r=latestState.fleet.agvs.find(r=>r.id===task.assigned_agv);
+                const managed=orders.list({includeDeleted:true}).some(o=>o.items.some(i=>i.task_id===task.task_id))||
+                    warehouseActions.list().some(a=>a.task_id===task.task_id);
+                if(!managed&&!autoResumingTasks.has(task.task_id)&&task.resume_available&&task.status==='interrupted'&&r?.recovery_auto_resume&&
+                    r.state==='IDLE'&&r.recovery_node_verified&&!r.heading_confirmation_required&&!r.heading_confirmation_pending&&!r.recovery_reset_pending)
+                    {autoResumingTasks.add(task.task_id);
+                    try {await command({cmd:'resume_task',task_id:task.task_id,expected_node:r.node});}
+                    finally {autoResumingTasks.delete(task.task_id);}}
+            }
             inventory.observeShift(latestState,session,{orders:orders.list({includeDeleted:true}),actions:warehouseActions.list()});
         }).catch(error=>console.error('[WAREHOUSE]',error.message));
     }
@@ -351,6 +366,12 @@ function createGateway(options = {}) {
     app.post('/api/tasks/cancel',route(async (req,res)=>res.json({ok:true,...await command({cmd:'cancel_task',...(req.body.task_id ? {task_id:id(req.body.task_id,'task_id')} : {target:target(req.body.target)})})})));
     app.post('/api/agvs/:id/clear-error',route(async (req,res)=>res.json({ok:true,...await command({cmd:'clear_error',id:id(req.params.id)})})));
     app.post('/api/agvs/:id/recover',route(async(req,res)=>{
+        if(req.body.continue_task===true) {
+            if(req.body.physically_clear!==true||!['N','E','S','W'].includes(req.body.heading))
+                throw httpError(400,'Cần xác nhận xe đã dừng và hướng đầu xe');
+            return res.json({ok:true,...await command({cmd:'recover_and_continue',id:id(req.params.id),
+                expected_node:id(req.body.expected_node),heading:req.body.heading,physically_clear:true})});
+        }
         if(req.body.physically_clear!==true || typeof req.body.repositioned!=='boolean')
             throw httpError(400,'Cần xác nhận xe đã dừng, vùng cũ trống và tình trạng di chuyển xe');
         res.json({ok:true,...await command({cmd:'recover_vehicle',id:id(req.params.id),

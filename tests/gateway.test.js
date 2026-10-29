@@ -240,6 +240,9 @@ test('manual heading endpoint is removed and sends no command',async t=>{
 
 test('unified recovery validates physical checks and forwards a separate heading request',async t=>{
   const f=await fixture(t),before=f.commands.length;
+  for(const id of ['01','02']) {
+    assert.equal((await f.api('POST',`/api/agvs/${id}/recover`,{expected_node:'A',heading:'?',physically_clear:true,continue_task:true})).status,400);
+  }
   assert.equal((await f.api('POST','/api/agvs/02/recover',{expected_node:'S2',physically_clear:true})).status,400);
   assert.equal((await f.api('POST','/api/agvs/02/recovery-heading',{
     expected_node:'S2',heading:'N',physically_confirmed:false})).status,400);
@@ -252,6 +255,10 @@ test('unified recovery validates physical checks and forwards a separate heading
   assert.equal((await f.api('POST','/api/agvs/02/recovery-heading',{
     expected_node:'S2',heading:'N',physically_confirmed:true})).status,200);
   assert.equal(f.commands.at(-1).cmd,'confirm_recovery_heading');assert.equal(f.commands.at(-1).heading,'N');
+  for(const id of ['01','02']) {
+    assert.equal((await f.api('POST',`/api/agvs/${id}/recover`,{expected_node:'A',heading:'E',physically_clear:true,continue_task:true})).status,200);
+    assert.equal(f.commands.at(-1).cmd,'recover_and_continue');assert.equal(f.commands.at(-1).id,id);
+  }
   assert.ok(!f.commands.slice(before).some(command=>['direct_goto','resume_task','warehouse_lift'].includes(command.cmd)));
 });
 

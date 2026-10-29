@@ -1,5 +1,7 @@
 # ADR-093 — Hạ tại kho, xác nhận kệ rời xe sau lùi ra gate
 
+30/10/2026: [ADR-095](ADR-095-lm393-active-low.md) thay riêng cực tính theo ảnh người dùng: LOW/raw0=có hàng, HIGH/raw1=trống cho01/02 v27. Vì vậy hạ xong dưới kệ có thể LOW; tại gate HIGH ổn định mới DONE_DOWN. Các mức HIGH/LOW trong mốc29/10 bên dưới giữ lịch sử; thứ tự luồng/boolean không thay. Chưa build/test/nạp v27.
+
 Ngày 29/10/2026. Yêu cầu REQ-DROPOFF-EXIT-PROOF-20261029. IMPLEMENTED trong source; nghiệm thu hai xe OPEN.
 
 ## Nguồn và quyết định

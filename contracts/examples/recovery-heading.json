@@ -1,4 +1,9 @@
 {
+  "http_recover_continue": {"expected_node":"G1","heading":"S","physically_clear":true,"continue_task":true},
+  "ws_recover_continue": {"cmd":"recover_and_continue","request_id":"recover-continue-01","id":"01","expected_node":"G1","heading":"S","physically_clear":true},
+  "recovery_capabilities": {"liftRecoverySupported":true,"maintenanceRecoverySupported":true,"maintenanceReady":true},
+  "mqtt_reconnect_wait": {"cmd":"WAIT","cmd_id":106,"preserve_lift":true},
+  "mqtt_verified_reset": {"cmd":"RESET_FAULT","cmd_id":107,"verified_recovery":true},
   "http_recover": {"expected_node":"S2","physically_clear":true,"repositioned":true},
   "ws_recover": {"cmd":"recover_vehicle","request_id":"recovery-02","id":"02","expected_node":"S2","physically_clear":true,"repositioned":true},
   "http_confirm_heading": {"expected_node":"S2","heading":"N","physically_confirmed":true},

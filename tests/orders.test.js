@@ -3,6 +3,42 @@ const assert = require('node:assert/strict');
 const {planOrder,shortestRoute} = require('../AGVwebserver/order-planner');
 const {createOrderService,SERVICE_MS} = require('../AGVwebserver/orders');
 
+test('one failed item leaves its healthy partner supervised through lift and departure',async t=>{
+  const commands=[],robots=['01','02'].map((id,i)=>liftCapable({id,node:i?'K2':'K1',state:'IDLE',online:true,position_valid:true}));
+  const state={map,fleet:{agvs:robots,tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
+  const service=createOrderService({db:{getOrders:()=>[],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'paired',
+    publish:()=>{},send:async cmd=>{commands.push(cmd);return cmd.cmd==='warehouse_lift'?{command_id:commands.length}:{task_id:`t${commands.length}`};}});
+  t.after(()=>service.close());
+  const o=service.create({pickups:[{pickup:'K1',quantity:1},{pickup:'K2',quantity:1}],deliveries:[{dropoff:'K3',quantity:1},{dropoff:'K4',quantity:1}]});
+  await service.tick();await service.tick();
+  const bad=o.items.find(i=>i.robot==='01'),good=o.items.find(i=>i.robot==='02');
+  robots[0].state='ERROR';robots[0].error='LINE_LOST';
+  completeLift(robots[1],good.lift_command_id,true);
+  await service.tick();
+  assert.equal(bad.status,'interrupted');assert.equal(good.status,'to_dropoff');
+  assert.ok(commands.some(c=>c.cmd==='direct_goto'&&c.agv_id==='02'));
+  const next=service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K3',quantity:1}]});
+  const n=commands.length;await service.tick();assert.equal(next.items[0].status,'queued');assert.equal(commands.length,n);
+  const restored=createOrderService({db:{getOrders:()=>[structuredClone(o)],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'paired',
+    publish:()=>{},send:async()=>{throw Error('must not replay after restart');}});
+  await restored.tick();assert.equal(restored.list()[0].restart_hold,true);await restored.close();
+});
+
+test('recoverable lift keeps the same operation while offline and accepts its final result once',async t=>{
+  const commands=[],r=liftCapable({id:'01',node:'K1',state:'IDLE',online:true,position_valid:true});
+  const state={map,fleet:{agvs:[r],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
+  const service=createOrderService({db:{getOrders:()=>[],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'lift-recovery',publish:()=>{},
+    send:async cmd=>{commands.push(cmd);return cmd.cmd==='warehouse_lift'?{command_id:50}:{task_id:'travel'};}});
+  t.after(()=>service.close());
+  const o=service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K3',quantity:1}]});
+  await service.tick();await service.tick();
+  Object.assign(r.lift,{recovery_supported:true,waiting_recovery:true,command_id:50,fresh:false});r.online=false;r.state='OFFLINE';
+  await service.tick();assert.equal(o.items[0].status,'pickup_lift');
+  r.online=true;r.state='IDLE';completeLift(r,50,true);r.lift.waiting_recovery=false;
+  await service.tick();await service.tick();
+  assert.equal(commands.filter(c=>c.cmd==='warehouse_lift').length,1);assert.equal(o.items[0].status,'to_dropoff');
+});
+
 test('nearest selection names a hidden unreconciled order instead of waiting without a reason',async t=>{
   const hidden={id:'old-physical-hold',status:'needs_attention',closed_by_shift:true,created:new Date(0).toISOString(),
     deleted_at:new Date(1).toISOString(),items:[{number:1,robot:'01',status:'interrupted',task_id:'old-task'}]};

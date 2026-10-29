@@ -14,6 +14,7 @@
 #include "actuators/BuzzerModule.h"
 #include "sensors/EncoderModule.h"
 #include "StoppedPosition.h"
+#include <Preferences.h>
 
 class AGVController {
 public:
@@ -48,6 +49,11 @@ private:
     ControlLogic control_;
     CoreNavigator navigator_;
     LiftCycle lift_;
+    Preferences liftStore_;
+    bool liftStoreReady_=false;
+    LiftCycle::Record savedLift_{};
+    uint32_t liftRecoveryStableMs_=0;
+    bool saveLift();
     MutexClearance clearance_;
     uint32_t lastTelemetryMs_ = 0;
     uint32_t lastOdometryMs_ = 0;

@@ -48,6 +48,10 @@ void AGVController::begin() {
     }
     rfid_.begin();
     servo_.begin();
+    liftStoreReady_=liftStore_.begin(Config::AGV_ID[1]=='1'?"agv-lift-01":"agv-lift-02",false);
+    if(liftStoreReady_ && liftStore_.getBytesLength("operation")==sizeof(savedLift_)) {
+        liftStore_.getBytes("operation",&savedLift_,sizeof(savedLift_));lift_.restore(savedLift_);
+    }
     battery_.begin();
     cargo_.begin();
     control_.begin(millis());
@@ -99,8 +103,9 @@ ControlInput AGVController::input() const {
 }
 bool AGVController::consumePriority() {
     bool inhibited = false;
-    if (mqtt_.consumeStop()) { navigator_.stop(); control_.pause(); inhibited = true; }
+    if (mqtt_.consumeStop()) {lift_.pauseForRecovery();navigator_.stop(); control_.pause(); inhibited = true; }
     if (mqtt_.consumeCoreRestart()) {
+        lift_.pauseForRecovery();
         positionConfirmed_ = false;
         lastRfidSeenMs_ = 0;
         previousNode_[0] = '\0';
@@ -111,8 +116,8 @@ bool AGVController::consumePriority() {
         control_.safeStop(ErrorCode::NotConnected);
         inhibited = true;
     }
-    if (mqtt_.consumeQueueFault()) { navigator_.fault(ErrorCode::QueueOverflow); control_.safeStop(ErrorCode::QueueOverflow); inhibited = true; }
-    if (mqtt_.consumeStorageFault()) { navigator_.fault(ErrorCode::Configuration); control_.safeStop(ErrorCode::Configuration); inhibited = true; }
+    if (mqtt_.consumeQueueFault()) {lift_.interrupt();navigator_.fault(ErrorCode::QueueOverflow); control_.safeStop(ErrorCode::QueueOverflow); inhibited = true; }
+    if (mqtt_.consumeStorageFault()) {lift_.interrupt();navigator_.fault(ErrorCode::Configuration); control_.safeStop(ErrorCode::Configuration); inhibited = true; }
     if (inhibited) {
         if(lift_.busy()) {lift_.interrupt();control_.safeStop(ErrorCode::ServoInterrupted);}
         movement_.stop();
@@ -122,7 +127,8 @@ bool AGVController::consumePriority() {
 void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
     movement_.stop();
     if (command.type == CoreCommandType::Stop || command.type == CoreCommandType::Wait) {
-        if(lift_.busy()) {lift_.interrupt();control_.safeStop(ErrorCode::ServoInterrupted);}
+        if(command.type==CoreCommandType::Wait && command.preserveLift && (lift_.busy()||lift_.resumePending()))lift_.pauseForRecovery();
+        else if(lift_.busy()||lift_.resumePending()) {lift_.interrupt();saveLift();control_.safeStop(ErrorCode::ServoInterrupted);}
         navigator_.stop();
         control_.pause();
         return;
@@ -152,6 +158,18 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
     }
     if (command.type == CoreCommandType::ResetFault) {
         const ControlInput current = input();
+        if(std::strcmp(control_.currentNode(),Config::AGV_ID[1]=='1'?"S1":"S2")==0 &&
+            positionConfirmed_&&positionSession_==mqtt_.session()&&millis()-lastRfidSeenMs_<=250&&
+            !navigator_.active()&&!control_.task().active&&!servo_.busy()&&!lift_.busy()&&
+            motor_.leftDuty()==0&&motor_.rightDuty()==0&&cargo_.stable()) {
+            lift_.abandonAtMaintenance();
+            if(!saveLift()){control_.safeStop(ErrorCode::Configuration);return;}
+        }
+        const bool maintenance=std::strcmp(control_.currentNode(),Config::AGV_ID[1]=='1'?"S1":"S2")==0 &&
+            !lift_.busy()&&!lift_.resumePending()&&!servo_.busy()&&!control_.task().active&&
+            motor_.leftDuty()==0&&motor_.rightDuty()==0&&millis()-lastRfidSeenMs_<=250;
+        const bool verified=command.verifiedRecovery&&!lift_.busy()&&!lift_.resumePending()&&!servo_.busy()&&
+            !control_.task().active&&motor_.leftDuty()==0&&motor_.rightDuty()==0&&millis()-lastRfidSeenMs_<=250;
         const auto voltageError = AGVMath::motionVoltageError(battery_.readVoltage());
         if (voltageError != ErrorCode::None) {
             control_.safeStop(voltageError);
@@ -160,14 +178,14 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
         }
         if (navigator_.active() || !positionConfirmed_ || positionSession_ != mqtt_.session() ||
             !current.motionConfigured || !current.lineConfigured ||
-            AGVMath::lineAction(current.linePattern) == MotorAction::Stop ||
+            (AGVMath::lineAction(current.linePattern) == MotorAction::Stop && !(maintenance&&current.linePattern==7)) ||
             !current.wifi || !current.mqtt || !current.distanceValid || current.obstacle) {
             mqtt_.publishError(ErrorCode::RestartDenied, millis());
             return;
         }
         if (control_.state() == AGV_SAFE_STOP || control_.state() == AGV_ERROR) {
             ErrorCode reason = ErrorCode::None;
-            if (!control_.restart(current, reason)) {
+            if (!((maintenance||verified)?control_.restartAtMaintenance(current,reason):control_.restart(current, reason))) {
                 mqtt_.publishError(reason, millis());
                 return;
             }
@@ -189,13 +207,16 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
             control_.safeStop(cargo_.stable()?ErrorCode::CargoMissing:ErrorCode::CargoSensorUnstable);
             publishTelemetry();return;
         }
+        // Commit intent before PWM; a reboot resumes the same target and ID.
+        lift_.setOwner(mqtt_.coreIdentity());
+        if(!lift_.owner() || !lift_.start(command,millis()) || !saveLift()) {lift_.interrupt();control_.safeStop(ErrorCode::Configuration);return;}
         const bool moved=command.type==CoreCommandType::LiftUp ? servo_.liftUp() : servo_.liftDown();
-        if (!moved || !lift_.start(command,millis())) {control_.safeStop(ErrorCode::ServoConfiguration);return;}
+        if (!moved) {lift_.interrupt();saveLift();control_.safeStop(ErrorCode::ServoConfiguration);return;}
         if(Config::DEBUG_ENABLED) Serial.printf("[LIFT] cmd=%ld state=%s gpio=17 angle=%d duration=5000\n",
             static_cast<long>(command.cmdId),lift_.state(),servo_.getAngle(Config::SERVO_LIFT));
         publishTelemetry();return;
     }
-    if (lift_.busy() || servo_.busy()) {
+    if (lift_.busy() || lift_.resumePending() || servo_.busy()) {
         lift_.interrupt();control_.safeStop(ErrorCode::ServoInterrupted);return;
     }
     if (command.type == CoreCommandType::ChargeStart) {
@@ -464,12 +485,38 @@ void AGVController::update() {
     // Newly selected sonar needs a fresh result before movement. This bounded
     // wait does not pass an unknown distance off as clear; after 200 ms the
     // navigator receives the invalid sample and takes its normal sensor fault.
+    const auto liftError=control_.error();
+    const bool liftNetworkFault=liftError==ErrorCode::NotConnected||liftError==ErrorCode::WifiTimeout||liftError==ErrorCode::MqttTimeout;
+    if(lift_.resumePending() || (lift_.cmdId()>0 && liftNetworkFault)) {
+        const auto current=input();const auto error=control_.error();
+        const bool recoverable=error==ErrorCode::None||error==ErrorCode::NotConnected||error==ErrorCode::WifiTimeout||error==ErrorCode::MqttTimeout;
+        const bool ready=!inhibited&&recoverable&&lift_.owner()==mqtt_.coreIdentity()&&current.wifi&&current.mqtt&&current.motionConfigured&&
+            current.distanceValid&&!current.obstacle&&current.lineConfigured&&cargo_.stable()&&
+            ((!lift_.resumePending()&&!lift_.up())||cargo_.present())&&
+            positionConfirmed_&&positionSession_==mqtt_.session()&&millis()-lastRfidSeenMs_<=250&&
+            std::strcmp(control_.currentNode(),lift_.node())==0&&!navigator_.active()&&!control_.task().active&&!servo_.busy();
+        if(!ready)liftRecoveryStableMs_=0;
+        else if(!liftRecoveryStableMs_)liftRecoveryStableMs_=millis();
+        else if(millis()-liftRecoveryStableMs_>=2000) {
+            ErrorCode reason=ErrorCode::None;
+            if(error==ErrorCode::None||control_.restart(current,reason)) {
+                navigator_.clearFault();
+                if(lift_.resumePending()) {
+                    const bool moved=lift_.up()?servo_.liftUp():servo_.liftDown();
+                    if(moved)lift_.resume(millis());else {lift_.interrupt();control_.safeStop(ErrorCode::ServoConfiguration);}
+                }
+                saveLift();publishTelemetry();
+            }
+        }
+    }
     if (lift_.busy()) {
         movement_.stop();
-        const bool safe=!inhibited && wifi_.isConnected() && mqtt_.isConnected() &&
-            positionConfirmed_ && positionSession_==mqtt_.session() &&
+        const auto error=control_.error();
+        const bool networkOnly=error==ErrorCode::NotConnected||error==ErrorCode::WifiTimeout||error==ErrorCode::MqttTimeout;
+        const bool safe=!inhibited &&
             std::strcmp(control_.currentNode(),lift_.node())==0 &&
-            !navigator_.active() && control_.error()==ErrorCode::None && navigator_.error()==ErrorCode::None;
+            !navigator_.active() && (error==ErrorCode::None||networkOnly) &&
+            (navigator_.error()==ErrorCode::None||networkOnly) && AGVMath::motionVoltageError(battery_.readVoltage())==ErrorCode::None;
         if(lift_.update(millis(),safe,cargo_.stable(),cargo_.present())) {
             if(!safe) control_.safeStop(ErrorCode::ServoInterrupted);
             else if(std::strcmp(lift_.state(),"INTERRUPTED")==0)
@@ -522,6 +569,7 @@ void AGVController::update() {
         }
         publishTelemetry();
     }
+    if(!saveLift()) {lift_.interrupt();movement_.stop();control_.safeStop(ErrorCode::Configuration);}
     if (navigator_.state() == AGV_SAFE_STOP ||
         (!navigator_.active() && control_.state() != AGV_MOVING)) movement_.stop();
     const MotorAction motorAction = movement_.action();
@@ -586,6 +634,13 @@ void AGVController::update() {
                       cargo_.present() ? 1 : 0,
                       static_cast<unsigned long>(battery_.adcMillivolts()));
     }
+}
+bool AGVController::saveLift() {
+    if(lift_.cmdId()<=0)return true;
+    const auto r=lift_.record();
+    if(r.id==savedLift_.id&&r.owner==savedLift_.owner&&r.phase==savedLift_.phase&&r.up==savedLift_.up&&std::strcmp(r.node,savedLift_.node)==0)return true;
+    if(!liftStoreReady_||liftStore_.putBytes("operation",&r,sizeof(r))!=sizeof(r))return false;
+    savedLift_=r;return true;
 }
 void AGVController::observeState() {
     const AGVState state = navigator_.state() != AGV_IDLE ? navigator_.state() : control_.state();
@@ -666,6 +721,14 @@ void AGVController::publishTelemetry() {
     snapshot.liftBusy=lift_.busy();snapshot.liftCmdId=lift_.cmdId();snapshot.liftState=lift_.state();
     snapshot.liftElapsedMs=lift_.elapsed(millis());
     snapshot.virtualCargoKnown=lift_.cargoKnown();snapshot.virtualCargo=lift_.cargo();
+    const auto stationInput=input();
+    snapshot.maintenanceReady=std::strcmp(control_.currentNode(),Config::AGV_ID[1]=='1'?"S1":"S2")==0&&
+        stationInput.wifi&&stationInput.mqtt&&stationInput.motionConfigured&&stationInput.lineConfigured&&
+        stationInput.distanceValid&&!stationInput.obstacle&&cargo_.stable()&&
+        (stationInput.linePattern==7||AGVMath::lineAction(stationInput.linePattern)!=MotorAction::Stop)&&
+        positionConfirmed_&&positionSession_==mqtt_.session()&&millis()-lastRfidSeenMs_<=250&&
+        !navigator_.active()&&!control_.task().active&&!servo_.busy()&&!lift_.busy()&&
+        motor_.leftDuty()==0&&motor_.rightDuty()==0&&AGVMath::motionVoltageError(battery_.readVoltage())==ErrorCode::None;
     mqtt_.publishStatus(snapshot);
     lastTelemetryMs_ = snapshot.uptimeMs;
 }

@@ -830,16 +830,9 @@
     <form onsubmit="event.preventDefault();submitVehicleRecovery()">
       <h2 id="vehicleRecoveryTitle">Khôi phục xe</h2>
       <p id="vehicleRecoveryPosition"></p>
-      <p>Khôi phục đưa xe về trạng thái sẵn sàng. Nhiệm vụ cũ chỉ chạy tiếp khi bạn chọn “Tiếp tục nhiệm vụ”.</p>
+      <p>Tại S1/S2 xe tự phục hồi. Giữa đường, xác nhận vị trí và hướng để xe tự tiếp tục chặng đang dở.</p>
       <div id="vehicleRecoveryChecks">
         <label class="check-label"><input id="vehicleRecoveryClear" type="checkbox" onchange="updateVehicleRecovery()"> Tôi đã dừng xe và kiểm tra toàn bộ thân xe, kệ đã ra khỏi các vùng khóa cũ.</label>
-        <label>Xe có được nhấc, đẩy hoặc xoay bằng tay sau sự cố không?
-          <select id="vehicleRecoveryMoved" onchange="updateVehicleRecovery()">
-            <option value="">Chọn tình trạng thực tế</option>
-            <option value="no">Không, xe giữ nguyên vị trí và hướng</option>
-            <option value="yes">Có hoặc không chắc hướng còn đúng</option>
-          </select>
-        </label>
       </div>
       <div id="vehicleRecoveryHeading" hidden>
         <p id="vehicleRecoveryHeadingHint"></p>
@@ -850,7 +843,7 @@
             <option value="S">↓ Xuống (S)</option><option value="W">← Trái (W)</option>
           </select>
         </label>
-        <label class="check-label"><input id="vehicleRecoveryHeadingVerified" type="checkbox" onchange="updateVehicleRecovery()"> Tôi đã kiểm tra đầu xe thực tế đúng hướng đã chọn.</label>
+        <input id="vehicleRecoveryHeadingVerified" type="hidden">
       </div>
       <p id="vehicleRecoveryStatus" role="status" aria-live="polite"></p>
       <div class="row-btn">
@@ -889,7 +882,7 @@
   <script src="/dashboard-vehicles.js?v=20261029-recovery-heading"></script>
   <script src="/warehouse-operations.js?v=20261028-lm393"></script>
   <script src="/dashboard-map.js?v=20261026-location-names"></script>
-  <script src="/dashboard-recovery.js?v=20261029-recovery-heading"></script>
+  <script src="/dashboard-recovery.js?v=20261030-maintenance-recovery"></script>
   <script src="/dashboard.js?v=20261029-recovery-heading"></script>
 </body>
 

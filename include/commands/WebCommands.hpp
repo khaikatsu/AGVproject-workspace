@@ -92,6 +92,11 @@ public:
                 const auto error=fleet_.resumeTask(id(j,"task_id"),id(j,"expected_node"));
                 if (!error.empty()) return failure(result,409,error);
                 data["task_id"]=j.at("task_id");
+            } else if (cmd == "recover_and_continue") {
+                if(!j.value("physically_clear",false))return failure(result,400,"Can xac nhan xe va vung cu");
+                const auto error=fleet_.recoverAndContinue(id(j,"id"),id(j,"expected_node"),id(j,"heading"));
+                if(!error.empty())return failure(result,409,error);
+                data["pending"]=true;
             } else if (cmd == "confirm_recovery_heading") {
                 if(!j.value("physically_confirmed",false))return failure(result,400,"Can xac nhan huong dau xe thuc te");
                 const auto error=fleet_.confirmRecoveryHeading(id(j,"id"),id(j,"expected_node"),id(j,"heading"));

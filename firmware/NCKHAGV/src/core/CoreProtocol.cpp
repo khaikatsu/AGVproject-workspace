@@ -56,6 +56,14 @@ bool CoreProtocol::decodeCommand(const uint8_t* payload, size_t length, CoreComm
     else if (std::strcmp(cmd.c_str(), "LIFT_DOWN") == 0) command.type = CoreCommandType::LiftDown;
     else return false;
 
+    if(doc.containsKey("preserve_lift")) {
+        if(command.type!=CoreCommandType::Wait || !doc["preserve_lift"].is<bool>())return false;
+        command.preserveLift=doc["preserve_lift"].as<bool>();
+    }
+    if(doc.containsKey("verified_recovery")) {
+        if(command.type!=CoreCommandType::ResetFault || !doc["verified_recovery"].is<bool>())return false;
+        command.verifiedRecovery=doc["verified_recovery"].as<bool>();
+    }
     if (command.type == CoreCommandType::ConfirmHeading) {
         if (!nodeText(doc["node"],command.node,sizeof(command.node)) || !doc["heading"].is<const char*>()) return false;
         const JsonString heading = doc["heading"].as<JsonString>();
@@ -123,6 +131,8 @@ bool CoreProtocol::decodeCommand(const uint8_t* payload, size_t length, CoreComm
 }
 
 bool CoreProtocol::sameCommand(const CoreCommand& a, const CoreCommand& b) {
+    if(a.preserveLift!=b.preserveLift)return false;
+    if(a.verifiedRecovery!=b.verifiedRecovery)return false;
     if (a.type != b.type || a.cmdId != b.cmdId || a.pathLength != b.pathLength ||
         a.routeCmdId != b.routeCmdId || a.pathIndex != b.pathIndex || a.turnCrossings != b.turnCrossings ||
         a.reverseAfterTurn != b.reverseAfterTurn || a.confirmedHeading != b.confirmedHeading ||

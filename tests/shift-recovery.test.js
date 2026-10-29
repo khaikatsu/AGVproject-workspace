@@ -64,6 +64,19 @@ test('resume the same transport task only after RFID and cargo checks; never rep
   const before=f.commands.length;await assert.rejects(f.orders.resume(order.id,1,true,f.inventory.snapshot().revision),/nâng\/hạ/);
   assert.equal(f.commands.length,before);
 });
+
+test('operator recovery automatically resumes a managed task with the live inventory revision',async t=>{
+  const f=fixture(t);f.state.shift.phase='RUNNING';
+  const order=f.orders.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]});
+  await f.orders.tick();const task=f.state.fleet.tasks[0];task.status='interrupted';task.resume_node='G1';
+  f.robot.state='ERROR';await f.orders.tick();
+  f.robot.state='IDLE';f.robot.recovery_auto_resume=true;f.robot.heading_confirmation_required=true;
+  const before=f.commands.length;await f.orders.tick();assert.equal(f.commands.length,before);
+  f.robot.heading_confirmation_required=false;await f.orders.tick();
+  assert.equal(f.commands.at(-1).cmd,'resume_task');assert.equal(f.commands.at(-1).task_id,task.task_id);
+  assert.equal(order.items[0].status,'to_pickup');assert.equal(f.inventory.snapshot().moves[0].status,'reserved');
+  assert.equal(f.commands.filter(c=>c.cmd==='resume_task').length,1);
+});
 test('binary inventory rejects quantities above one before any Core dispatch',async t=>{
   const f=fixture(t);f.state.shift.phase='RUNNING';
   assert.throws(()=>f.orders.create({pickups:[{pickup:'K1',quantity:2}],deliveries:[{dropoff:'K2',quantity:2}]}),/phải bằng 1/);

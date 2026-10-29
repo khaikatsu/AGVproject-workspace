@@ -1,5 +1,18 @@
 # Hồ sơ kiểm thử AGV
 
+## Phục hồi bảo dưỡng và lượt hàng hai xe — 30/10/2026
+
+REQ-MAINTENANCE-RECOVERY-20261030 / [ADR-094](../docs/decisions/ADR-094-maintenance-and-coordinated-recovery.md).
+
+- `node --test --test-isolation=none tests/gateway.test.js tests/orders.test.js tests/warehouse-actions.test.js tests/shift-recovery.test.js tests/cargo-sensor.test.js`: **71/71 PASS**, DB/Core giả và socket loopback riêng. Ca mới chứng minh một lượt lỗi vẫn theo dõi lượt khỏe, chặn lượt mới, giữ operation lift khi offline, không replay sau gateway restart và auto resume lấy đúng revision kho. Lần chạy sandbox bị EACCES socket đã dừng; chạy lại với quyền loopback thành công. Một lần kiểm tra stale Core gặp race reconnect (200 thay503); ca riêng và lần chạy71 cuối đều PASS, không đổi assertion.
+- `tests/maintenance_recovery.cpp`: **PASS**, chỉ biên dịch mã Core, không MCU. Kiểm tra01/02: một yêu cầu→RESET_FAULT→diagnostic→CONFIRM_HEADING, ACK chưa mở lỗi, lỗi mới/đổi node hủy quyền tự resume, trạm ổn định2s tự xác nhận hướng, journal cũ tại trạm cần reset, reconnect lift cùng ID + WAIT preserve_lift. Binary cuối còn chạy lại toàn bộ21/21 ca recovery-conflicts PASS. Đầu ra `.qa/maintenance-recovery-20261030/maintenance_recovery.exe`.
+- Hồi quy `tests/shift_recovery.cpp` (01/02 và K1–K6), `tests/cargo-sensor-core.cpp` (01/02): **PASS** bằng binary riêng. `tests/recovery-conflicts.cpp`: **21/21 PASS** sau tích hợp chính; giữ owner khi offline, chống lệnh chen ngang/phản hồi cũ, mất ACK và mutex cạnh tranh.
+- `tests/maintenance-recovery.browser.js`: **PASS** DOM thực trên Edge headless với state/command giả cho01/02, một checkbox + hướng gửi đúng API, tại home nút bị khóa và hiện tự kiểm tra; không pageerror. Không dùng gateway/DB/robot thật.
+- `node --check` gateway/orders/warehouse-actions/dashboard-recovery và `git diff --check`: **PASS**.
+- Core cuối `scripts/build-core.ps1 -OutputDirectory .qa/maintenance-recovery-20261030/core`: **PASS**. Binary `.qa/maintenance-recovery-20261030/core/agv_core.exe`, SHA256 `C3D00730E99A7414CA3DA9E60FCFB911CB26EF644E0E77E696B5CEF00E99DDD9`. Chưa khởi chạy hoặc thay executable vận hành.
+
+Firmware01/02 source `20261030-robot01-maintenance-recovery-v26` / `20261030-robot02-maintenance-recovery-v26`: chỉ rà source/diff, không tạo/chạy test MCU, không build/nạp. Profile PWM, cấu hình mạng và hiệu chuẩn pin không sửa. Các ca Core/browser không chứng minh servo đã tới góc hoặc phần cứng đã an toàn. Chưa thay Core/gateway vận hành, DB/counter/map thật hoặc phát lệnh robot.
+
 ## Hạ rồi lùi khỏi kệ — 29/10/2026, chưa chạy
 
 Kiểm tra tĩnh: `node --check` cho bốn module gateway bị sửa và file ca kiểm tra JavaScript, parse JSON hai ví dụ và `git diff --check` thành công. Không thực thi test, firmware hoặc dịch vụ.

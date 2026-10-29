@@ -1,5 +1,9 @@
 # Hiện trạng mã và khoảng trống tích hợp
 
+CURRENT30/10/2026 v27: cực tính LM393 theo ảnh người dùng là Active-LOW, LOW/raw0=có hàng và HIGH/raw1=trống, dùng chung01/02. Firmware chỉ đổi cấu hình và buildID, server giữ boolean có/không hàng. [ADR-095](decisions/ADR-095-lm393-active-low.md) thay mọi mô tả HIGH=có hàng trong các mốc lịch sử dưới đây; chưa build/test/nạp v27.
+
+CURRENT30/10/2026: source Core/gateway/web/firmware01/02 v26 có trạm bảo dưỡngS1/S2, một lần xác nhận hướng→reset→tiếp tục chặng, tách lượt khỏe/lỗi cùng đơn và journal nâng/hạ NVS gắn phiênCore. Kiểm chứng server và giới hạn firmware tại [ADR-094](decisions/ADR-094-maintenance-and-coordinated-recovery.md). Chưa build/test/nạp firmware hoặc thay dịch vụ vận hành; các mô tả phục hồi cũ bên dưới giữ mốc lịch sử.
+
 CURRENT 29/10/2026, REQ-DROPOFF-EXIT-PROOF-20261029: source firmware/Core/gateway tách hạ servo xong (LOWERED, LM393 có thể vẫn HIGH) với xác nhận kệ rời xe tại gate (DONE_DOWN, LOW ổn định). Chỉ lùi một cạnh đúng kho; sổ kho giữ chờ tới proof tại gate/task completed. Giữ HIGH=có hàng. Firmware01/02 v25 và Core/gateway cần cập nhật cùng nhau; chưa build/test/nạp hoặc thay vận hành trong lượt này. [ADR-093](decisions/ADR-093-dropoff-exit-cargo-proof.md).
 
 CURRENT 28/10/2026, LM393: source hai profile đã nối GPIO2/HIGH=có hàng với luồng Core nâng/hạ; Core snapshot cargo_sensor tách cargo ảo, gateway xác nhận kho trống/giữ mã kệ thiếu và đối soát; vẫn nhập kho đầu ca. Core mới bắt buộc firmware sensor tương ứng trước nâng/hạ. Chi tiết/trạng thái nghiệm thu ở [ADR-091](decisions/ADR-091-lm393-warehouse-proof.md). Bản Core kết ca trước đó đã build thành công09:53:29 theo yêu cầu sau; các mô tả “chưa build” dưới đây giữ mốc lịch sử trước yêu cầu build đó.

@@ -25,6 +25,13 @@ public:
     bool consumeQueueFault() { return queueFault_.exchange(false); }
     bool consumeStorageFault() { return storageFault_.exchange(false); }
     bool consumeCoreRestart() { return coreRestart_.exchange(false); }
+    uint64_t coreIdentity() const {
+        const uint32_t before=coreIdentitySequence_.load();
+        if(before&1)return 0;
+        const uint32_t low=coreIdentityLow_.load(),high=coreIdentityHigh_.load(),after=coreIdentitySequence_.load();
+        if(before!=after)return 0; // Retry next control cycle, never spin over the network task.
+        return (static_cast<uint64_t>(high)<<32)|low;
+    }
     void publishStatus(const TelemetrySnapshot& snapshot);
     void publishOdometry(const OdometrySnapshot& snapshot);
     void publishPosition(const TelemetrySnapshot& snapshot) { publishStatus(snapshot); }
@@ -54,6 +61,7 @@ private:
     QueueHandle_t grants_ = nullptr, zoneRequests_ = nullptr, zoneReleases_ = nullptr;
     TaskHandle_t worker_ = nullptr;
     std::atomic<bool> ready_{false}, stop_{false}, queueFault_{false}, storageFault_{false}, coreRestart_{false}, heartbeatSeen_{false};
+    std::atomic<uint32_t> coreIdentitySequence_{0},coreIdentityLow_{0},coreIdentityHigh_{0};
     std::atomic<uint32_t> servicedAtMs_{0}, session_{0}, lastHeartbeatMs_{0};
     uint32_t lastAttemptMs_ = 0;
     uint32_t encoderBootId_ = 0;

@@ -357,6 +357,17 @@ bool ControlLogic::restart(const ControlInput& in, ErrorCode& reason) {
     error_ = reason = ErrorCode::None;
     return true;
 }
+bool ControlLogic::restartAtMaintenance(const ControlInput& in,ErrorCode& reason) {
+    // Caller proves own-home RFID/STOP and no active navigator or lift.
+    reason=ErrorCode::RestartDenied;
+    if(task_.active || in.servoBusy || !motionClear(in,reason))return false;
+    if(in.linePattern!=7 && AGVMath::lineAction(in.linePattern)==MotorAction::Stop) {
+        reason=ErrorCode::LineLost;return false;
+    }
+    turnInterrupted_=servoInterrupted_=turning_=turnLineDeparted_=false;
+    waitingForOrder_=hasOrder_=reverseHold_=false;
+    error_=reason=ErrorCode::None;state_=AGV_IDLE;return true;
+}
 void ControlLogic::reachedNode(const char* node, uint32_t now) {
     if (!AGVMath::validNode(node)) {
         if (state_ == AGV_MOVING) {

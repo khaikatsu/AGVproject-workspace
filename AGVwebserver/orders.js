@@ -18,6 +18,7 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
   const reconciliationFor=order=>inventory?.reconciliationFor?.(order)||null;
   const needsAttention=order=>order.status==='needs_attention'&&!reconciliationFor(order);
   const holdsRobot=(order,item)=>order.status==='active'&&activeItem(item)||
+    order.status==='needs_attention'&&activeItem(item)||
     needsAttention(order)&&item.robot&&!['queued','delivered'].includes(item.status);
   function orderView(order) {
     const proof=reconciliationFor(order);
@@ -26,12 +27,18 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
   }
   // A restart loses the in-memory command handshake and cargo observation.
   for (const order of orders) if (order.status === 'active') {
+    order.restart_hold=true;
     order.status = 'needs_attention';order.reason = 'Gateway khởi động lại; đối soát vị trí xe và kiện hàng trước khi tạo đơn mới';
     save(order);
   }
+  for(const order of orders)if(order.status==='needs_attention'&&!order.restart_hold&&order.items.some(activeItem)) {
+    order.restart_hold=true;save(order);
+  }
   function interrupt(order,item,reason) {
-    if(inventory)for(const candidate of order.items)inventory.interrupt(moveKey(order,candidate),reason);
-    for (const candidate of order.items.filter(activeItem)) {
+    if(item)order.fleet_recovery_hold=true;
+    const affected=item?[item]:order.items.filter(activeItem);
+    if(inventory)for(const candidate of affected)inventory.interrupt(moveKey(order,candidate),reason);
+    for (const candidate of affected) {
       if(candidate.status!=='interrupted') {
         candidate.suspended_status=candidate.status;
         const state=getState(),task=state?.fleet.tasks?.find(task=>task.task_id===candidate.task_id);
@@ -42,7 +49,7 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
     order.status = 'needs_attention';order.reason = reason;save(order);
   }
   function interruptAll(reason) {
-    for (const order of orders) if (order.status === 'active') interrupt(order,order.items.find(activeItem),reason);
+    for (const order of orders) if (['active','needs_attention'].includes(order.status)) interrupt(order,null,reason);
   }
   function endShift() {
     for(const order of orders) if(['active','needs_attention'].includes(order.status)&&!order.closed_by_shift) {
@@ -79,7 +86,8 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
       // A concurrent close wins. The Core cancels the resumed task on end_shift.
       if(endingShift||order.closed_by_shift||getState()?.shift?.phase!=='RUNNING')return order;
       item.status=item.suspended_status;item.reason='';item.dispatched_at=new Date().toISOString();
-      order.status='active';order.reason='';save(order);return order;
+      order.restart_hold=false;
+      order.status=order.items.some(other=>other.status==='interrupted')?'needs_attention':'active';order.reason='';save(order);return order;
     } catch(error) {
       inventory?.interrupt(moveKey(order,item),`Tiếp tục chưa được xác nhận: ${error.message}`);
       item.reason=order.reason=`Tiếp tục chưa được xác nhận: ${error.message}`;save(order);
@@ -198,6 +206,11 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
   function processItem(order,item,state) {
     if (['dispatching','dispatching_dropoff','dispatching_exit'].includes(item.status)) return;
     const robot = state.fleet.agvs.find(candidate=>candidate.id === item.robot);
+    if(['pickup_lift','dropoff_lift'].includes(item.status) && robot?.lift?.recovery_supported &&
+        robot.lift.command_id===item.lift_command_id && (robot.lift.waiting_recovery||robot.online===false||
+        robot.lift.fresh===false||robot.lift.state==='LIFTING'||robot.lift.state==='LOWERING')) {
+      item.lift_sent_at=Date.now();return;
+    }
     if (!robot || robot.online === false || robot.position_valid === false || ['ERROR','OFFLINE','UNLOCALIZED'].includes(robot.state)) {
       interrupt(order,item,`Xe ${item.robot} mất trạng thái tin cậy trong chuyến hàng`);return;
     }
@@ -390,19 +403,34 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
       if(state.shift?.phase!=='RUNNING') {endShift();return;}
       if (standaloneScope(state)) return;
       for (const order of orders) {
-        if (order.status !== 'active') continue;
-        if (order.core_session_id !== getSession()) {interrupt(order,order.items.find(activeItem),'Phiên Core đã thay đổi');continue;}
-        if (state.shift?.phase !== 'RUNNING') {interrupt(order,order.items.find(activeItem),'Ca không còn RUNNING');continue;}
-        for (const item of order.items) if (order.status === 'active' && activeItem(item)) processItem(order,item,state);
+        if (!['active','needs_attention'].includes(order.status)||order.closed_by_shift||order.restart_hold) continue;
+        if (order.core_session_id !== getSession()) {interrupt(order,null,'Phiên Core đã thay đổi');continue;}
+        for (const item of order.items) {
+          if(item.status==='interrupted') {
+            const robot=state.fleet.agvs.find(r=>r.id===item.robot);
+            if(robot?.recovery_auto_resume && robot.state==='IDLE' && robot.recovery_node_verified &&
+                !robot.heading_confirmation_required&&!robot.heading_confirmation_pending&&!robot.recovery_reset_pending &&
+                ['to_pickup','to_dropoff','to_exit'].includes(item.suspended_status)) {
+              const task=state.fleet.tasks.find(t=>t.task_id===item.task_id);
+              if(task?.resume_node===robot.node)item.resume_node=robot.node;
+              try {await resume(order.id,item.number,true,inventory?.snapshot().revision);} catch(error) {item.reason=error.message;}
+            }
+          } else if(activeItem(item)) processItem(order,item,state);
+        }
       }
       if (state.mqtt_connected === false || state.fleet.accepting_tasks === false || state.shift?.phase !== 'RUNNING') return;
+      const fleetReady=state.fleet.agvs.filter(r=>r.participating!==false).every(r=>r.online!==false&&r.state==='IDLE'&&!r.error&&
+        !r.task_id&&!r.lift?.active&&!r.heading_confirmation_required&&!r.heading_confirmation_pending&&!r.recovery_reset_pending&&
+        r.virtual_cargo!==true);
+      for(const order of orders)if(order.fleet_recovery_hold&&fleetReady&&!order.items.some(i=>i.status==='interrupted')) {
+        order.fleet_recovery_hold=false;save(order);
+      }
       const used = new Set(orders.flatMap(order=>order.items
         .filter(item=>holdsRobot(order,item))
         .map(item=>item.robot).filter(Boolean)));
       for (const order of orders.slice().reverse()) {
-        if (order.status !== 'active') continue;
+        if (!['active','needs_attention'].includes(order.status)||order.closed_by_shift||order.restart_hold||order.core_session_id!==getSession()) continue;
         for (const item of order.items) {
-          if (order.status !== 'active') break;
           if (item.status === 'ready_exit') {
             const robot=state.fleet.agvs.find(candidate=>candidate.id===item.robot);
             if (!robot || !robotAt(state,item,item.dropoff)) {interrupt(order,item,'Xe không còn ở kho giao trước khi lùi ra gate');break;}
@@ -430,6 +458,10 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
             await dispatch(order,item,robot,item.dropoff,'dropoff',state);
           } else if (item.status === 'queued') {
             planQueued(order,item,state,used);
+            const blocked=state.fleet.agvs.some(robot=>robot.participating!==false&&
+              (robot.online===false||['ERROR','OFFLINE','UNLOCALIZED'].includes(robot.state)||robot.recovery_reset_pending)) ||
+              orders.some(other=>other.fleet_recovery_hold&&!other.closed_by_shift);
+            if(blocked) {item.waiting_reason=`Chờ đội xe phục hồi; ${item.waiting_reason||'các lượt đang chạy vẫn hoàn thành và ra gate'}`;save(order);continue;}
             const owner = order.destinationOwners[item.dropoff];
             const robots = eligible(state,used).filter(robot=>(!owner || robot.id === owner) &&
               state.fleet.agvs.every(other=>other.id === robot.id ||

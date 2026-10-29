@@ -5,7 +5,7 @@ function openVehicleRecovery(id) {
   const robot=lastState?.fleet?.agvs?.find(robot=>robot.id===id);
   if(!robot)return;
   vehicleRecoveryContext={id,node:robot.node,session:lastState.core_session_id,submitted:false,busy:false};
-  $('vehicleRecoveryClear').checked=false;$('vehicleRecoveryMoved').value='';
+  $('vehicleRecoveryClear').checked=false;
   $('vehicleRecoveryDirection').value='';$('vehicleRecoveryHeadingVerified').checked=false;
   $('vehicleRecoveryDialog').showModal();updateVehicleRecovery();
 }
@@ -25,44 +25,45 @@ function updateVehicleRecovery() {
   const ready=robot.state==='IDLE'&&robot.recovery_node_verified===true&&
     !robot.task_id&&!robot.target&&!(robot.path||[]).length&&!(robot.uncertain_path||[]).length&&
     !robot.cancel_waiting_for_node&&!robot.replan_waiting_for_node&&!robot.lift?.active;
-  const headingStep=ready&&robot.heading_confirmation_required===true;
-  $('vehicleRecoveryChecks').hidden=headingStep;
-  $('vehicleRecoveryHeading').hidden=!headingStep;
-  button.textContent=headingStep?'Xác nhận hướng đầu xe':'Khôi phục xe';
+  const home=lastState.shift?.home_stations?.[ctx.id]===robot.node;
+  $('vehicleRecoveryChecks').hidden=home;
+  $('vehicleRecoveryHeading').hidden=home;
+  button.textContent='Khôi phục và tiếp tục';
   if(ctx.busy){status.textContent='Đang gửi yêu cầu…';return;}
-  if(headingStep) {
+  if(home){status.textContent=ready&&!robot.heading_confirmation_required?'Xe đã sẵn sàng tại trạm.':'Trạm bảo dưỡng đang tự kiểm tra RFID, firmware, cơ cấu và kết nối. Xe chỉ sẵn sàng khi mọi điều kiện đạt.';return;}
+  {
     const expected=robot.recovery_expected_heading;
     $('vehicleRecoveryHeadingHint').textContent=expected?
       `Tại ${locationText(robot.node)}, đặt đầu xe ${headingLabels[expected]} theo quy ước kho/trạm rồi chọn xác nhận. Thao tác này không làm xe tự quay.`:
       'Chọn hướng đầu xe thực tế theo bản đồ. Thao tác này không làm xe tự quay.';
     for(const option of $('vehicleRecoveryDirection').options)option.disabled=!!option.value&&!!expected&&option.value!==expected;
-    if(!robot.heading_confirmation_supported){status.textContent='Xe đã hết lỗi. Cần nạp firmware hỗ trợ xác nhận hướng trước khi chạy.';return;}
-    status.textContent='Xe đã hết lỗi; cần xác nhận hướng trước khi chạy.';
-    button.disabled=!$('vehicleRecoveryHeadingVerified').checked||!$('vehicleRecoveryDirection').value;
-    return;
+    if(!robot.heading_confirmation_supported){status.textContent='Firmware chưa hỗ trợ xác nhận hướng.';return;}
   }
   if(ready&&ctx.submitted&&!robot.heading_confirmation_required){
-    status.textContent='Xe đã sẵn sàng. Đóng hộp này và chọn “Tiếp tục nhiệm vụ” nếu muốn làm tiếp việc cũ.';
+    status.textContent='Đã khôi phục. Server tự tiếp tục chặng cũ khi vị trí, hàng và tuyến an toàn hợp lệ.';
     return;
   }
-  const home=lastState.shift?.home_stations?.[ctx.id]===robot.node;
   if(!home&&lastState.shift?.phase!=='RUNNING'){
     status.textContent='Ngoài trạm riêng, chỉ khôi phục trong ca đang chạy. Không đặt lại RFID bằng nút bấm.';return;
   }
-  if(!robot.recovery_stop_verified){status.textContent='Chờ RFID mới và bằng chứng xe dừng tại đúng vị trí, hết nhiệm vụ và nâng/hạ.';return;}
-  status.textContent='Kiểm tra xe, kệ và vùng đường, sau đó chọn tình trạng di chuyển xe.';
-  button.disabled=!$('vehicleRecoveryClear').checked||!$('vehicleRecoveryMoved').value;
+  if(!robot.recovery_stop_verified){
+    const reasons={telemetry_stale:'Chưa có telemetry mới. Kiểm tra kết nối xe.',rfid_unknown:'Chưa xác định RFID. Đặt đầu đọc tại thẻ đúng vị trí thực tế.',
+      stop_unverified:'MCU chưa xác nhận dừng: kiểm tra motor, tuyến và cơ cấu nâng/hạ đã dừng.',
+      diagnostic_stale:'Diagnostic đã cũ. Kiểm tra đường truyền hoặc firmware.',session_changed:'Chờ diagnostic đúng phiên kết nối mới.',
+      rfid_mismatch:'RFID và diagnostic chưa khớp. Kiểm tra đầu đọc tại thẻ.',rfid_stale:'RFID đang báo là lần đọc cũ. Đặt đầu đọc tại thẻ để đọc lại.'};
+    status.textContent=reasons[robot.recovery_stop_reason]||'Chờ dữ liệu mới xác nhận xe dừng tại RFID hiện tại.';return;
+  }
+  status.textContent='Kiểm tra vị trí, hướng đầu xe và vùng đường rồi xác nhận một lần.';
+  button.disabled=!$('vehicleRecoveryClear').checked||!$('vehicleRecoveryDirection').value;
 }
 async function submitVehicleRecovery() {
   const ctx=vehicleRecoveryContext,robot=lastState?.fleet?.agvs?.find(robot=>robot.id===ctx?.id);
   if(!ctx||!robot||ctx.busy)return;
   updateVehicleRecovery();if($('vehicleRecoverySubmit').disabled)return;
-  const heading=!$('vehicleRecoveryHeading').hidden;
-  const body=heading?{expected_node:ctx.node,heading:$('vehicleRecoveryDirection').value,physically_confirmed:true}:
-    {expected_node:ctx.node,physically_clear:true,repositioned:$('vehicleRecoveryMoved').value==='yes'};
+  const body={expected_node:ctx.node,heading:$('vehicleRecoveryDirection').value,physically_clear:true,continue_task:true};
   ctx.busy=true;updateVehicleRecovery();
   try {
-    const result=await control('POST',`/api/agvs/${encodeURIComponent(ctx.id)}/${heading?'recovery-heading':'recover'}`,body);
+    const result=await control('POST',`/api/agvs/${encodeURIComponent(ctx.id)}/recover`,body);
     if(result)ctx.submitted=true;
   } finally {ctx.busy=false;updateVehicleRecovery();}
 }

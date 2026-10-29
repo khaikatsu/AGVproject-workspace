@@ -1,5 +1,7 @@
 # Phát triển web giám sát AGV
 
+30/10/2026: [ADR-094](decisions/ADR-094-maintenance-and-coordinated-recovery.md) thay dialog hai bước bằng một xác nhận vùng và hướng→Khôi phục và tiếp tục. S1/S2 chỉ hiển thị tự kiểm tra bảo dưỡng; Core giữ chốt tới proof ổn định. Dialog giải thích thiếu RFID/telemetry/diagnostic hoặc proof dừng. Các endpoint cũ còn để tương thích.
+
 29/10/2026, REQ-UNIFIED-RECOVERY-HEADING-20261029: thẻ xe chỉ có Khôi phục xe thay ba nút Xóa lỗi/Phục hồi tại node/Xác nhận tại trạm. Dialog dùng RFID đang báo, yêu cầu xác nhận vùng cũ trống và xe có được di chuyển bằng tay; reset xong mới xác nhận hướng nếu cần. Hướng chọn theo mũi tên bản đồ; tại kho/trạm người vận hành đặt xe đúng hướng quy ước, không có lệnh tự quay. UI hiện trạng thái chờ reset/chờ hướng và chặn bước tiếp khi đổi node/Core session hoặc mất dữ liệu. Tiếp tục nhiệm vụ vẫn riêng, không tự phát lại servo. [ADR-092](decisions/ADR-092-unified-recovery-heading.md).
 
 28/10/2026, REQ-WAREHOUSE-FAULT-RECOVERY-20261028: nút phục hồi ghi node đang báo, ví dụ **Phục hồi tại K2**. Xác nhận xe dừng và thân xe ra khỏi vùng cũ; bỏ yêu cầu chỉnh hướng trong hộp thoại chung. Tại kho K1–K6, Core cho phục hồi lỗi khi có proof RFID/STOP mới dù chưa biết hướng hoặc không còn task treo; chạy tiếp vẫn kiểm riêng hướng và quyền resume. [ADR-090](decisions/ADR-090-shift-recovery-and-binary-inventory.md).

@@ -2,9 +2,9 @@
 
 ## Hạ hàng rồi lùi khỏi kệ — 29/10/2026
 
-REQ-DROPOFF-EXIT-PROOF-20261029 / [ADR-093](../docs/decisions/ADR-093-dropoff-exit-cargo-proof.md) thay chốt LM393 sau hạ bên dưới. Diagnostic thêm `dropoffExitSupported:true`, `liftState:LOWERED`; snapshot `lift` thêm `dropoff_exit_supported`, `dropoff_exit_pending`. Hết chu kỳ hạ5000ms tại kho, LOWERED/cargo=true mở riêng chặng lùi một cạnh K→G tương ứng dù LM393 vẫn HIGH. Không cập nhật tồn kho ở mốc này. Core mới từ chối hạ khi thiếu capability.
+REQ-DROPOFF-EXIT-PROOF-20261029 / [ADR-093](../docs/decisions/ADR-093-dropoff-exit-cargo-proof.md) thay chốt LM393 sau hạ bên dưới. Cực tính hiện tại theo [ADR-095](../docs/decisions/ADR-095-lm393-active-low.md): LOW/raw0=có hàng, HIGH/raw1=trống, cargoActiveLevel=0 cho cả01/02; cargoPresent vẫn true=có hàng. Diagnostic thêm `dropoffExitSupported:true`, `liftState:LOWERED`; snapshot `lift` thêm `dropoff_exit_supported`, `dropoff_exit_pending`. Hết chu kỳ hạ5000ms tại kho, LOWERED/cargo=true mở riêng chặng lùi một cạnh K→G tương ứng dù LM393 vẫn LOW. Không cập nhật tồn kho ở mốc này. Core mới từ chối hạ khi thiếu capability.
 
-MCU chỉ DONE_DOWN/cargo=false khi đã dừng tại gate đúng kho, RFID mới và LM393 LOW ổn định150ms; còn hàng/không ổn định sau2000ms tại gate thì chốt lỗi. Core chờ đúng lift ID/boot/kết nối/proof cảm biến mới tại gate; gateway còn chờ task ra gate completed đúng xe rồi mới ghi transaction dropoff vào kho giao. `lift.node` vẫn là kho giao, `lift.observed_node` là gate. Trong LOWERED/lùi, cargo=true là chưa xác minh kệ đã rời xe. Thiếu/cũ/sai proof, restart hoặc mất phiên không tự hoàn tất/replay servo. Command/HTTP/ACK không đổi; [ví dụ](examples/lm393-cargo.json).
+MCU chỉ DONE_DOWN/cargo=false khi đã dừng tại gate đúng kho, RFID mới và LM393 HIGH ổn định150ms; còn hàng/không ổn định sau2000ms tại gate thì chốt lỗi. Core chờ đúng lift ID/boot/kết nối/proof cảm biến mới tại gate; gateway còn chờ task ra gate completed đúng xe rồi mới ghi transaction dropoff vào kho giao. `lift.node` vẫn là kho giao, `lift.observed_node` là gate. Trong LOWERED/lùi, cargo=true là chưa xác minh kệ đã rời xe. Thiếu/cũ/sai proof, restart hoặc mất phiên không tự hoàn tất/replay servo. Command/HTTP/ACK không đổi; [ví dụ](examples/lm393-cargo.json).
 
 ## Khôi phục xe và hướng — 29/10/2026
 
@@ -216,3 +216,8 @@ Gateway của phiên gửi WS v1 nội bộ `sim_edge_obstacle` với `from`, `t
 Giao diện mô phỏng dùng duy nhất `/api/orders` với nhiều `pickups`/`deliveries`. `/sim-api/orders` cũ là API kiểm thử tương thích, không phải form đơn hàng hiện tại. Xem [ADR-037](../docs/decisions/ADR-037-simulation-edge-obstacles.md).
 
 `GET /sim-api/state`/report bổ sung `robots[].headingDeg` cho hướng đầu xe ảo. Góc độ theo map/SVG: 0=E, 90=S, 180=W, 270=N; null là chưa có hướng. Ví dụ xe lùi ra kho: `{ "id":"01", "node":"K1", "headingDeg":180, "edge":{"from":"K1","to":"G1","progress":0.4} }`, đầu hướng W còn di chuyển E. Đây là dữ liệu simulator; không chuyển thành diagnostic robot thật, không thay telemetry/command MQTT. UI lấy Bốc hàng/Dỡ hàng từ `warehouseOrders[].items[].status` (`pickup_service`/`dropoff_service`). [ADR-038](../docs/decisions/ADR-038-simulation-direction-arrows.md).
+# Phục hồi bảo dưỡng 30/10/2026
+
+[ADR-094](../docs/decisions/ADR-094-maintenance-and-coordinated-recovery.md) thay luồng dashboard cũ. POST `/api/agvs/:id/recover` thêm `{expected_node,heading,physically_clear:true,continue_task:true}` → WS `recover_and_continue` cùng các trường đó (WS không cần continue_task). Core trả pending; server tự nối reset→hướng→resume, HTTP200 chưa chứng minh hoàn tất. Endpoint cũ giữ tương thích. Không tự resume qua ca/Core/gateway restart.
+
+Fleet robot thêm `maintenance_station`, `recovery_auto_resume`, `recovery_stop_reason` (chuỗi lý do khi thiếu proof RFID/dừng); lift thêm `recovery_supported`, `waiting_recovery`. Gateway thêm `fleet_recovery:{state:"NORMAL"|"DEGRADED"|"WAITING_FLEET"}`. Lượt khỏe cùng đơn vẫn được theo dõi đến hạ và ra gate; chặn lượt mới tới khi mọi xe READY. S1/S2 tự đối soát sau2s proof ổn định, RESET chờ15s, hướng5s; cargo/hướng/thân xe chưa xác minh vẫn chặn.

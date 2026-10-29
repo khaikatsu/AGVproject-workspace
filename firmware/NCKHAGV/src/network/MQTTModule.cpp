@@ -287,6 +287,10 @@ void MQTTModule::onMessage(char* topicName, uint8_t* payload, unsigned int lengt
         const bool changed = coreSession_[0] &&
             (std::strlen(coreSession_) != length || std::memcmp(coreSession_, payload, length) != 0);
         std::memcpy(coreSession_, payload, length); coreSession_[length] = '\0';
+        uint64_t identity=14695981039346656037ULL;
+        for(unsigned int i=0;i<length;++i){identity^=payload[i];identity*=1099511628211ULL;}
+        ++coreIdentitySequence_;coreIdentityLow_=static_cast<uint32_t>(identity);
+        coreIdentityHigh_=static_cast<uint32_t>(identity>>32);++coreIdentitySequence_;
         if (changed) {
             coreRestart_ = true; stop_ = true;
             xQueueReset(commands_);
@@ -423,6 +427,9 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     if(Config::SERVO_SINGLE_TEST) {
         object["liftSupported"]=s.liftSupported;object["liftBusy"]=s.liftBusy;
         object["dropoffExitSupported"]=true;
+        object["liftRecoverySupported"]=true;
+        object["maintenanceRecoverySupported"]=true;
+        object["maintenanceReady"]=s.maintenanceReady;
         object["liftCommandId"]=s.liftCmdId;object["liftState"]=s.liftState;
         object["liftElapsedMs"]=s.liftElapsedMs;
         if(s.virtualCargoKnown) object["virtualCargo"]=s.virtualCargo;

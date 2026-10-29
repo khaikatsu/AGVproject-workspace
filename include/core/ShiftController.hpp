@@ -159,7 +159,9 @@ public:
                 bool ownsZone = false;
                 for (const auto& z : zones.items()) if (z.value().value("owner","") == home.first) ownsZone = true;
                 const auto state = a->value("state","");
-                const bool cargoReady=!a->value("virtual_cargo",false) &&
+                const bool cargoReady=!a->value("heading_confirmation_required",false) &&
+                    !a->value("heading_confirmation_pending",false) && !a->value("recovery_reset_pending",false) &&
+                    !a->value("virtual_cargo",false) &&
                     !(a->contains("lift") && (*a)["lift"].value("command_id",0L)>0 && !a->value("virtual_cargo_known",false));
                 ready = verified && (state == "IDLE" || state == "CHARGING") &&
                     (*a)["path"].empty() && (*a)["uncertain_path"].empty() && a->value("target","").empty() && !ownsZone && cargoReady;
