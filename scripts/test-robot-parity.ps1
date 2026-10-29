@@ -4,7 +4,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $firmwareRoot = Join-Path $projectRoot 'firmware/NCKHAGV'
 $parityOutput = Join-Path $projectRoot '.qa/robot02-parity-build'
 New-Item -ItemType Directory -Force -Path $parityOutput | Out-Null
-$compiler = 'C:/msys64/ucrt64/bin/g++.exe'
+$compiler = if (Get-Command 'g++.exe' -ErrorAction SilentlyContinue) { (Get-Command 'g++.exe').Source } elseif (Test-Path 'C:/msys64/ucrt64/bin/g++.exe') { 'C:/msys64/ucrt64/bin/g++.exe' } elseif (Test-Path 'C:\Program Files\CodeBlocks\MinGW\bin\g++.exe') { 'C:\Program Files\CodeBlocks\MinGW\bin\g++.exe' } else { 'g++.exe' }
 $previousPath = $env:PATH
 $env:PATH = 'C:/msys64/ucrt64/bin;' + $previousPath
 $jsonInclude = Join-Path $firmwareRoot '.pio/libdeps/esp32dev_two_robot_bench_01/ArduinoJson/src'

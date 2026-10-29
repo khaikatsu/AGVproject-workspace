@@ -1,4 +1,9 @@
-﻿param([switch]$Build, [string]$OutputDirectory = 'build')
+param(
+    [switch]$Build,
+    [string]$OutputDirectory = 'build',
+    [string]$Mode = '',
+    [Parameter(ValueFromRemainingArguments = $true)][string[]]$ExtraArgs
+)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $outputRoot = if ([IO.Path]::IsPathRooted($OutputDirectory)) {
@@ -23,12 +28,27 @@ if (-not $env:AGV_COMMAND_ID_PATH -and -not $env:AGV_MAP_PATH -and -not (Test-Pa
 }
 Push-Location -LiteralPath $projectRoot
 try {
-    if (Test-Path -LiteralPath 'C:/msys64/ucrt64/bin') {
-        $env:PATH = 'C:/msys64/ucrt64/bin;' + $previousPath
+    $dllPaths = @(
+        'C:\Program Files\Mosquitto',
+        'C:\Program Files\CodeBlocks\MinGW\opt\bin',
+        'C:\Program Files\CodeBlocks\MinGW\bin',
+        'C:\msys64\ucrt64\bin',
+        'D:\devc\Dev-Cpp\TDM-GCC-64\bin'
+    )
+    $validDllPaths = $dllPaths | Where-Object { Test-Path -LiteralPath $_ }
+    if ($validDllPaths) {
+        $env:PATH = ($validDllPaths -join ';') + ';' + $previousPath
     }
-    Write-Output "Chạy core: $binary"
+    $runArgs = @()
+    if ($Mode) {
+        $runArgs += @('--mode', $Mode)
+    }
+    if ($ExtraArgs) {
+        $runArgs += $ExtraArgs
+    }
+    Write-Output "Chạy core: $binary $($runArgs -join ' ')"
     Write-Output "Working directory: $projectRoot"
-    & $binary
+    & $binary @runArgs
     if ($LASTEXITCODE -ne 0) { throw "Core dừng với mã lỗi $LASTEXITCODE. Xem log phía trên." }
 } finally {
     Pop-Location

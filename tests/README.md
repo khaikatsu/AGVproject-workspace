@@ -1,5 +1,13 @@
 # Hồ sơ kiểm thử AGV
 
+## Ghép main trước khi push — 30/10/2026
+
+Ghép `origin/main` tại `07e56ce` vào thay đổi phục hồi `6c4f833`. Giữ base-return mới của remote (không reverse_after_turn), chặn đi xuyên G1–G6, cửa sổ quét cargo3s, nút đối soát kệ và chốt dừng motor. Xung đột orders.js ưu tiên yêu cầu mới nhất: chỉ lượt xe lỗi bị gián đoạn; lượt khỏe vẫn hoàn thành. Config giữ LOW=có hàng và buildID01/02 `20261030-robot0x-lm393-active-low-v27`. AGVController giữ cả journal phục hồi và chốt motor dừng từ remote.
+
+Sau merge: gateway/server71/71 PASS bằng DB/Core giả, Core maintenance_recovery cho01/02 và21/21 ca xung đột PASS. JavaScript syntax và kiểm tra marker/diff được rà lại. Firmware chỉ rà source/diff, chưa build/test/nạp; không chạy scripts/test-robot-parity.ps1 vì quy trình firmware hiện tại. Build Core riêng trong `.qa/main-merge-20261030/core` được kiểm tra riêng trước commit. Không sửa DB/counter/dịch vụ vận hành. Thư mục docs/reviews có sẵn từ trước và các binary/artifact không nằm trong commit.
+
+Build Core sau merge **PASS**: `.qa/main-merge-20261030/core/agv_core.exe`, SHA256 `85D5B9C6601338FD393C4BF38B22A5ABE62F82D04D9D981539EE94FD151428DE`. Chưa khởi chạy binary này.
+
 ## Phục hồi bảo dưỡng và lượt hàng hai xe — 30/10/2026
 
 REQ-MAINTENANCE-RECOVERY-20261030 / [ADR-094](../docs/decisions/ADR-094-maintenance-and-coordinated-recovery.md).

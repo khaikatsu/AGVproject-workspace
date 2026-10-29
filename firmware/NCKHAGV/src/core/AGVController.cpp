@@ -203,6 +203,12 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
             std::strcmp(command.node,control_.currentNode())==0 && wifi_.isConnected() && mqtt_.isConnected();
         if (!ready) { mqtt_.publishError(ErrorCode::ServoConfiguration,millis());return; }
         // Local check closes the gap between the server observation and receipt.
+        // Cho phep cam bien hang on dinh trong toi da 300ms sau khi vua dung xe
+        uint32_t cargoWaitStart = millis();
+        while ((!cargo_.stable() || !cargo_.present()) && (static_cast<uint32_t>(millis() - cargoWaitStart) < 300)) {
+            cargo_.update(millis());
+            delay(10);
+        }
         if(!cargo_.stable() || !cargo_.present()) {
             control_.safeStop(cargo_.stable()?ErrorCode::CargoMissing:ErrorCode::CargoSensorUnstable);
             publishTelemetry();return;
@@ -548,7 +554,8 @@ void AGVController::update() {
         heading_ = RoutePlanner::edgeHeading(control_.currentNode(), navigator_.nextNode(), navigator_.segmentReverse());
         headingBayDefault_ = false;
     }
-    movement_.apply(navigator_.state() == AGV_SAFE_STOP ? MotorAction::Stop :
+    const bool safeStopActive = (navigator_.state() == AGV_SAFE_STOP || navigator_.error() != ErrorCode::None || control_.state() == AGV_SAFE_STOP || control_.error() != ErrorCode::None);
+    movement_.apply(safeStopActive ? MotorAction::Stop :
                     (navigator_.active() ? coreMotor : output.motor), navigator_.precisionPivot(),
                     navigator_.precisionPivotPwm(), navigator_.settlingTurnLine(),
                     {navigator_.forwardLineTracking(), motionInput.linePattern, motionInput.now});
@@ -570,8 +577,15 @@ void AGVController::update() {
         publishTelemetry();
     }
     if(!saveLift()) {lift_.interrupt();movement_.stop();control_.safeStop(ErrorCode::Configuration);}
-    if (navigator_.state() == AGV_SAFE_STOP ||
-        (!navigator_.active() && control_.state() != AGV_MOVING)) movement_.stop();
+    if (navigator_.state() == AGV_SAFE_STOP || navigator_.error() != ErrorCode::None) {
+        if (control_.state() != AGV_SAFE_STOP) {
+            control_.safeStop(navigator_.error() == ErrorCode::None ? ErrorCode::LineLost : navigator_.error());
+        }
+        movement_.stop();
+        motor_.motorStop();
+    } else if (!navigator_.active() && control_.state() != AGV_MOVING) {
+        movement_.stop();
+    }
     const MotorAction motorAction = movement_.action();
     applyStartupBoostCheck(motorAction);
     const bool motionLog = motorAction != lastMotorAction_ && (!Config::FAST_LINE_RESPONSE ||

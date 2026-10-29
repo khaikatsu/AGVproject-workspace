@@ -244,9 +244,9 @@ function createGateway(options = {}) {
     }
     const inventory=createWarehouseInventory({db,publish:()=>broadcast()});
     const orders = createOrderService({db,getState:()=>ready() && supported() ? latestState : null,
-        getSession:()=>session,send:command,publish:()=>broadcast(),inventory,getLocationNames:locationNames.snapshot});
+        getSession:()=>session,send:command,publish:()=>broadcast(),inventory,getLocationNames:locationNames.snapshot,cargoScanTimeoutMs:3000});
     const warehouseActions=createWarehouseActions({getState:()=>ready()&&supported()?latestState:null,
-      getSession:()=>session,send:command,publish:()=>broadcast(),inventory});
+      getSession:()=>session,send:command,publish:()=>broadcast(),inventory,cargoScanTimeoutMs:3000});
     const shiftReview=createShiftReview({db,getState:()=>latestState,getSession:()=>session,
       inventory,orders,actions:warehouseActions});
     const route = fn => (req,res,next) => Promise.resolve().then(()=>fn(req,res)).catch(next);
@@ -376,6 +376,14 @@ function createGateway(options = {}) {
             throw httpError(400,'Cần xác nhận xe đã dừng, vùng cũ trống và tình trạng di chuyển xe');
         res.json({ok:true,...await command({cmd:'recover_vehicle',id:id(req.params.id),
             expected_node:id(req.body.expected_node),physically_clear:true,repositioned:req.body.repositioned})});
+    }));
+    app.post('/api/agvs/:id/reconcile-cargo',route(async(req,res)=>{
+        if(req.body.physically_clear!==true)throw httpError(400,'Cần xác nhận xe đã trống và kệ an toàn');
+        const agvId = id(req.params.id);
+        const robot = latestState.fleet.agvs.find(r => r.id === agvId);
+        if(!robot)throw httpError(404,'Không tìm thấy xe');
+        const liftCmdId = robot.lift?.command_id || 0;
+        res.json({ok:true,...await command({cmd:'reconcile_test_cargo',robots:[{id:agvId,lift_command_id:liftCmdId}],physically_clear:true})});
     }));
     app.post('/api/agvs/:id/recovery-heading',route(async(req,res)=>{
         if(req.body.physically_confirmed!==true || !['N','E','S','W'].includes(req.body.heading))

@@ -187,81 +187,6 @@ MotorAction CoreNavigator::alignTurnLine(const ControlInput& in) {
         searchMotorChangedMs_ = in.now;
         return MotorAction::Stop;
     }
-    const bool docking = isDockingTurn();
-    if (docking) {
-        if (in.linePattern == 2) {
-            // Đúng chuẩn tâm 010: Hãm phanh dừng và giữ yên để triệt tiêu toàn bộ quán tính xoay
-            searchPulse_ = false;
-            searchMotorChangedMs_ = in.now;
-            if (!centerSamples_) {
-                centerSamples_ = 1;
-                centerSinceMs_ = centerSampleMs_ = in.now;
-            } else if (static_cast<uint32_t>(in.now - centerSampleMs_) >= Config::LEFT_CAPTURE_SAMPLE_MS) {
-                ++centerSamples_;
-                centerSampleMs_ = in.now;
-            }
-            const uint32_t dwell = in.now - centerSinceMs_;
-            if (centerSamples_ >= 2 && dwell >= Config::GS_CONFIRM_MS) {
-#if defined(ARDUINO)
-                if (Config::DEBUG_ENABLED) Serial.printf(
-                    "[DOCKING] GS line locked 010 pattern=%u samples=%u dwell=%lums node=%s\n",
-                    in.linePattern, centerSamples_, static_cast<unsigned long>(dwell), current_);
-#endif
-                phase_ = Phase::Following;
-                segmentStartedMs_ = in.now;
-                reverseAlignStartedMs_ = in.now;
-                reverseAligned_ = (Config::REVERSE_ALIGN_FORWARD_MS == 0);
-                resetLineTracking();
-                turnSettling_ = false;
-                return MotorAction::Stop;
-            }
-            return MotorAction::Stop;
-        }
-
-        // Nếu lệch khỏi 010: Reset bộ đếm xác nhận và thời gian giữ dừng
-        centerSamples_ = 0;
-        captureCount_ = captureHistory_ = 0;
-
-        MotorAction direction = MotorAction::Stop;
-        if (in.linePattern == 6 || in.linePattern == 4) {
-            // 110 hoặc 100: Line lệch trái -> vi chỉnh nhích trái
-            direction = MotorAction::PivotLeft;
-        } else if (in.linePattern == 3 || in.linePattern == 1) {
-            // 011 hoặc 001: Line lệch phải (quán tính lố) -> vi chỉnh nhích phải
-            direction = MotorAction::PivotRight;
-        } else if (in.linePattern == 0) {
-            // Mất line: nhích tìm lại theo hướng quay ban đầu
-            direction = turns_[index_] == RouteTurn::Right ? MotorAction::PivotRight : MotorAction::PivotLeft;
-        }
-
-        if (direction == MotorAction::Stop) {
-            searchPulse_ = false;
-            searchMotorChangedMs_ = in.now;
-            return MotorAction::Stop;
-        }
-
-        if (direction != searchDirection_) {
-            searchDirection_ = direction;
-            searchPulse_ = false;
-            searchMotorChangedMs_ = in.now;
-            return MotorAction::Stop;
-        }
-
-        const uint32_t sinceChange = in.now - searchMotorChangedMs_;
-        if (searchPulse_) {
-            // Xung nhích góc nhỏ: 35ms ở tốc độ 155 PWM để không bị văng quán tính
-            if (sinceChange < 35) return direction;
-            searchPulse_ = false;
-            searchMotorChangedMs_ = in.now;
-            return MotorAction::Stop;
-        }
-        // Thời gian nghỉ phanh dừng: 45ms để đọc cảm biến khi xe đã triệt tiêu gia tốc
-        if (sinceChange < 45) return MotorAction::Stop;
-        searchPulse_ = true;
-        searchMotorChangedMs_ = in.now;
-        return direction;
-    }
-
     const bool centerBearing = in.linePattern == 2 || in.linePattern == 3 || in.linePattern == 6;
     const bool stableTrack = Config::LINE_RECOVERY_TRACK_CONFIRM && confirmTrackedLine(in);
     if (captureCount_ && static_cast<uint32_t>(in.now-captureSampleMs_) > Config::LEFT_CAPTURE_MAX_GAP_MS)
@@ -285,7 +210,7 @@ MotorAction CoreNavigator::alignTurnLine(const ControlInput& in) {
         turnSettling_ = true;
         return MotorAction::Stop;
     }
-    if (!docking && Config::LINE_RECOVERY_TRACK_CONFIRM &&
+    if (Config::LINE_RECOVERY_TRACK_CONFIRM &&
         (centerBearing || elapsed >= Config::LINE_RECOVERY_TIMEOUT_MS)) {
         // Validate a tracked line at rest; never extend pivot pulses
         // beyond the old 600ms budget, even during the longer confirmation wait.
@@ -370,7 +295,7 @@ bool CoreNavigator::start(const char* current, const CoreCommand& command, const
             route.departure[i] == RouteTurn::Unknown ||
             (route.departure[i] == RouteTurn::TurnAround &&
              (route.turnCrossings[i] < 1 || route.turnCrossings[i] > 2))) return false;
-        if (route.reverseAfterTurn[i] && !RoutePlanner::reverseHome(i ? command.path[i-1] : current,command.path[i])) return false;
+        if (route.reverseAfterTurn[i]) return false;
         if (command.passThrough[i] && (i+1 >= route.count || route.reverseAfterTurn[i] || route.departure[i] == RouteTurn::Reverse ||
             route.departure[i+1] != RouteTurn::Straight ||
             !RoutePlanner::straightThrough(i ? command.path[i-1] : current,command.path[i],command.path[i+1]))) return false;
