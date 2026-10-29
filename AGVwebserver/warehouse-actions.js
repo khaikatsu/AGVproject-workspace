@@ -6,7 +6,7 @@ const SERVICE_MS=5000;
 const finished=action=>['completed','interrupted'].includes(action.status);
 
 // Temporary warehouse tests; the servo cargo marker is not an order or a load sensor.
-function createWarehouseActions({getState,getSession,send,publish,inventory}) {
+function createWarehouseActions({getState,getSession,send,publish,inventory,cargoScanTimeoutMs = 0}) {
   const actions=[],resuming=new Set();let running=null,closed=false,endingShift=false;
   const scopedRobot=state=>state?.shift?.trial_robot_id ||
     (state?.shift?.operation_profile==='scoped'&&state.shift.active_robot_ids?.length===1 ? state.shift.active_robot_ids[0] :
@@ -77,6 +77,7 @@ function createWarehouseActions({getState,getSession,send,publish,inventory}) {
   async function inspectAndStart(action){
     const robot=getState()?.fleet.agvs.find(robot=>robot.id===action.robot),cargo=cargoReading(robot,action.warehouse);
     if(cargo.required&&cargo.known&&!cargo.present){
+      if(action.action==='pickup' && (Date.now() - (action.lift_wait_started_at || 0) < cargoScanTimeoutMs)) return;
       if(action.action==='pickup'&&action.inventory_tracked)inventory.confirmMissing(`action:${action.id}`,robot,action.core_session_id);
       interrupt(action,action.action==='pickup'?`${action.warehouse} thực tế không có hàng; không nâng kệ`:'Xe không còn hàng trước khi hạ');return;
     }

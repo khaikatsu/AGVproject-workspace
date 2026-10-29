@@ -91,8 +91,8 @@ constexpr int SERVO_3_PIN = REAR_ULTRASONIC_ECHO_PIN < 0 ? 21 : -1;
 constexpr int BUZZER_PIN = REAR_ULTRASONIC_ECHO_PIN < 0 ? 0 : 21;
 constexpr int CARGO_IR_PIN = 2;
 constexpr int BUZZER_ACTIVE_STATE = 0;
-// Flying Fish IR sensor (LM393): Active-High (1 = co vat can/hang, 0 = trong trai)
-constexpr int CARGO_IR_ACTIVE_STATE = 1;
+// Flying Fish IR sensor (LM393): Active-LOW (0 = co hang [2 LED], 1 = trong trai [1 LED])
+constexpr int CARGO_IR_ACTIVE_STATE = 0;
 constexpr uint32_t CARGO_IR_STABLE_MS = 150;
 constexpr uint32_t REVERSE_STOP_MS = 150;
 // Front-mounted line sensors have not been validated for backward steering.
@@ -797,9 +797,9 @@ constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261029-robot01-dropoff-exit-v25";
+constexpr const char* FIRMWARE_BUILD = "20261029-robot01-dropoff-exit-v27";
 #elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
-constexpr const char* FIRMWARE_BUILD = "20261029-robot02-dropoff-exit-v25";
+constexpr const char* FIRMWARE_BUILD = "20261029-robot02-dropoff-exit-v27";
 #else
 constexpr const char* FIRMWARE_BUILD = "20261015-battery-smoothing";
 #endif

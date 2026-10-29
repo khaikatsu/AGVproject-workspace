@@ -95,6 +95,17 @@ function renderVehicleActions(card, id, robot) {
     robot.heading_confirmation_required||robot.heading_confirmation_pending) {
     actions.append(action('Khôi phục xe',()=>openVehicleRecovery(id)));
   }
+  const cargoUnresolved = (robot.virtual_cargo || (robot.lift?.command_id > 0 && !robot.virtual_cargo_known));
+  if(cargoUnresolved) {
+    actions.append(action('Đối soát kệ xe', async (button) => {
+      if(!confirm(`Xác nhận xe ${id} đã dừng tại trạm và trống hàng (kệ đã an toàn)?`)) return;
+      button.disabled = true;
+      try {
+        const res = await api('POST', `/api/agvs/${encodeURIComponent(id)}/reconcile-cargo`, {physically_clear: true});
+        if(res && res.ok) toast(`Đã đối soát xong kệ xe ${id}`);
+      } finally { button.disabled = false; }
+    }));
+  }
   for(const task of lastState?.warehouse_actions||[])if(task.robot===id&&task.status==='interrupted'&&
     !task.closed_by_shift&&['to_warehouse','to_gate'].includes(task.suspended_status))
     actions.append(action('Tiếp tục thao tác kho',button=>resumeWarehouseAction(task,button)));

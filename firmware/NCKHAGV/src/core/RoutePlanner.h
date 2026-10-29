@@ -98,11 +98,7 @@ inline bool bayExit(const char* from, const char* to) {
 inline bool dockingReverse(const char* from, const char* to) {
     return !station(from) && bayExit(from,to);
 }
-inline bool reverseHome(const char* from, const char* to) {
-    return Config::REVERSE_HOME_SUPPORTED && from && to &&
-        ((std::strcmp(from,"GS1") == 0 && std::strcmp(to,"S1") == 0) ||
-         (std::strcmp(from,"GS2") == 0 && std::strcmp(to,"S2") == 0));
-}
+inline bool reverseHome(const char* from, const char* to) { return false; }
 inline bool straightThrough(const char* from, const char* current, const char* next) {
     if (!current || station(current) || bayGate(current) || dockingReverse(from,current)) return false;
     const auto incoming = edgeHeading(from,current,false,true), outgoing = edgeHeading(current,next);
@@ -181,14 +177,7 @@ inline bool plan(const char* previous, const char* current, const CoreCommand& c
             else if (decision == RouteTurn::Reverse) decision = RouteTurn::Straight;
             else if (decision == RouteTurn::Straight) decision = RouteTurn::Reverse; // continue backing on the same line
         }
-        output.reverseAfterTurn[i] = reverseHome(from,to);
-        if (output.reverseAfterTurn[i]) {
-            // Face away from S1 on the user-confirmed GS1 line extension.
-            // Turn is physical rotation; translation is independently backward.
-            const auto front = explicitHeading ? (docking != RobotHeading::Unknown ? docking : confirmedHeading) :
-                edgeHeading(incoming,from,previousWasReverse,true);
-            decision = turnFromHeading(front,edgeHeading(from,to,true));
-        }
+        output.reverseAfterTurn[i] = false;
         if (decision == RouteTurn::Reverse && !dockingReverse(from,to)) {
             decision = RouteTurn::TurnAround;
         }

@@ -53,14 +53,13 @@ public:
             ? Config::RIGHT_TURN_CAPTURE_PWM : Config::LEFT_TURN_CAPTURE_PWM;
     }
     bool precisionPivot() const {
-        return g1TurnAroundPrecision() || isDockingTurn() || recoveringLine() || cornerRecovering() ||
+        return g1TurnAroundPrecision() || recoveringLine() || cornerRecovering() ||
             turn180Recovering() || (turnCaptureEnabled() && phase_ == Phase::Turning && oldLineDeparted_);
     }
     int precisionPivotPwm() const {
         if (turn180Recovering()) return Config::TURN_180_RECOVERY_PWM;
         if (g1TurnAroundPrecision()) return Config::G1_TURN_AROUND_PWM;
-        if (isDockingTurn()) return (phase_ == Phase::TurnCapture) ? Config::GS_ALIGN_PWM : Config::GS_TURN_PWM;
-        if (cornerRecovering()) return Config::CORNER_RECOVERY_PWM;
+                if (cornerRecovering()) return Config::CORNER_RECOVERY_PWM;
         // Turn capture uses its direction-specific PWM; line-loss recovery keeps its own limit.
         return (phase_ == Phase::TurnCapture || (phase_ == Phase::Turning &&
                 turnCaptureEnabled() && oldLineDeparted_) ||
@@ -95,9 +94,7 @@ public:
     }
 private:
     enum class Phase { Idle, WaitingGrant, Turning, TurnCapture, TurnAroundCapture, Following, StationDwell, StationTurning, Fault };
-    bool isDockingTurn() const {
-        return RoutePlanner::reverseHome(current_, nextNode());
-    }
+    bool isDockingTurn() const { return false; }
     bool isBayExit() const {
         return active() && index_ < length_ && RoutePlanner::dockingReverse(current_, path_[index_]);
     }

@@ -7,7 +7,7 @@ const LIFT_READY_TIMEOUT_MS = 5000;
 const LIFT_RESULT_TIMEOUT_MS = 15000;
 const activeItem = item=>!['queued','delivered','interrupted'].includes(item.status);
 
-function createOrderService({db,getState,getSession,send,publish,inventory,getLocationNames}) {
+function createOrderService({db,getState,getSession,send,publish,inventory,getLocationNames,cargoScanTimeoutMs = 0}) {
   const orders = db.getOrders();
   let tickPromise = null,stopped = false,endingShift=false;
   const resolving=new Set();
@@ -30,14 +30,26 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
     save(order);
   }
   function interrupt(order,item,reason) {
-    if(inventory)for(const candidate of order.items)inventory.interrupt(moveKey(order,candidate),reason);
+    if(inventory)for(const candidate of order.items) {
+      const candidateReason = (!item || candidate === item)
+        ? reason
+        : `Tạm dừng do lượt Xe ${item.robot || 'khác'} (${item.pickup}→${item.dropoff}) gặp sự cố: ${reason}`;
+      inventory.interrupt(moveKey(order,candidate),candidateReason);
+    }
     for (const candidate of order.items.filter(activeItem)) {
       if(candidate.status!=='interrupted') {
         candidate.suspended_status=candidate.status;
         const state=getState(),task=state?.fleet.tasks?.find(task=>task.task_id===candidate.task_id);
         candidate.resume_node=task?.resume_node||state?.fleet.agvs.find(robot=>robot.id===candidate.robot)?.node||null;
       }
-      candidate.status='interrupted';candidate.reason=reason;
+      candidate.status='interrupted';
+      if (!item || candidate === item) {
+        candidate.reason = reason;
+      } else {
+        const otherRef = item.robot ? `Xe ${item.robot}` : 'Lượt khác';
+        const locRef = item.pickup ? ` tại ${item.pickup}` : '';
+        candidate.reason = `Tạm dừng do ${otherRef}${locRef} gặp sự cố: ${reason}`;
+      }
     }
     order.status = 'needs_attention';order.reason = reason;save(order);
   }
@@ -370,6 +382,12 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
       item.lift_command_id=result.command_id;item.lift_sent_at=Date.now();
       item.status=pickup?'pickup_lift':'dropoff_lift';save(order);
     } catch(error) {
+      if ((error.message.includes('Cho ') || error.message.includes('chua san sang')) &&
+          (Date.now() - (item.lift_wait_started_at || 0) < LIFT_READY_TIMEOUT_MS)) {
+        item.status = pickup ? 'waiting_pickup_lift' : 'waiting_dropoff_lift';
+        save(order);
+        return;
+      }
       interrupt(order,item,`Không xác định được thao tác ${pickup?'nâng':'hạ'} kệ: ${error.message}`);
     }
   }
@@ -414,6 +432,7 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
             const cargo=cargoReading(robot,node);
             if(cargo.required&&!cargo.known)continue;
             if(cargo.required&&!cargo.present) {
+              if(pickup && (Date.now() - (item.lift_wait_started_at || 0) < cargoScanTimeoutMs)) continue;
               if(pickup)inventory?.confirmMissing(moveKey(order,item),robot,order.core_session_id);
               interrupt(order,item,pickup?`${node} thực tế không có hàng; không nâng kệ`:`Xe ${robot.id} không còn hàng trước khi hạ`);break;
             }

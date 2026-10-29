@@ -76,7 +76,10 @@ function renderRobotTransfer(state,robot,card,stale) {
       if(step.dataset.stage==='current')step.setAttribute('aria-current','step');
     });card.append(steps);
   }
-  if(attention)operationText(card,robot.error||assignment?.order.reason||'Đối soát vị trí thực tế trước khi giao việc mới.','p','transfer-alert');
+  if(attention) {
+    const alertReason = robot.error || item?.reason || assignment?.order.reason || 'Đối soát vị trí thực tế trước khi giao việc mới.';
+    operationText(card, alertReason, 'p', 'transfer-alert');
+  }
   renderVehicleActions(card,robot.id,robot);
 }
 function renderDeletedOrderAttention(state) {
