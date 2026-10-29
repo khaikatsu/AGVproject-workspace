@@ -98,6 +98,7 @@ struct AGV {
     long sonarRouteCommandId = 0;
     Clock::time_point sonarSeen{};
     bool liftSupported=false,liftReady=false,liftActive=false,virtualCargoKnown=false,virtualCargo=false;
+    bool dropoffExitSupported=false,dropoffExitPending=false;
     bool cargoSensorSupported=false,cargoSensorStable=false,cargoSensorPresent=false,cargoSensorStopped=false;
     uint32_t cargoSensorSeq=0,cargoSensorUptime=0,cargoSensorBoot=0,cargoSensorConnection=0,liftCargoUptime=0;
     std::string cargoSensorNode;
@@ -129,6 +130,7 @@ struct MotionDiagnostic {
     bool stationDockingSupported = false, stationReady = false;
     bool reverseHomeSupported = false;
     bool liftSupported=false,liftBusy=false,liftPresent=false,cargoKnown=false,virtualCargo=false;
+    bool dropoffExitSupported=false;
     bool cargoSensorSupported=false,cargoSensorStable=false,cargoSensorPresent=false;
     uint32_t cargoSensorSeq=0,cargoSensorAge=UINT32_MAX,cargoSensorStableMs=0;
     long liftCommandId=0;
@@ -183,7 +185,9 @@ public:
             state["agvs"].push_back({{"id",a.id},{"node",a.currentNode},{"battery",a.battery},
                 {"needs_recharge",a.needsRecharge},{"state",toString(a.state)},
                 {"position_valid",a.positionValid},{"path",a.activePath},{"target",a.finalTarget},
-                {"task_id",a.taskId},{"uncertain_path",a.uncertainPath},{"stopped_nodes",a.stoppedNodes}});
+                {"task_id",a.taskId},{"uncertain_path",a.uncertainPath},{"stopped_nodes",a.stoppedNodes},
+                {"dropoff_exit_pending",a.dropoffExitPending},{"dropoff_lift_node",a.liftNode},
+                {"dropoff_lift_command_id",a.liftCommandId}});
         }
         return state;
     }
@@ -216,6 +220,15 @@ public:
             a.battery = item.at("battery").get<int>();a.needsRecharge = item.value("needs_recharge",false);
             a.hasTelemetry = true;a.positionValid = false;a.batteryMeasured = false;a.state = AGVState::OFFLINE;
             a.recoveryHeadingRequired=true; // A Core restart cannot retain proof of the physical front direction.
+            a.dropoffExitPending=item.value("dropoff_exit_pending",false);
+            if(a.dropoffExitPending) {
+                a.liftNode=item.value("dropoff_lift_node",std::string{});
+                a.liftCommandId=item.value("dropoff_lift_command_id",0L);
+                if(!PhysicalLayout::warehouse(a.liftNode) || a.liftCommandId<=0)
+                    throw std::invalid_argument("Checkpoint ha hang cho lui sai");
+                a.liftState="INTERRUPTED";a.virtualCargo=true;
+                // Keep the hold, never restore boot/session or actuator authorization.
+            }
             a.lastSeen = Clock::now()-offlineTimeout_-std::chrono::seconds(1);
             a.uncertainPath = item.at("uncertain_path").get<std::vector<std::string>>();
             a.stoppedNodes = item.value("stopped_nodes",std::vector<std::string>{});
@@ -1235,6 +1248,8 @@ public:
                 it==fleet_.end()) return "Firmware/cau hinh xe chua cho phep servo";
             auto& a=it->second;
             if(a.recoveryHeadingRequired || a.headingPendingId>0)return "Can hoan tat khoi phuc/huong truoc khi nang ha";
+            if(a.dropoffExitPending)return "Cho lui ra gate va xac nhan ke da roi xe; khong lap servo";
+            if(!up && !a.dropoffExitSupported)return "Can firmware ho tro ha hang roi lui ra gate";
             if(!acceptingTasks_ || !networkAvailable_ || !tasks_.empty() || !a.hasTelemetry || !a.positionValid ||
                 Clock::now()-a.lastSeen>offlineTimeout_ || a.currentNode!=node || !PhysicalLayout::warehouse(node) ||
                 a.state!=AGVState::IDLE || a.liftActive || !a.lastError.empty() ||
@@ -1264,6 +1279,8 @@ public:
                 const auto it=fleet_.find(entry.first);
                 if(it==fleet_.end() || !activeRobotNoLock(entry.first))return "Xe chua san sang doi soat";
                 const auto& a=it->second;
+                if(a.dropoffExitPending && a.currentNode!=PhysicalLayout::gate(a.liftNode))
+                    return "Sau ha can xac minh xe da roi ke tai gate truoc doi soat cargo";
                 if(a.cargoSensorSupported && (!a.cargoSensorStable || a.cargoSensorPresent ||
                     a.cargoSensorSeen==Clock::time_point{} || now-a.cargoSensorSeen>std::chrono::milliseconds(1500) ||
                     a.cargoSensorNode!=a.currentNode || a.cargoSensorBoot!=a.encoder.boot || a.cargoSensorConnection!=a.encoder.connection))
@@ -1278,6 +1295,7 @@ public:
             }
             for(const auto& entry:robots) {
                 auto& a=fleet_.at(entry.first);a.virtualCargoKnown=true;a.virtualCargo=false;
+                a.dropoffExitPending=false;
             }
         }
         notify();return "";
@@ -1323,6 +1341,8 @@ public:
                 d.rfidAgeMs!=UINT32_MAX && d.motor=="STOP" && d.leftDuty==0 && d.rightDuty==0;
             const bool supported=d.liftSupported && healthy;
             changed=a.liftSupported!=supported;a.liftSupported=supported;a.liftSeen=Clock::now();
+            changed=changed || a.dropoffExitSupported!=d.dropoffExitSupported;
+            a.dropoffExitSupported=d.dropoffExitSupported;
             changed=changed || a.liftObservedNode!=d.node || a.liftReady!=(supported && !d.liftBusy && !d.taskActive && d.state=="AGV_IDLE");
             a.liftObservedNode=d.node;
             a.liftReady=supported && !d.liftBusy && !d.taskActive && d.state=="AGV_IDLE";
@@ -1341,14 +1361,34 @@ public:
                     const auto busyState=up?"LIFTING":"LOWERING",doneState=up?"DONE_UP":"DONE_DOWN";
                     if(d.liftBusy && d.taskActive && d.liftState==busyState && d.state==(up?"AGV_LOADING":"AGV_UNLOADING")) {
                         changed=changed||a.liftState!=busyState;a.liftState=busyState;
-                    } else if(!d.liftBusy && !d.taskActive && d.state=="AGV_IDLE" && d.liftState==doneState &&
+                    } else if(!up && d.dropoffExitSupported && !d.liftBusy && !d.taskActive && d.state=="AGV_IDLE" &&
+                        d.liftState=="LOWERED" && d.liftElapsedMs>=5000 && d.cargoKnown && d.virtualCargo &&
+                        (cargoSensorReadyNoLock(a,true) || cargoSensorReadyNoLock(a,false)) &&
+                        static_cast<int32_t>(a.cargoSensorUptime-a.liftCargoUptime)>0 &&
+                        Clock::now()-a.liftStarted>=std::chrono::milliseconds(5000)) {
+                        a.liftActive=false;a.liftState="LOWERED";a.dropoffExitPending=true;
+                        a.virtualCargoKnown=true;a.virtualCargo=true;a.liftCargoUptime=a.cargoSensorUptime;
+                        const auto pending=pendingCmd_.find(id);
+                        if(pending!=pendingCmd_.end() && pending->second.cmdId==a.liftCommandId)pendingCmd_.erase(pending);
+                        a.state=AGVState::IDLE;changed=true;
+                    } else if(up && !d.liftBusy && !d.taskActive && d.state=="AGV_IDLE" && d.liftState==doneState &&
                         d.liftElapsedMs>=5000 && d.cargoKnown && d.virtualCargo==up &&
                         cargoSensorReadyNoLock(a,up) && static_cast<int32_t>(a.cargoSensorUptime-a.liftCargoUptime)>0 &&
                         Clock::now()-a.liftStarted>=std::chrono::milliseconds(5000)) {
                         a.liftActive=false;a.liftState=doneState;a.virtualCargoKnown=true;a.virtualCargo=up;
+                        const auto pending=pendingCmd_.find(id);
+                        if(pending!=pendingCmd_.end() && pending->second.cmdId==a.liftCommandId)pendingCmd_.erase(pending);
                         a.state=AGVState::IDLE;changed=true;
                     }
                 }
+            }
+            if(a.dropoffExitPending && healthy && a.liftBoot==a.encoder.boot && a.liftConnection==a.encoder.connection &&
+                d.dropoffExitSupported && d.liftCommandId==a.liftCommandId && !d.liftBusy && !d.taskActive &&
+                d.state=="AGV_IDLE" && d.liftState=="DONE_DOWN" && d.liftElapsedMs>=5000 &&
+                d.cargoKnown && !d.virtualCargo && d.node==PhysicalLayout::gate(a.liftNode) &&
+                cargoSensorReadyNoLock(a,false) && static_cast<int32_t>(a.cargoSensorUptime-a.liftCargoUptime)>0) {
+                a.dropoffExitPending=false;a.liftState="DONE_DOWN";
+                a.virtualCargoKnown=true;a.virtualCargo=false;changed=true;
             }
         }
         if(changed) notify();
@@ -1368,7 +1408,12 @@ public:
             if (monitorOnlyRobots_.count(agvId)) return "Xe chi giam sat; khong nhan lenh di chuyen";
             if (!activeRobotNoLock(agvId)) return "Xe khong nam trong pham vi van hanh hien tai";
             if(agv.liftActive) return "Xe dang nang/ha hang; cho servo hoan tat";
-            if(agv.virtualCargo && !cargoSensorReadyNoLock(agv,true))
+            if(agv.dropoffExitPending && (agv.currentNode!=agv.liftNode || targetNode!=PhysicalLayout::gate(agv.liftNode) ||
+                agv.liftBoot!=agv.encoder.boot || agv.liftConnection!=agv.encoder.connection))
+                return "Sau ha chi duoc lui tu kho giao ra gate cung kho; khac phien can doi soat";
+            if(agv.dropoffExitPending && !cargoSensorReadyNoLock(agv,true) && !cargoSensorReadyNoLock(agv,false))
+                return "Cho mau LM393 moi on dinh tai kho truoc khi lui";
+            if(agv.virtualCargo && !agv.dropoffExitPending && !cargoSensorReadyNoLock(agv,true))
                 return "Can LM393 xac nhan ke van tren xe truoc khi di tiep";
             if (!trialRobotId_.empty() && agvId != trialRobotId_) return "Che do thu chi cho phep xe " + trialRobotId_;
             if (twoRobotTrial_ && agvId != "01" && agvId != "02") return "Thu hai xe chi cho phep 01 va 02";
@@ -1610,7 +1655,13 @@ public:
             if (it==fleet_.end() || !activeRobotNoLock(id)) return "Xe chua san sang";
             auto& a=it->second;
             if(a.recoveryHeadingRequired || a.headingPendingId>0)return "Can xac nhan huong dau xe truoc khi tiep tuc";
-            if(a.virtualCargo && !cargoSensorReadyNoLock(a,true))return "Can LM393 xac nhan ke truoc khi tiep tuc";
+            if(a.dropoffExitPending && (a.currentNode!=a.liftNode ||
+                t->second.at("target").get<std::string>()!=PhysicalLayout::gate(a.liftNode) ||
+                a.liftBoot!=a.encoder.boot || a.liftConnection!=a.encoder.connection))
+                return "Chi tiep tuc chang lui ra gate cung kho sau ha";
+            if(a.dropoffExitPending && !cargoSensorReadyNoLock(a,true) && !cargoSensorReadyNoLock(a,false))
+                return "Cho mau LM393 moi on dinh tai kho truoc khi tiep tuc lui";
+            if(a.virtualCargo && !a.dropoffExitPending && !cargoSensorReadyNoLock(a,true))return "Can LM393 xac nhan ke truoc khi tiep tuc";
             if (a.currentNode!=expectedNode || expectedNode!=t->second.value("resume_node",std::string{}) ||
                 a.state!=AGVState::IDLE || !a.lastError.empty() || !verifiedNodeStopNoLock(a) || !a.nodeStopHealthy ||
                 !a.taskId.empty() || !a.finalTarget.empty() || a.liftActive || a.cancelNeedsNodeProof || a.replanNeedsNodeProof ||
@@ -1747,6 +1798,7 @@ public:
                 {"lift",{{"supported",a.liftSupported && networkAvailable_ && now-a.liftSeen<=std::chrono::seconds(3)},
                     {"ready",a.liftReady && networkAvailable_ && a.liftObservedNode==a.currentNode && now-a.liftSeen<=std::chrono::seconds(3)},
                     {"observed_node",a.liftObservedNode},
+                    {"dropoff_exit_supported",a.dropoffExitSupported},{"dropoff_exit_pending",a.dropoffExitPending},
                     {"active",a.liftActive},{"state",a.liftState},{"command_id",a.liftCommandId},{"node",a.liftNode},
                     {"action",a.liftAction},{"fresh",networkAvailable_ && now-a.liftSeen<=std::chrono::seconds(3)}}},
                 {"virtual_cargo",a.virtualCargo}, {"virtual_cargo_known",a.virtualCargoKnown},
@@ -2201,7 +2253,7 @@ private:
     bool dispatchableNoLock(const AGV& a) const {
         return !a.recoveryHeadingRequired && a.headingPendingId==0 && activeRobotNoLock(a.id) && !monitorOnlyRobots_.count(a.id) && (trialRobotId_.empty() || a.id == trialRobotId_) &&
                (!twoRobotTrial_ || a.id == "01" || a.id == "02") &&
-               acceptingTasks_ && networkAvailable_ && !a.liftActive && a.state == AGVState::IDLE &&
+               acceptingTasks_ && networkAvailable_ && !a.liftActive && !a.dropoffExitPending && a.state == AGVState::IDLE &&
                (!a.virtualCargo || cargoSensorReadyNoLock(a,true)) &&
                !a.cancelNeedsNodeProof && !a.replanNeedsNodeProof && a.uncertainPath.empty() &&
                // (supervisedTrialNoLock() || (a.batteryMeasured && a.battery >= resumeBattery_)) && a.hasTelemetry && a.positionValid &&
@@ -2269,6 +2321,11 @@ private:
             agv.state=AGVState::AGV_ERROR;agv.lastError="Can xac nhan huong dau xe truoc khi chay";return;
         }
         if (!path.empty() && path.front() == agv.currentNode) path.erase(path.begin());
+        if(agv.dropoffExitPending && (agv.currentNode!=agv.liftNode || target!=PhysicalLayout::gate(agv.liftNode) ||
+            path.size()!=1 || path.front()!=target)) {
+            interruptWorkNoLock(agv,"Sau ha chi duoc lui ra gate cung kho");
+            agv.state=AGVState::AGV_ERROR;agv.lastError="Sau ha chi duoc lui ra gate cung kho";return;
+        }
         agv.activePath = path;
         agv.replanNeedsNodeProof=false;
         agv.commandPath = path; agv.routeStart = agv.currentNode;
@@ -2293,6 +2350,16 @@ private:
     // Gửi 1 lệnh JSON có cmd_id xuống xe, theo dõi để gửi lại nếu không có ACK (xem [5]).
     // PHẢI gọi khi đang giữ mtx_. Lệnh mới cho cùng 1 xe thay thế hẳn lệnh cũ đang chờ ACK.
     long sendCommand(AGV& agv, const std::string& cmdName, json extra = json::object()) {
+        if(agv.dropoffExitPending) {
+            if(cmdName=="CHARGE_START")return 0;
+            if((cmdName=="GOTO" || cmdName=="NODE_ORDER") &&
+                (agv.liftBoot!=agv.encoder.boot || agv.liftConnection!=agv.encoder.connection))return 0;
+            const auto gate=PhysicalLayout::gate(agv.liftNode);
+            if(cmdName=="GOTO" && (agv.currentNode!=agv.liftNode || extra.value("target",std::string{})!=gate ||
+                extra.value("path",json::array())!=json::array({gate})))return 0;
+            if(cmdName=="NODE_ORDER" && (extra.value("node",std::string{})!=agv.liftNode ||
+                extra.value("next_node",std::string{})!=gate))return 0;
+        }
         if(cmdName=="STOP" || cmdName=="WAIT" || cmdName=="RESET_FAULT")invalidatePendingHeadingNoLock(agv);
         if((agv.recoveryHeadingRequired || agv.headingPendingId>0) &&
             (cmdName=="GOTO" || cmdName=="NODE_ORDER" || cmdName=="CHARGE_START"))return 0;

@@ -12,4 +12,20 @@ function cargoResult(robot,node,expected) {
   const value=cargoReading(robot,node);
   return !value.required||value.known&&value.present===expected;
 }
-module.exports={cargoReading,cargoResult};
+function loweredForExit(robot,node,commandId) {
+  const lift=robot?.lift;
+  return lift?.dropoff_exit_supported===true&&lift.dropoff_exit_pending===true&&lift.fresh===true&&
+    lift.active===false&&lift.state==='LOWERED'&&lift.command_id===commandId&&lift.node===node&&
+    lift.observed_node===node&&robot.node===node&&robot.online===true&&robot.position_valid===true&&
+    robot.state==='IDLE'&&!robot.error&&!robot.task_id&&
+    robot.virtual_cargo_known===true&&robot.virtual_cargo===true&&cargoReading(robot,node).known;
+}
+function dropoffDoneAtGate(robot,node,commandId) {
+  const gate=node.replace(/^K/,'G'),lift=robot?.lift;
+  return lift?.dropoff_exit_supported===true&&lift.dropoff_exit_pending===false&&lift.fresh===true&&
+    lift.active===false&&lift.state==='DONE_DOWN'&&lift.command_id===commandId&&lift.node===node&&
+    lift.observed_node===gate&&robot.node===gate&&robot.online===true&&robot.position_valid===true&&
+    robot.state==='IDLE'&&!robot.error&&!robot.task_id&&
+    robot.virtual_cargo_known===true&&robot.virtual_cargo===false&&cargoReading(robot,gate).known&&cargoResult(robot,gate,false);
+}
+module.exports={cargoReading,cargoResult,loweredForExit,dropoffDoneAtGate};

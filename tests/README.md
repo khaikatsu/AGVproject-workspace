@@ -1,5 +1,11 @@
 # Hồ sơ kiểm thử AGV
 
+## Hạ rồi lùi khỏi kệ — 29/10/2026, chưa chạy
+
+Kiểm tra tĩnh: `node --check` cho bốn module gateway bị sửa và file ca kiểm tra JavaScript, parse JSON hai ví dụ và `git diff --check` thành công. Không thực thi test, firmware hoặc dịch vụ.
+
+REQ-DROPOFF-EXIT-PROOF-20261029 / [ADR-093](../docs/decisions/ADR-093-dropoff-exit-cargo-proof.md): cập nhật source các ca server `servo_core.cpp` và `cargo-sensor.test.js` cho01/02, gồm LOWERED khi LM393 còn HIGH, chốt không lặp hạ/không đi nhầm gate, hold sau restore, không hoàn tất tại K, ID sai/proof cũ và giao hàng chỉ sau task gate + DONE_DOWN + cảm biến trống. Đơn tự động và thao tác kho một xe cùng chờ cập nhật sổ kho. Chỉ rà source/diff; **chưa chạy các ca này, chưa build/test/nạp MCU hay Core**, không sửa DB/counter/dịch vụ. Cần người dùng nạp/thử cả hai xe theo quy trình hiện hành.
+
 ## Audit xung đột khôi phục/điều phối — 29/10/2026
 
 REQ-RECOVERY-CONFLICT-AUDIT-20261029: Core21/21 ca xung đột PASS cho01/02; hồi quy shift_recovery/cargo-sensor-core PASS; web/server65/65 và browser desktop/mobile PASS. Build mới riêng tại `.qa/recovery-conflicts-20261029/core/agv_core.exe`, SHA256 `70873BBCE7D19F78EA759A7C9E567A5BB5FB2F6EE2D4512AFDFB8A6194168EE2`. Không thay runtime hoặc firmware. Các lỗi tái hiện, cách sửa và lệnh kiểm tra tại [báo cáo](../docs/testing-recovery-conflicts-2026-10-29.md).

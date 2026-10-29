@@ -1,5 +1,7 @@
 # ADR-091 — LM393 xác nhận lấy/hạ hàng
 
+29/10/2026: [ADR-093](ADR-093-dropoff-exit-cargo-proof.md) thay điều kiện sau hạ và bố trí cảm biến bên dưới: người dùng xác nhận xe còn nằm dưới kệ sau hạ nên LM393 vẫn HIGH; hạ đủ5s → LOWERED → lùi đúng gate → LOW ổn định mới DONE_DOWN/ghi giao hàng. Source v25 giữ HIGH/raw1=có hàng cho01/02; các ghi nhận LOW của lần đồng bộ v23 là lịch sử. Chưa build/test/nạp bản sửa.
+
 Ngày 28/10/2026. SOURCE: người dùng duyệt triển khai xe tới đúng RFID kho, dừng, kiểm tra LM393; có hàng mới nâng, không hàng cập nhật kho trống. Người giám sát tiếp tục nhập Trống/Có kệ + mã kệ đầu ca. Người dùng xác nhận lắp cả hai xe và giữ polarity firmware: GPIO2, HIGH=có hàng, ổn định150ms.
 
 ## Quyết định

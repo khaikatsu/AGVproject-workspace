@@ -1,6 +1,6 @@
 const {randomUUID} = require('crypto');
 const {planOrder,shortestCost,shortestRoute} = require('./order-planner');
-const {cargoReading,cargoResult}=require('./cargo-proof');
+const {cargoReading,cargoResult,loweredForExit,dropoffDoneAtGate}=require('./cargo-proof');
 
 const SERVICE_MS = 5000;
 const LIFT_READY_TIMEOUT_MS = 5000;
@@ -222,7 +222,18 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
       const pickup = item.status === 'to_pickup',exiting=item.status==='to_exit';
       const node = pickup ? item.pickup : exiting ? item.exit_gate : item.dropoff;
       if (!robotAt(state,item,node)) {interrupt(order,item,`Task hoàn thành nhưng xe chưa xác nhận đứng ở ${node}`);return;}
-      if (exiting) {delivered(order,item);return;}
+      if (exiting) {
+        if(item.dropoff_exit_pending) {
+          if(!dropoffDoneAtGate(robot,item.dropoff,item.lift_command_id)) {
+            item.exit_arrived_at??=Date.now();
+            if(Date.now()-item.exit_arrived_at>5000)interrupt(order,item,'Đã tới gate nhưng chưa xác nhận kệ rời xe sau hạ');
+            return;
+          }
+          inventory?.confirmLift(moveKey(order,item),'dropoff',robot,item.lift_command_id,order.core_session_id);
+          item.dropoff_exit_pending=false;
+        }
+        delivered(order,item);return;
+      }
       beginLiftWait(order,item,pickup);
       return;
     }
@@ -240,8 +251,13 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
     if (lift?.command_id===item.lift_command_id && lift.state==='INTERRUPTED') {
       interrupt(order,item,`Servo xe ${item.robot} bị gián đoạn`);return;
     }
+    if(!pickup&&loweredForExit(robot,node,item.lift_command_id)&&robotAt(state,item,node)) {
+      item.lift_completed_at=new Date().toISOString();item.dropoff_exit_pending=true;
+      item.status='ready_exit';item.exit_gate=warehouseGate(state,item.dropoff);save(order);return;
+    }
     if (lift?.fresh===true && lift.command_id===item.lift_command_id &&
         lift.state===(pickup?'DONE_UP':'DONE_DOWN') && lift.active===false &&
+        (pickup||robot.lift.dropoff_exit_supported!==true&&robot.cargo_sensor?.required!==true) &&
         robot.virtual_cargo_known===true && robot.virtual_cargo===expected && cargoResult(robot,node,expected) && robotAt(state,item,node)) {
       inventory?.confirmLift(moveKey(order,item),pickup?'pickup':'dropoff',robot,item.lift_command_id,order.core_session_id);
       item.lift_completed_at=new Date().toISOString();

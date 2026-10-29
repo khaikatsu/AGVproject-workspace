@@ -1,5 +1,5 @@
 {
-  "description":"Chỉ test01, một servo tín hiệu GPIO17. Góc logic hạ0/nâng45, chu kỳ5000ms; PWM không đo vị trí hay tải thật.",
+  "description":"Áp dụng01/02, một servo tín hiệu GPIO17, giữ góc riêng từng profile và chu kỳ5000ms; PWM không đo vị trí hay tải thật. Hạ xong còn chờ lùi ra gate và LM393 trống.",
   "web_command":{"cmd":"warehouse_lift","request_id":"servo-test-request","agv_id":"01","node":"K5","action":"pickup"},
   "mqtt_command":{"cmd":"LIFT_UP","cmd_id":210,"node":"K5"},
   "receipt_ack":"210",
@@ -7,5 +7,6 @@
   "done_diagnostic_fragment":{"liftSupported":true,"liftCommandId":210,"liftBusy":false,"liftState":"DONE_UP","liftElapsedMs":5000,"virtualCargo":true,"state":"AGV_IDLE","taskActive":false,"motor":"STOP","leftDuty":0,"rightDuty":0},
   "fleet_fragment":{"state":"IDLE","lift":{"supported":true,"ready":true,"observed_node":"K5","active":false,"state":"DONE_UP","command_id":210,"node":"K5","action":"pickup","fresh":true},"virtual_cargo":true,"virtual_cargo_known":true},
   "lower_command":{"cmd":"LIFT_DOWN","cmd_id":211,"node":"K5"},
-  "lower_done_fragment":{"liftCommandId":211,"liftBusy":false,"liftState":"DONE_DOWN","liftElapsedMs":5000,"virtualCargo":false}
+  "lowered_at_warehouse_fragment":{"node":"K5","dropoffExitSupported":true,"liftCommandId":211,"liftBusy":false,"liftState":"LOWERED","liftElapsedMs":5000,"virtualCargo":true,"cargoStable":true,"cargoPresent":true},
+  "lower_done_fragment":{"node":"G5","dropoffExitSupported":true,"liftCommandId":211,"liftBusy":false,"liftState":"DONE_DOWN","liftElapsedMs":5000,"virtualCargo":false,"cargoStable":true,"cargoPresent":false}
 }

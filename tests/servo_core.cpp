@@ -9,11 +9,11 @@ void exercise(const std::string& id){
     fleet.setPublishCallback([&](const std::string&,const std::string& p){commands.push_back(json::parse(p));});
     fleet.updateTelemetry(id,"K5",80,false);fleet.bindEncoderSession(id,1,1,100);
     MotionDiagnostic d{"K5","AGV_IDLE","NONE","STOP",false,true,true,0,0,0};
-    d.liftPresent=d.liftSupported=true;d.liftState="IDLE";
+    d.liftPresent=d.liftSupported=d.dropoffExitSupported=true;d.liftState="IDLE";
     d.encoderBoot=1;d.encoderConnection=1;d.encoderUptime=100;
     d.cargoSensorSupported=d.cargoSensorStable=d.cargoSensorPresent=true;d.cargoSensorAge=0;d.cargoSensorStableMs=150;
     auto observe=[&](){++d.cargoSensorSeq;d.encoderUptime+=100;
-        fleet.updateTelemetry(id,"K5",80,false);fleet.observeMotionDiagnostic(id,d);};
+        fleet.updateTelemetry(id,d.node,80,false);fleet.observeMotionDiagnostic(id,d);};
     observe();
     auto robot=[&](){return fleet.toJson()["agvs"][0];};
     long command=0;CHECK(!fleet.startLift("03","K5",true,command).empty());
@@ -56,8 +56,23 @@ void exercise(const std::string& id){
     d.liftCommandId=command;d.liftBusy=d.taskActive=true;d.liftState="LOWERING";d.state="AGV_UNLOADING";
     observe();CHECK(robot()["state"]=="LOWERING");
     std::this_thread::sleep_for(std::chrono::milliseconds(5010));
-    d.liftBusy=d.taskActive=false;d.liftState="DONE_DOWN";d.state="AGV_IDLE";d.virtualCargo=false;
-    d.cargoSensorPresent=false;observe();CHECK(robot()["virtual_cargo"]==false&&robot()["state"]=="IDLE");
+    d.liftBusy=d.taskActive=false;d.liftState="LOWERED";d.state="AGV_IDLE";d.virtualCargo=true;
+    d.cargoSensorPresent=true;observe();
+    CHECK(robot()["virtual_cargo"]==true&&robot()["state"]=="IDLE"&&robot()["lift"]["dropoff_exit_pending"]==true);
+    CHECK(!fleet.startLift(id,"K5",false,another).empty()); // Never repeat lowering while backing out.
+    CHECK(!fleet.directGoto(id,"G4","wrong-gate").empty());
+    auto pendingCheckpoint=fleet.durableSnapshot();
+    CHECK(pendingCheckpoint["agvs"][0]["dropoff_exit_pending"]==true);
+    FleetManager restored(map,mutex);restored.restore(pendingCheckpoint);
+    CHECK(restored.toJson()["agvs"][0]["lift"]["dropoff_exit_pending"]==true);
+    CHECK(restored.toJson()["agvs"][0]["virtual_cargo_known"]==false);
+    d.liftState="DONE_DOWN";d.virtualCargo=false;d.cargoSensorPresent=false;
+    observe();CHECK(robot()["lift"]["dropoff_exit_pending"]==true); // Empty at K is not gate clearance.
+    d.node="G5";d.cargoSensorPresent=true;observe();CHECK(robot()["lift"]["dropoff_exit_pending"]==true);
+    d.cargoSensorPresent=false;d.liftCommandId=command+1;observe();CHECK(robot()["lift"]["dropoff_exit_pending"]==true);
+    d.liftCommandId=command;observe();
+    CHECK(robot()["virtual_cargo"]==false&&robot()["lift"]["dropoff_exit_pending"]==false);
+    d.node="K5";
     fleet.updateTelemetry(id,"K5",80,false);
     d.cargoSensorPresent=true;observe();
     CHECK(fleet.startLift(id,"K5",true,command).empty());

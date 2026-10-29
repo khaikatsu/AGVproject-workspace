@@ -1,7 +1,7 @@
 const {randomUUID}=require('node:crypto');
 const {shortestRoute}=require('./order-planner');
 const {isWarehouseNode}=require('./public/warehouse-rules');
-const {cargoReading,cargoResult}=require('./cargo-proof');
+const {cargoReading,cargoResult,loweredForExit,dropoffDoneAtGate}=require('./cargo-proof');
 const SERVICE_MS=5000;
 const finished=action=>['completed','interrupted'].includes(action.status);
 
@@ -142,7 +142,11 @@ function createWarehouseActions({getState,getSession,send,publish,inventory}) {
       if(robot.node!==action.warehouse){interrupt(action,'Xe rời kho khi đang nâng/hạ');return;}
       const lift=robot.lift,up=action.action==='pickup';
       if(lift?.command_id===action.lift_command_id&&lift.state==='INTERRUPTED'){interrupt(action,'Servo bị gián đoạn');return;}
+      if(!up&&loweredForExit(robot,action.warehouse,action.lift_command_id)&&at(state,action,action.warehouse)) {
+        action.dropoff_exit_pending=true;await dispatch(action,action.gate,true);return;
+      }
       if(lift?.fresh===true&&lift.command_id===action.lift_command_id&&lift.state===(up?'DONE_UP':'DONE_DOWN')&&
+        (up||lift.dropoff_exit_supported!==true&&robot.cargo_sensor?.required!==true)&&
         lift.active===false&&robot.virtual_cargo_known===true&&robot.virtual_cargo===up&&cargoResult(robot,action.warehouse,up)&&at(state,action,action.warehouse)){
         if(action.inventory_tracked)inventory.confirmLift(`action:${action.id}`,action.action,robot,action.lift_command_id,action.core_session_id);
         await dispatch(action,action.gate,true);return;
@@ -161,7 +165,18 @@ function createWarehouseActions({getState,getSession,send,publish,inventory}) {
     if(task.status!=='completed')return;
     const node=action.status==='to_gate'?action.gate:action.warehouse;
     if(!at(state,action,node)){interrupt(action,`Task hoàn thành nhưng chưa xác nhận RFID tại ${node}`);return;}
-    if(action.status==='to_gate')complete(action);
+    if(action.status==='to_gate') {
+      if(action.dropoff_exit_pending) {
+        if(!dropoffDoneAtGate(robot,action.warehouse,action.lift_command_id)) {
+          action.exit_arrived_at??=Date.now();
+          if(Date.now()-action.exit_arrived_at>5000)interrupt(action,'Đã tới gate nhưng chưa xác nhận kệ rời xe sau hạ');
+          return;
+        }
+        if(action.inventory_tracked)inventory.confirmLift(`action:${action.id}`,'dropoff',robot,action.lift_command_id,action.core_session_id);
+        action.dropoff_exit_pending=false;
+      }
+      complete(action);
+    }
     else await beginService(action);
   }
   function tick(){if(closed)return Promise.resolve();if(running)return running;

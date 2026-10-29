@@ -176,8 +176,11 @@ function createWarehouseInventory({db,publish=()=>{}}) {
     if(move.status!=='needs_attention'||!['reserved','carrying'].includes(move.interrupted_from))
       throw conflict('Lượt chuyển không có trạng thái an toàn để tiếp tục');
     const rack=state.racks.find(rack=>rack.id===move.rack_id),up=move.interrupted_from==='carrying';
+    const backingAfterLowering=up&&robot.lift?.dropoff_exit_pending===true&&robot.lift.dropoff_exit_supported===true&&
+      robot.lift.node===move.dropoff&&robot.node===move.dropoff&&robot.lift.fresh===true&&
+      robot.lift.state==='LOWERED'&&cargoReading(robot,robot.node).known;
     if(!rack || (up ? rack.location.type!=='robot'||rack.location.id!==robot.id||
-      robot.virtual_cargo_known!==true||robot.virtual_cargo!==true||!cargoResult(robot,robot.node,true) :
+      robot.virtual_cargo_known!==true||robot.virtual_cargo!==true||!backingAfterLowering&&!cargoResult(robot,robot.node,true) :
       rack.location.type!=='slot'||rack.location.id!==move.pickup||robot.virtual_cargo===true))
       throw conflict('Vị trí hoặc trạng thái kệ chưa khớp để tiếp tục');
     return move;
@@ -205,9 +208,13 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       const move=state.moves.find(move=>move.key===key),up=action==='pickup';
       if(!move||move.status!==(up?'reserved':'carrying'))throw conflict('Kệ chưa được đặt chỗ hoặc đang cần đối soát');
       const node=up?move.pickup:move.dropoff,lift=robot.lift;
-      if(!Number.isSafeInteger(commandId)||commandId<=0||robot.id!==move.robot||robot.node!==node||robot.state!=='IDLE'||robot.error||
+      const exitProof=!up&&lift?.dropoff_exit_supported===true;
+      const observedNode=exitProof?node.replace(/^K/,'G'):node;
+      if(!up&&robot.cargo_sensor?.required===true&&!exitProof)throw conflict('Cần firmware xác nhận hạ rồi lùi ra gate');
+      if(!Number.isSafeInteger(commandId)||commandId<=0||robot.id!==move.robot||robot.node!==observedNode||robot.state!=='IDLE'||robot.error||
         robot.online!==true||robot.position_valid===false||robot.task_id||lift?.fresh!==true||lift.command_id!==commandId||
-        lift.observed_node!==node||lift.state!==(up?'DONE_UP':'DONE_DOWN')||lift.active!==false||robot.virtual_cargo_known!==true||robot.virtual_cargo!==up||!cargoResult(robot,node,up))
+        lift.observed_node!==observedNode||exitProof&&(lift.node!==node||lift.dropoff_exit_pending!==false)||
+        lift.state!==(up?'DONE_UP':'DONE_DOWN')||lift.active!==false||robot.virtual_cargo_known!==true||robot.virtual_cargo!==up||!cargoResult(robot,observedNode,up))
         throw conflict('Chưa có kết quả servo tương quan tại đúng vị trí');
       const slot=state.slots.find(slot=>slot.node===node),rack=state.racks.find(rack=>rack.id===move.rack_id);
       if(!slot||!rack||(up?slot.rack_id!==rack.id:slot.rack_id!==null))throw conflict('Vị trí kệ không khớp sổ kho');

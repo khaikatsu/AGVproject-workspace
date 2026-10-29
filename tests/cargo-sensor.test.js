@@ -9,7 +9,8 @@ function fixture(t,id='01',scope=false){
   const db=createDatabase(':memory:'),commands=[];
   const robot={id,node:'K1',state:'IDLE',online:true,position_valid:true,task_id:null,path:[],error:'',
     virtual_cargo_known:false,virtual_cargo:false,
-    lift:{supported:true,ready:true,fresh:true,observed_node:'K1',active:false,state:'IDLE',command_id:0},
+    lift:{supported:true,ready:true,fresh:true,observed_node:'K1',active:false,state:'IDLE',command_id:0,
+      dropoff_exit_supported:true,dropoff_exit_pending:false},
     cargo_sensor:{required:true,supported:true,fresh:true,stable:true,present:true,stopped_verified:true,observed_node:'K1',sample_seq:1}};
   const state={mqtt_connected:true,shift:{phase:'CLOSED',...(scope?{operation_profile:'scoped',active_robot_ids:[id]}:{})},
     map:{nodes:['K1','K2','G1','G2'].map(id=>({id,type:id[0]==='K'?'station':'waypoint'})),
@@ -21,6 +22,7 @@ function fixture(t,id='01',scope=false){
   const send=async payload=>{commands.push(payload);
     if(payload.cmd==='warehouse_lift'){
       robot.state=payload.action==='pickup'?'LIFTING':'LOWERING';robot.lift.active=true;
+      robot.lift.node=payload.node;
       return {command_id:commands.length};
     }
     const task={task_id:`task-${commands.length}`,status:'dispatched',target:payload.target,assigned_agv:id};
@@ -35,8 +37,10 @@ function fixture(t,id='01',scope=false){
     robot.node=node;robot.state='IDLE';robot.task_id=null;robot.path=[];
     robot.lift.observed_node=node;robot.lift.active=false;Object.assign(robot.cargo_sensor,{observed_node:node,stopped_verified:true});}
   function done(command,up){robot.state='IDLE';robot.task_id=null;robot.virtual_cargo_known=true;robot.virtual_cargo=up;
-    Object.assign(robot.lift,{state:up?'DONE_UP':'DONE_DOWN',active:false,command_id:command});}
-  return {db,state,robot,inventory,service,commands,create,tick,arrive,done};
+    Object.assign(robot.lift,{state:up?'DONE_UP':'DONE_DOWN',active:false,command_id:command,dropoff_exit_pending:false});}
+  function lowered(command){done(command,true);
+    Object.assign(robot.lift,{state:'LOWERED',dropoff_exit_pending:true});}
+  return {db,state,robot,inventory,service,commands,create,tick,arrive,done,lowered};
 }
 for(const id of ['01','02'])for(const scope of [false,true]){
   test(`LM393 ${id} ${scope?'action':'order'} empty pickup never actuates; ledger preserves missing identity`,async t=>{
@@ -51,8 +55,8 @@ for(const id of ['01','02'])for(const scope of [false,true]){
     if(!scope){await f.service.resolve(work.id,true,s.revision);assert.equal(f.inventory.snapshot().slots[0].rack_id,null,'closing never recreates a missing rack');}
   });
 }
-test('order sensor and servo must agree on both pickup and dropoff before inventory or next route',async t=>{
-  const f=fixture(t);const order=await f.create();await f.tick();
+for(const id of ['01','02'])test(`order ${id} lowers under rack, backs out with sensor HIGH, confirms empty at gate`,async t=>{
+  const f=fixture(t,id);const order=await f.create();await f.tick();
   const item=order.items[0];assert.equal(f.commands.at(-1).cmd,'warehouse_lift');
   f.done(item.lift_command_id,true);f.robot.cargo_sensor.present=false;
   await f.tick();assert.equal(f.inventory.snapshot().slots[0].rack_id,'R1');assert.equal(f.commands.length,1);
@@ -61,9 +65,33 @@ test('order sensor and servo must agree on both pickup and dropoff before invent
   assert.equal(f.commands.at(-1).action,'dropoff');const count=f.commands.length;
   f.done(item.lift_command_id,false);await f.tick();assert.equal(f.commands.length,count);
   assert.equal(f.inventory.snapshot().slots[1].rack_id,null);
-  f.robot.cargo_sensor.present=false;await f.tick();assert.equal(f.inventory.snapshot().slots[1].rack_id,'R1');
+  f.lowered(item.lift_command_id);await f.tick();
   assert.equal(f.commands.at(-1).target,'G2');
+  assert.equal(f.inventory.snapshot().slots[1].rack_id,null,'lowering alone does not place the rack in the ledger');
+  assert.equal(f.robot.cargo_sensor.present,true);
+  f.arrive('G2');await f.tick();assert.notEqual(order.status,'completed');
+  f.done(item.lift_command_id+1,false);f.robot.cargo_sensor.present=false;await f.tick();
+  assert.equal(f.inventory.snapshot().slots[1].rack_id,null,'wrong servo ID cannot confirm delivery');
+  f.done(item.lift_command_id,false);f.robot.cargo_sensor.present=true;await f.tick();
+  assert.equal(f.inventory.snapshot().slots[1].rack_id,null,'rack still detected at gate cannot confirm delivery');
+  f.robot.cargo_sensor.present=false;f.robot.cargo_sensor.fresh=false;await f.tick();
+  assert.equal(f.inventory.snapshot().slots[1].rack_id,null,'stale absence cannot confirm delivery');
+  f.robot.cargo_sensor.fresh=true;await f.tick();
+  assert.equal(f.inventory.snapshot().slots[1].rack_id,'R1');assert.equal(order.status,'completed');
   assert.equal(f.inventory.history().filter(e=>e.type==='dropoff').length,1);
+});
+for(const id of ['01','02'])test(`scoped dropoff ${id} keeps inventory on robot until empty proof at exit`,async t=>{
+  const f=fixture(t,id,true);await f.create();await f.tick();
+  let action=f.service.list()[0];f.done(action.lift_command_id,true);await f.tick();
+  f.arrive('G1');await f.tick();assert.equal(action.status,'completed');
+  action=await f.service.create(id,{action:'dropoff',warehouse:'K2'});
+  f.arrive('K2');await f.tick();f.lowered(action.lift_command_id);await f.tick();
+  assert.equal(f.commands.at(-1).target,'G2');assert.equal(f.robot.cargo_sensor.present,true);
+  assert.equal(f.inventory.snapshot().slots[1].rack_id,null);
+  f.arrive('G2');await f.tick();assert.equal(action.status,'to_gate');
+  f.done(action.lift_command_id,false);f.robot.cargo_sensor.present=false;await f.tick();
+  assert.equal(action.status,'completed');assert.equal(f.inventory.snapshot().slots[1].rack_id,'R1');
+  await f.tick();assert.equal(f.inventory.history().filter(e=>e.type==='dropoff').length,1);
 });
 for(const bad of ['unsupported','stale','unstable','wrong_node','moving'])test(`LM393 ${bad} cannot infer an empty warehouse`,async t=>{
   const f=fixture(t);const sensor=f.robot.cargo_sensor;sensor.present=false;

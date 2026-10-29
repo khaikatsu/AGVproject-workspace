@@ -1,5 +1,7 @@
 # Hiện trạng mã và khoảng trống tích hợp
 
+CURRENT 29/10/2026, REQ-DROPOFF-EXIT-PROOF-20261029: source firmware/Core/gateway tách hạ servo xong (LOWERED, LM393 có thể vẫn HIGH) với xác nhận kệ rời xe tại gate (DONE_DOWN, LOW ổn định). Chỉ lùi một cạnh đúng kho; sổ kho giữ chờ tới proof tại gate/task completed. Giữ HIGH=có hàng. Firmware01/02 v25 và Core/gateway cần cập nhật cùng nhau; chưa build/test/nạp hoặc thay vận hành trong lượt này. [ADR-093](decisions/ADR-093-dropoff-exit-cargo-proof.md).
+
 CURRENT 28/10/2026, LM393: source hai profile đã nối GPIO2/HIGH=có hàng với luồng Core nâng/hạ; Core snapshot cargo_sensor tách cargo ảo, gateway xác nhận kho trống/giữ mã kệ thiếu và đối soát; vẫn nhập kho đầu ca. Core mới bắt buộc firmware sensor tương ứng trước nâng/hạ. Chi tiết/trạng thái nghiệm thu ở [ADR-091](decisions/ADR-091-lm393-warehouse-proof.md). Bản Core kết ca trước đó đã build thành công09:53:29 theo yêu cầu sau; các mô tả “chưa build” dưới đây giữ mốc lịch sử trước yêu cầu build đó.
 
 CURRENT 28/10/2026, REQ-SHIFT-RECOVERY-20261028: source Core/gateway/web hủy việc cũ khi kết ca; giữ lịch sử và footprint tới proof. Thêm đối soát lỗi có token bản chụp, phục hồi S1/S2 hoặc RFID cũ và tiếp tục chặng vận chuyển trong cùng ca. Kho mỗi K một mã kệ/Trống. Core source cuối chưa build theo lựa chọn người dùng; chưa thay dịch vụ hoặc chạy xe thật. [ADR-090](decisions/ADR-090-shift-recovery-and-binary-inventory.md) thay hành vi cũ “kết ca chờ xong task”.

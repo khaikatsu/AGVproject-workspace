@@ -1,5 +1,11 @@
 # Hợp đồng HTTP và WebSocket web/server phiên bản 1
 
+## Hạ hàng rồi lùi khỏi kệ — 29/10/2026
+
+REQ-DROPOFF-EXIT-PROOF-20261029 / [ADR-093](../docs/decisions/ADR-093-dropoff-exit-cargo-proof.md) thay chốt LM393 sau hạ bên dưới. Diagnostic thêm `dropoffExitSupported:true`, `liftState:LOWERED`; snapshot `lift` thêm `dropoff_exit_supported`, `dropoff_exit_pending`. Hết chu kỳ hạ5000ms tại kho, LOWERED/cargo=true mở riêng chặng lùi một cạnh K→G tương ứng dù LM393 vẫn HIGH. Không cập nhật tồn kho ở mốc này. Core mới từ chối hạ khi thiếu capability.
+
+MCU chỉ DONE_DOWN/cargo=false khi đã dừng tại gate đúng kho, RFID mới và LM393 LOW ổn định150ms; còn hàng/không ổn định sau2000ms tại gate thì chốt lỗi. Core chờ đúng lift ID/boot/kết nối/proof cảm biến mới tại gate; gateway còn chờ task ra gate completed đúng xe rồi mới ghi transaction dropoff vào kho giao. `lift.node` vẫn là kho giao, `lift.observed_node` là gate. Trong LOWERED/lùi, cargo=true là chưa xác minh kệ đã rời xe. Thiếu/cũ/sai proof, restart hoặc mất phiên không tự hoàn tất/replay servo. Command/HTTP/ACK không đổi; [ví dụ](examples/lm393-cargo.json).
+
 ## Khôi phục xe và hướng — 29/10/2026
 
 Bổ sung audit: khi chờ xác nhận hướng, reset/khôi phục/nâng hạ chen ngang trả409. Lỗi mới, STOP/WAIT hoặc kết ca vô hiệu yêu cầu hướng đang chờ; diagnostic cũ không hoàn tất yêu cầu mới. Hai POST resume cùng thao tác kho chỉ cho một yêu cầu đang xử lý; gateway từ chối trước ghi sổ kho nếu xe còn khóa hướng/reset. Diagnostic hoàn tất đúng lệnh có thể kết thúc retry dù ACK bị mất; ACK riêng vẫn không chứng minh hoàn tất. [Báo cáo](../docs/testing-recovery-conflicts-2026-10-29.md).

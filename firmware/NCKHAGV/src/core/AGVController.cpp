@@ -177,7 +177,7 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
         return;
     }
     if (command.type == CoreCommandType::LiftUp || command.type == CoreCommandType::LiftDown) {
-        const bool ready = Config::SERVO_SINGLE_TEST && servo_.liftConfigured() && !servo_.busy() && !lift_.busy() &&
+        const bool ready = Config::SERVO_SINGLE_TEST && servo_.liftConfigured() && !servo_.busy() && !lift_.busy() && !lift_.exitPending() &&
             !navigator_.active() && !control_.task().active && control_.state()==AGV_IDLE &&
             movement_.action()==MotorAction::Stop && motor_.leftDuty()==0 && motor_.rightDuty()==0 &&
             navigator_.error()==ErrorCode::None && control_.error()==ErrorCode::None &&
@@ -213,6 +213,9 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
         return;
     }
     if (command.type == CoreCommandType::Goto) {
+        if(lift_.exitPending() && (!lift_.exitRouteAllowed(control_.currentNode(),command) || !cargo_.stable())) {
+            control_.safeStop(ErrorCode::CargoMismatch);return;
+        }
         // A new route while between tags has no reliable physical start node.
         if (navigator_.active()) {
             navigator_.fault(ErrorCode::InvalidCommand);
@@ -230,6 +233,9 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
                                 previousSegmentReverse_, heading_)) {
             control_.safeStop(ErrorCode::InvalidCommand);
             return;
+        }
+        if(lift_.exitPending() && (route.count!=1 || route.departure[0]!=RouteTurn::Reverse)) {
+            control_.safeStop(ErrorCode::InvalidCommand);return;
         }
         if (Config::DEBUG_ENABLED) {
             logSonars();
@@ -471,11 +477,11 @@ void AGVController::update() {
             publishTelemetry();
         }
     }
-    if(lift_.cargoKnown() && lift_.cargo() && !lift_.busy() && navigator_.active() &&
+    if(lift_.cargoKnown() && lift_.cargo() && !lift_.busy() && !lift_.exitPending() && navigator_.active() &&
         cargo_.stable() && !cargo_.present()) {
         movement_.stop();navigator_.fault(ErrorCode::CargoLost);control_.safeStop(ErrorCode::CargoLost);
     }
-    if(lift_.cargoKnown() && lift_.cargo() && !lift_.busy() && navigator_.active() && cargo_.unstableMs(millis())>=750) {
+    if(lift_.cargoKnown() && lift_.cargo() && !lift_.busy() && !lift_.exitPending() && navigator_.active() && cargo_.unstableMs(millis())>=750) {
         movement_.stop();navigator_.fault(ErrorCode::CargoSensorUnstable);control_.safeStop(ErrorCode::CargoSensorUnstable);
     }
     const bool sonarAcquiring = Config::ULTRASONIC_MOTION_GUARD &&
@@ -503,6 +509,18 @@ void AGVController::update() {
         movement_.stop();
         const bool moved = output.servo == ServoAction::LiftUp ? servo_.liftUp() : servo_.liftDown();
         if (!moved) control_.fail(ErrorCode::ServoConfiguration);
+    }
+    const bool exitSafe=!inhibited && !navigator_.active() && !control_.task().active &&
+        navigator_.error()==ErrorCode::None && control_.error()==ErrorCode::None &&
+        positionConfirmed_ && positionSession_==mqtt_.session() && wifi_.isConnected() && mqtt_.isConnected() &&
+        movement_.action()==MotorAction::Stop && motor_.leftDuty()==0 && motor_.rightDuty()==0 &&
+        static_cast<uint32_t>(millis()-lastRfidSeenMs_)<=250;
+    if(lift_.observeExit(millis(),control_.currentNode(),exitSafe,cargo_.stable(),cargo_.present())) {
+        if(std::strcmp(lift_.state(),"INTERRUPTED")==0) {
+            movement_.stop();navigator_.fault(cargo_.stable()?ErrorCode::CargoMismatch:ErrorCode::CargoSensorUnstable);
+            control_.safeStop(cargo_.stable()?ErrorCode::CargoMismatch:ErrorCode::CargoSensorUnstable);
+        }
+        publishTelemetry();
     }
     if (navigator_.state() == AGV_SAFE_STOP ||
         (!navigator_.active() && control_.state() != AGV_MOVING)) movement_.stop();

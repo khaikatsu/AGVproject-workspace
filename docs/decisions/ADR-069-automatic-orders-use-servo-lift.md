@@ -1,5 +1,7 @@
 # ADR-069 — Đơn hàng tự động hai xe dùng kết quả servo
 
+29/10/2026: [ADR-093](ADR-093-dropoff-exit-cargo-proof.md) thay mốc hoàn tất hạ: LOWERED tại kho sau chu kỳ servo mới cho lùi một cạnh; DONE_DOWN/không hàng xác nhận ở gate. Scheduler chỉ ghi giao hàng sau proof/task gate, không yêu cầu cảm biến trống tại kho trước lùi. Chưa build/test bản sửa.
+
 Ngày18/10/2026. Trạng thái: IMPLEMENTED phần mềm gateway/web; phần cứng OPEN.
 
 ## Nguồn và hiện trạng

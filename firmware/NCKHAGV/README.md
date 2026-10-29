@@ -1,5 +1,7 @@
 # Firmware ESP32 AGV
 
+29/10/2026 — Source v25 đồng bộ01/02: hạ hết chu kỳ5s chuyển LOWERED, cho lùi K→G cùng kho dù cảm biến còn HIGH. Chỉ DONE_DOWN khi dừng tại gate và LM393 LOW ổn định150ms; quá2s tại gate còn hàng/không ổn định thì lỗi, không tự lặp servo. Giữ HIGH/raw1=có hàng và tuning riêng. Cần Core/gateway tương ứng [ADR-093](../../docs/decisions/ADR-093-dropoff-exit-cargo-proof.md). BuildID `20261029-robot01-dropoff-exit-v25` / `20261029-robot02-dropoff-exit-v25`. Chỉ sửa/rà source, chưa build/test/nạp; người dùng tự thử. Quy tắc sau hạ/LOW=có hàng ghi ở các mốc cũ bên dưới đã được thay thế.
+
 29/10/2026 — Source v24 thêm CONFIRM_HEADING cho cả01/02: xác nhận hướng thực tế khi xe đã dừng/hết lỗi, không tự quay hoặc chạy. Diagnostic trả đúng headingCommandId để Core mở khóa sau phục hồi. BuildID `20261029-robot01-recovery-heading-v24` / `20261029-robot02-recovery-heading-v24`. Config01/02, mạng và hiệu chuẩn pin giữ nguyên. Chưa build/test/nạp; người dùng tự nạp và thử thực tế. [ADR-092](../../docs/decisions/ADR-092-unified-recovery-heading.md).
 
 28/10/2026 — Source v23 ghép cập nhật firmware từ `origin/main` commit `061b1d6ba995cbfd1d776462b081a1af38e05364`: bù PWM theo mức pin, cứu line quay180° bị lố và LM393 INPUT_PULLUP/LOW=có hàng cho cả01/02. Giữ sửa đổi LM393 tại máy, toàn bộ hai file Robot01Config.h/Robot02Config.h, hiệu chuẩn pin và mạng cục bộ. BuildID `20261028-robot01-remote-sync-v23` / `20261028-robot02-remote-sync-v23`; chỉ rà diff/hash, chưa build/test/nạp. Các mốc INPUT/HIGH và buildID bên dưới là lịch sử.

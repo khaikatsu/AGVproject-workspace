@@ -1,5 +1,7 @@
 # Phát triển server và lưu trữ
 
+29/10/2026, REQ-DROPOFF-EXIT-PROOF-20261029: Core nhận capability `dropoffExitSupported`; sau LOWERED tại kho giữ cargo=true/dropoff_exit_pending, chỉ cấp chặng lùi một cạnh K→G. Đúng DONE_DOWN/lift ID/boot/kết nối/cảm biến trống mới tại gate mới xóa hold. Scheduler đơn/thao tác một xe chờ thêm task gate completed rồi mới confirmLift/ghi sổ kho, không ghi giao ngay khi servo hạ hết5s. Checkpoint giữ hold sau restart nhưng không khôi phục quyền chạy hoặc proof phiên. Chưa build/test/chạy bản sửa. [ADR-093](decisions/ADR-093-dropoff-exit-cargo-proof.md).
+
 29/10/2026, REQ-UNIFIED-RECOVERY-HEADING-20261029: Core giữ khóa hướng khi phục hồi thiếu hướng chắc chắn/xe được di chuyển hoặc đổi boot/kết nối/restart. Khóa áp dụng directGoto/resume/dispatch/assignPath và chốt phát GOTO/NODE_ORDER/CHARGE_START. Xác nhận hướng dùng yêu cầu riêng khi xe đã khỏe, chứng minh dừng đúng node; chỉ diagnostic operator khớp cmd_id/node/hướng/boot/kết nối/uptime mới mở khóa. Không suy thành công từ ACK hoặc hướng bay_default. [ADR-092](decisions/ADR-092-unified-recovery-heading.md).
 
 28/10/2026, REQ-RECONCILED-ORDER-HOLD-20261028: `warehouse-inventory.reconciliationFor` tra event đối soát toàn kho đã xác nhận sau mốc kết ca; đơn đã kết ca và không còn move mở được trình bày closed/warehouse_reconciled và không tiếp tục giữ xe. Bản ghi DB gốc, cargo và lịch sử task giữ nguyên. nearest ghi rõ xe/đơn đang chặn khi chưa có bằng chứng. [ADR-090](decisions/ADR-090-shift-recovery-and-binary-inventory.md).

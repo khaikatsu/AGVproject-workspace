@@ -422,6 +422,7 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     object["reverseHomeSupported"] = Config::REVERSE_HOME_SUPPORTED;
     if(Config::SERVO_SINGLE_TEST) {
         object["liftSupported"]=s.liftSupported;object["liftBusy"]=s.liftBusy;
+        object["dropoffExitSupported"]=true;
         object["liftCommandId"]=s.liftCmdId;object["liftState"]=s.liftState;
         object["liftElapsedMs"]=s.liftElapsedMs;
         if(s.virtualCargoKnown) object["virtualCargo"]=s.virtualCargo;
