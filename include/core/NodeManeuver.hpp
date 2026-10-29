@@ -26,6 +26,7 @@ inline bool branch(const json& map, const std::string& node, int dir, bool direc
 // Authorization belongs to a route triple, not to a node's global degree.
 inline bool straightThrough(const json& map, const std::string& from,
                             const std::string& node, const std::string& next) {
+    if (node.size() == 2 && node[0] == 'G' && node[1] >= '1' && node[1] <= '6') return false;
     bool allowedType = false, backingOut = false;
     for (const auto& n : map.at("nodes")) {
         if (n.at("id") == from && n.value("type",std::string{}) == "station") backingOut = true;
