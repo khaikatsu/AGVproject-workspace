@@ -101,7 +101,7 @@ function updateConnection() {
   document.querySelectorAll('[data-task-control]').forEach(button=>button.disabled = !tasksReady() || button.dataset.busy === 'true');
   const shift = lastState?.shift;
   $('startShiftBtn').disabled = !controlsReady() || !shift?.supported || !shift.can_start || $('startShiftBtn').dataset.busy === 'true';
-  $('endShiftBtn').disabled = !controlsReady() || !shift?.supported || shift.phase !== 'RUNNING' || $('endShiftBtn').dataset.busy === 'true';
+  $('endShiftBtn').disabled = !dataFresh() || !lastState?.protocol_supported || !shift?.supported || shift.phase !== 'RUNNING' || $('endShiftBtn').dataset.busy === 'true';
   updateWarehouseControls();
   updateWarehouseInventoryControls();
   renderWarehouseOperations(lastState);renderTransferForm();
@@ -111,6 +111,7 @@ function updateConnection() {
   });
   renderObstacleAction();renderSummary(lastState);
   renderLocationNames();
+  updateVehicleRecovery();
 }
 function connect(automatic = false) {
   clearTimeout(reconnectTimer);
@@ -190,7 +191,8 @@ async function api(method,route,body,quiet404 = false) {
   } catch (error) {console.error(error);toast('Không kết nối được web server','error');return null;}
 }
 async function control(method,route,body,button) {
-  if (!controlsReady()) {toast('Chờ dữ liệu mới từ core trước khi điều khiển','warn');return null;}
+  const endingShift=route==='/api/shift/end'&&method==='POST'&&dataFresh()&&lastState?.protocol_supported;
+  if (!controlsReady()&&!endingShift) {toast('Chờ dữ liệu mới từ core trước khi điều khiển','warn');return null;}
   const key = method + route;
   if (button?.dataset.busy === 'true' || pendingControls.has(key)) return null;
   pendingControls.add(key);
@@ -476,6 +478,7 @@ function render(state) {
   renderMutex(state.mutex);populateTaskAgvSelect(state.fleet.agvs);
   populateNodeOptions(state.map);populateOrderWarehouses(state.map);renderOrders(state.orders || []);renderObstacleAction();renderSummary(state);
   $('mapTitle').textContent = `${state.map.map_name || 'Bản đồ kho'} • phiên bản ${state.map.revision ?? '—'}`;
+  updateVehicleRecovery();
 }
 function renderEmpty() {
   clearMapRenderCache();
@@ -520,7 +523,7 @@ async function addTask() {
   if (result) toast(`Core đã nhận nhiệm vụ ${result.task_id.slice(0,8)}`);
 }
 function renderShift(shift) {
-  const names = {RUNNING:'Đang làm việc',CLOSING:'Đang hoàn tất task / đưa xe về trạm',CLOSED:'Đã tập kết tại trạm • chờ bắt đầu ca'};
+  const names = {RUNNING:'Đang làm việc',CLOSING:'Đã hủy việc cũ · chờ xác minh dừng / đưa xe về trạm',CLOSED:'Đã tập kết tại trạm • chờ bắt đầu ca'};
   $('shiftStatus').textContent = shift?.supported ? names[shift.phase] || shift.phase : 'Chưa có quản lý ca trên core / bản đồ này';
   const diagnosticBattery = lastState?.fleet?.agvs?.some(robot=>robot.battery_control_source === 'diagnostic');
   const mode = $('coreModeStatus');
@@ -538,7 +541,7 @@ function renderShift(shift) {
     : 'Theo cấu hình core';
   const list = $('homeStationList');list.replaceChildren();
   const reasons = {'Chua tham gia ca':'Chưa tham gia ca','Cho telemetry / RFID':'Chờ telemetry / RFID','Mat telemetry':'Mất telemetry',
-    'Cho RFID hop le':'Chờ RFID hợp lệ','Can xac minh xe / xoa loi':'Cần xác minh / xóa lỗi',
+    'Cho RFID hop le':'Chờ RFID hợp lệ','Can xac minh xe / xoa loi':'Cần xác minh / xóa lỗi','Can doi soat ke tren xe':'Cần đối soát kệ trên xe',
     'Cho hoan thanh task hien tai':'Chờ hoàn thành task','Cho duong ve tram sac':'Chờ đường về trạm',
     'Cho xac nhan roi mutex zone':'Chờ xác nhận rời vùng mutex','Da xac minh tai tram':'Đã xác minh tại trạm'};
   for (const robot of shift?.robots || []) {
@@ -565,6 +568,7 @@ function renderShift(shift) {
 }
 async function changeShift(mode,button) {
   if(mode==='start'){openShiftWarehouse();return;}
+  if(!confirm('Kết thúc ca sẽ hủy toàn bộ nhiệm vụ đang chờ và đang thực hiện. Xe nhận lệnh dừng; kiểm tra kệ còn trên xe và đưa xe về trạm. Tiếp tục?'))return;
   const result = await control('POST',`/api/shift/${mode}`,{},button);
   if (result) toast(mode === 'start' ? 'Core đã mở ca làm việc' : 'Core đã nhận kết thúc ca; theo dõi xe về trạm');
 }
@@ -572,11 +576,6 @@ async function cancelTask(task,button) {
   const payload = task.task_id ? {task_id:task.task_id} : {target:task.target};
   const result = await control('POST','/api/tasks/cancel',payload,button);
   if (result) toast(`Core đã hủy ${result.cancelled} nhiệm vụ; robot nhận lệnh chờ`);
-}
-async function clearAgvError(robotId,button) {
-  if (!confirm('Chỉ xóa lỗi sau khi đã xác minh vị trí robot, đường đi và xử lý sự cố. Tiếp tục?')) return;
-  if (await control('POST',`/api/agvs/${encodeURIComponent(robotId)}/clear-error`,{},button))
-    toast(lastState?.shift?.supervised_trial ? `Đã gửi reset lỗi ${robotId}; chờ xe xác nhận khỏe tại trạm` : `Core đã xóa lỗi ${robotId}`);
 }
 async function removeAGV(robotId,button) {
   if (!confirm(`Đã đưa robot ${robotId} ra khỏi kho và xác minh vùng đường trống?`)) return;

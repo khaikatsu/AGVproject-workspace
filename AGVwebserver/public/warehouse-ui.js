@@ -15,6 +15,8 @@ function warehouseRows(inventory) {
   });
   for(const rack of inventory?.racks||[])if(rack.location.type==='robot')
     rows.push([`Xe ${rack.location.id}`,rack.id,rackStateNames[rack.status]||rack.status]);
+  for(const rack of inventory?.racks||[])if(rack.location.type==='unknown')
+    rows.push([`Chưa xác định (trước: ${rack.location.id})`,rack.id,'Thiếu kệ · cần đối soát']);
   return rows;
 }
 function renderWarehouse(inventory) {
@@ -33,13 +35,13 @@ function renderWarehouseEvents(entries) {
 function updateWarehouseInventoryControls() {
   const enabled=controlsReady()&&lastState?.shift?.phase==='CLOSED';
   $('saveWarehouseBtn').disabled=!enabled||!!shiftWarehouseDraft?.busy||warehouseFormNamesRevision!==(lastState?.location_names?.revision??null);
-  for(const field of $('warehouseConfigFields').querySelectorAll('input'))field.disabled=!enabled;
+  for(const field of $('warehouseConfigFields').querySelectorAll('input,select'))field.disabled=!enabled;
   const dialog=$('shiftWarehouseDialog');
   if(!dialog.open)return;
   const busy=!!shiftWarehouseDraft?.busy;
   const sameContext=shiftWarehouseDraft?.session===lastState?.core_session_id&&shiftWarehouseDraft?.revision===(lastState?.warehouse?.revision??0)&&shiftWarehouseDraft?.namesRevision===(lastState?.location_names?.revision??null);
   $('confirmStartShiftBtn').disabled=!enabled||!lastState?.shift?.can_start||busy||!sameContext;
-  for(const field of dialog.querySelectorAll('input'))field.disabled=!enabled||busy||!sameContext;
+  for(const field of dialog.querySelectorAll('input,select'))field.disabled=!enabled||busy||!sameContext;
   $('cancelStartShiftBtn').disabled=busy;
   $('shiftWarehouseHint').textContent=busy?'':!sameContext
     ? 'Trạng thái kho hoặc phiên Core đã thay đổi. Đóng rồi mở lại để kiểm tra dữ liệu mới; nội dung đang nhập chưa được lưu.'
@@ -50,10 +52,17 @@ function fillWarehouseFields(container,inventory) {
   container.replaceChildren();
   for(const node of warehouseNodes(lastState?.map)) {
     const label=document.createElement('label');label.textContent=locationText(node);
+    const occupied=document.createElement('select');occupied.dataset.slotOccupancy=node;
+    occupied.setAttribute('aria-label',`Trạng thái ${locationText(node)}`);
+    occupied.add(new Option('Trống','empty'));occupied.add(new Option('Có kệ','occupied'));
     const input=document.createElement('input');input.dataset.rackNode=node;input.setAttribute('aria-label',`Mã kệ tại ${locationText(node)}`);
     input.placeholder='Trống';input.maxLength=32;input.pattern='[A-Za-z0-9_-]{1,32}';
     input.value=inventory?.slots?.find(slot=>slot.node===node)?.rack_id||'';
-    input.disabled=!controlsReady()||lastState?.shift?.phase!=='CLOSED';label.append(input);container.append(label);
+    occupied.value=input.value?'occupied':'empty';input.required=!!input.value;
+    occupied.onchange=()=>{if(occupied.value==='empty')input.value='';input.required=occupied.value==='occupied';};
+    input.oninput=()=>{occupied.value=input.value.trim()?'occupied':'empty';input.required=!!input.value.trim();};
+    input.disabled=occupied.disabled=!controlsReady()||lastState?.shift?.phase!=='CLOSED';
+    label.append(occupied,input);container.append(label);
   }
 }
 function editWarehouseLayout() {

@@ -52,3 +52,62 @@
 #ifndef AGV_CORNER_RECOVERY_STEERING_SIGN
 #define AGV_CORNER_RECOVERY_STEERING_SIGN 1     // 1: Chuẩn (+100/110 -> quay trái về line; 001/011 -> quay phải về line)
 #endif
+
+// ----------------------------------------------------------------------------
+// CẤU HÌNH BÙ TỐC ĐỘ THEO BẬC THANG % PIN (Battery Step Speed Compensation)
+// ----------------------------------------------------------------------------
+// Tự động điều chỉnh bù PWM động cơ theo từng nấc % pin để xe luôn giữ tốc độ ổn định:
+// - Pin cao (>= 80%): giảm bớt PWM để không bị phóng nhanh quá trớn hoặc văng cua.
+// - Pin chuẩn (50% - 79%): mức pin chuẩn lúc căn chỉnh xe, giữ nguyên PWM (offset = 0).
+// - Pin trung bình (30% - 49%): bù thêm một chút PWM để xe không bị chậm lại.
+// - Pin yếu (< 30%): bù thêm PWM nhiều hơn để chống ỳ / kẹt bánh khi điện áp sụt thấp.
+#ifndef AGV_BATTERY_SPEED_COMP_ENABLED
+#define AGV_BATTERY_SPEED_COMP_ENABLED 1        // 1: Bật bù tốc độ theo bậc pin; 0: Tắt
+#endif
+
+// Các mốc ngưỡng % pin phân chia bậc:
+#ifndef AGV_BATTERY_STEP_HIGH_PERCENT
+#define AGV_BATTERY_STEP_HIGH_PERCENT 80.0f     // Ngưỡng pin cao (>= 80%)
+#endif
+
+#ifndef AGV_BATTERY_STEP_MID_PERCENT
+#define AGV_BATTERY_STEP_MID_PERCENT 50.0f      // Ngưỡng pin chuẩn (>= 50% đến < 80%)
+#endif
+
+#ifndef AGV_BATTERY_STEP_LOW_PERCENT
+#define AGV_BATTERY_STEP_LOW_PERCENT 30.0f      // Ngưỡng pin trung bình (>= 30% đến < 50%)
+#endif
+
+// Giá trị bù PWM (PWM Offset) cho từng bậc thang:
+#ifndef AGV_BATTERY_PWM_OFFSET_HIGH
+#define AGV_BATTERY_PWM_OFFSET_HIGH -10         // Pin cao (>= 80%): giảm 10 PWM (giảm tốc)
+#endif
+
+#ifndef AGV_BATTERY_PWM_OFFSET_NOMINAL
+#define AGV_BATTERY_PWM_OFFSET_NOMINAL 0        // Pin chuẩn (50% - 79%): giữ nguyên mức đã tune
+#endif
+
+#ifndef AGV_BATTERY_PWM_OFFSET_MID
+#define AGV_BATTERY_PWM_OFFSET_MID 8            // Pin trung bình (30% - 49%): tăng thêm 8 PWM
+#endif
+
+#ifndef AGV_BATTERY_PWM_OFFSET_LOW
+#define AGV_BATTERY_PWM_OFFSET_LOW 15           // Pin yếu (< 30%): tăng thêm 15 PWM chống ỳ
+#endif
+
+// ----------------------------------------------------------------------------
+// CẤU HÌNH CỨU LINE KHI XOAY 180 ĐỘ BỊ LỐ (Turn 180 Overshoot Recovery)
+// ----------------------------------------------------------------------------
+// Khi xe xoay 180 độ ở tốc độ cao, trớn quán tính có thể làm xe xoay lướt qua khỏi vạch.
+// Tính năng này giúp xe tự động quay ngược lại (PivotLeft) để bắt lại chuẩn tâm 010.
+#ifndef AGV_TURN_180_RECOVERY_ENABLED
+#define AGV_TURN_180_RECOVERY_ENABLED 1         // 1: Bật tự động cứu line khi xoay 180 lố; 0: Tắt
+#endif
+
+#ifndef AGV_TURN_180_RECOVERY_PWM
+#define AGV_TURN_180_RECOVERY_PWM 165           // Tốc độ PWM bánh xe khi quay ngược lại tìm line (êm ái)
+#endif
+
+#ifndef AGV_TURN_180_RECOVERY_DELAY_MS
+#define AGV_TURN_180_RECOVERY_DELAY_MS 100      // Thời gian phanh dừng chờ ban đầu (ms) trước khi kích hoạt cứu line
+#endif

@@ -46,10 +46,19 @@ void MotorModule::motorStop() {
 }
 void MotorModule::drive(int left, int right) {
     if (!Config::ENABLE_CORE_MOTION || !configured()) { motorStop(); return; }
-    writeSide(true, left);
-    writeSide(false, right);
-    appliedLeft_ = left;
-    appliedRight_ = right;
+    int targetLeft = left;
+    int targetRight = right;
+    if (batteryCompOffset_ != 0) {
+        if (targetLeft > 0) targetLeft = constrain(targetLeft + batteryCompOffset_, 1, 255);
+        else if (targetLeft < 0) targetLeft = constrain(targetLeft - batteryCompOffset_, -255, -1);
+
+        if (targetRight > 0) targetRight = constrain(targetRight + batteryCompOffset_, 1, 255);
+        else if (targetRight < 0) targetRight = constrain(targetRight - batteryCompOffset_, -255, -1);
+    }
+    writeSide(true, targetLeft);
+    writeSide(false, targetRight);
+    appliedLeft_ = targetLeft;
+    appliedRight_ = targetRight;
 }
 void MotorModule::applyStartupBoost(int boost) {
     if (!initialized_ || boost <= 0) return;

@@ -1,5 +1,7 @@
 # Thuật toán tìm đường và điều phối
 
+28/10/2026: tuyến dự kiến đầy đủ là ưu tiên né mềm; đặt chỗ cứng chỉ gồm phần tiếp cận/hành lang mutex kế tiếp và node thoát. Node thực, đích được đặt chỗ, footprint lỗi/offline và hành lang đang chiếm vẫn chặn. Core kiểm request mutex đúng node hiện tại/đoạn kế hoặc một đoạn nhìn trước được straight-through cho phép; không cấp vùng xa tùy ý. Proof ADR-079 vẫn thu hẹp về node/hai đầu cạnh; stale/offline không tự nhả. Phục hồi ở RFID cũ cần xác nhận vật lý/heading và proof mới; home tự giải phóng khi đủ khoảng cách50cm và STOP đúng phiên. [ADR-090](decisions/ADR-090-shift-recovery-and-binary-inventory.md).
+
 23/10/2026, REQ-STOPPED-OCCUPANCY-01: proof đứng yên hợp lệ thu hẹp chặn về node A hoặc A/B của đoạn xe lỗi; planner và arbiter cùng bảo vệ vùng đó, tự trả mutex ngoài vùng. Giữ đường cũ để dự phòng khi stale/offline/restart; xe lỗi vẫn ERROR. Không cộng đệm hình học theo chốt người dùng. Tuyến đang an toàn không bị phát GOTO lại; MCU đang chạy cần WAIT và RFID dừng mới trước tuyến thay thế. [ADR-079](decisions/ADR-079-stopped-edge-occupancy.md).
 
 23/10/2026, REQ-FAILURE-REPLAN-01: ERROR/LWT/timeout/ACK-failure kích hoạt replan theo `currentNode + activePath + uncertainPath + mutex component`; xe đang chờ mutex của owner lỗi cũng được rút FIFO cũ và thử đường vòng. Không có đường thì BLOCKED/WAIT; mutex xe lỗi vẫn giữ tới khi có bằng chứng clearance. [ADR-078](decisions/ADR-078-failure-footprint-replanning.md).

@@ -88,6 +88,22 @@ public:
                 if (!j.at("grant_id").is_number_integer()) return failure(result,400,"grant_id sai");
                 if (!arbiter_.confirmClear(zone,owner,j.at("grant_id").get<long>())) return failure(result,409,"Quyen vung da thay doi; tai lai trang thai");
                 data = {{"zone",zone},{"new_owner",arbiter_.currentOwner(zone)}};
+            } else if (cmd == "resume_task") {
+                const auto error=fleet_.resumeTask(id(j,"task_id"),id(j,"expected_node"));
+                if (!error.empty()) return failure(result,409,error);
+                data["task_id"]=j.at("task_id");
+            } else if (cmd == "confirm_recovery_heading") {
+                if(!j.value("physically_confirmed",false))return failure(result,400,"Can xac nhan huong dau xe thuc te");
+                const auto error=fleet_.confirmRecoveryHeading(id(j,"id"),id(j,"expected_node"),id(j,"heading"));
+                if(!error.empty())return failure(result,409,error);
+                data["pending"]=true;
+            } else if (cmd == "recover_vehicle" || cmd == "recover_home" || cmd == "recover_node") {
+                if (!j.value("physically_clear",false)) return failure(result,400,"Can xac nhan xe dung va cac vung cu da trong");
+                if(j.contains("repositioned") && !j["repositioned"].is_boolean())return failure(result,400,"repositioned sai");
+                const auto error=fleet_.recoverVerifiedNode(id(j,"id"),id(j,"expected_node"),cmd=="recover_home",true,
+                    j.value("repositioned",false),cmd=="recover_vehicle");
+                if (!error.empty()) return failure(result,409,error);
+                data["node"]=j.at("expected_node");
             } else if (cmd == "cancel_task") {
                 auto taskId = j.value("task_id", std::string{});
                 auto target = j.value("target", std::string{});

@@ -17,13 +17,13 @@ enum class MotorAction { Stop, Forward, Backward, ReverseCorrectLeft, ReverseCor
                          GentleCorrectLeft, GentleCorrectRight };
 enum class ServoAction { None, LiftUp, LiftDown };
 enum class CommandType { Task, Start, Stop, EmergencyStop, Restart, CancelTask, LiftUp, LiftDown, NodeOrder };
-enum class CoreCommandType { Goto, Wait, Stop, ChargeStart, ResetFault, NodeOrder, LiftUp, LiftDown };
+enum class CoreCommandType { Goto, Wait, Stop, ChargeStart, ResetFault, NodeOrder, LiftUp, LiftDown, ConfirmHeading };
 enum class RobotHeading { Unknown, North, East, South, West };
 enum class ErrorCode { None, Configuration, WifiTimeout, MqttTimeout, EmergencyStop,
     Obstacle, SensorInvalid, LineLost, AmbiguousLine, UnknownTag, UnexpectedNode,
     TurnTimeout, TurnConfiguration, TurnInterrupted, ServoConfiguration, InvalidTask,
     TaskBusy, NoTask, NotConnected, NotAtRouteStart, RestartDenied, QueueOverflow,
-    InvalidCommand, StaleCommand, CargoMissing, CargoLost,
+    InvalidCommand, StaleCommand, CargoMissing, CargoLost, CargoSensorUnstable, CargoMismatch,
     NodeOrderMismatch, ServoInterrupted, MotionLocked, ChargerUnconfigured, MotionTimeout,
     BatteryNotReady, BatteryUnderVoltage, BatteryOverVoltage, BatteryCalibrationRequired,
     MotionDisabled, ReverseSteeringUnconfirmed };
@@ -42,6 +42,7 @@ struct CoreCommand {
     char node[NODE_TEXT_SIZE]{}, nextNode[NODE_TEXT_SIZE]{}, maneuver[24]{};
     uint8_t pathIndex = 0, turnCrossings = 0;
     bool reverseAfterTurn = false;
+    RobotHeading confirmedHeading = RobotHeading::Unknown;
 };
 struct CoreGrant {
     char zone[NODE_TEXT_SIZE]{};
@@ -113,9 +114,12 @@ struct TelemetrySnapshot {
     float batteryVoltage = UNKNOWN_VALUE, batteryPercentage = UNKNOWN_VALUE;
     bool cargoStable = false, cargoPresent = false;
     bool buzzerOn = false;
+    uint32_t cargoSampleSeq=0,cargoSampledAtMs=0,cargoStableMs=0;
+    int cargoRawLevel = -1;
     int buzzerPinLevel = -1;
     RobotHeading heading = RobotHeading::Unknown;
     bool headingBayDefault = false;
+    int32_t headingCommandId = 0;
     bool stationReady = false;
     bool awaitingNodeOrder = false, stationTurnRequired = false;
     int32_t routeCmdId = 0;

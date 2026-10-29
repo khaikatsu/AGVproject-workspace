@@ -45,6 +45,7 @@ function missionTaskCanCancel(task) {
 }
 
 function missionTaskActions(parent, task) {
+  if(task.resume_available && !task.order_id)parent.append(action('Tiếp tục',button=>resumeStandaloneTask(task,button)));
   if (missionTaskCanCancel(task)) {
     const cancel = action('Hủy', button => cancelTask({task_id: task.core_task_id, target: task.target_node}, button));
     cancel.title = `Hủy chặng ${task.core_task_id}`;
@@ -84,6 +85,8 @@ function renderMissionOrderDetail(parent, row) {
       if (step.dataset.stage === 'current') step.setAttribute('aria-current', 'step');
     }
     if (item.waiting_reason || item.reason) missionText(block, item.waiting_reason || item.reason, 'p', 'mission-warning');
+    if(!order.closed_by_shift&&item.status==='interrupted'&&['to_pickup','to_dropoff','to_exit'].includes(item.suspended_status))
+      block.append(action(`Tiếp tục lượt ${item.number}`,button=>resumeWarehouseItem(order,item,button)));
     const tasks = row.tasks.filter(task => task.order_item === item.number);
     if (tasks.length) {
       const technical = document.createElement('details');

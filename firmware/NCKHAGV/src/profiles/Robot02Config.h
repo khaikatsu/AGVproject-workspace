@@ -23,7 +23,7 @@
 // ----------------------------------------------------------------------------
 // Giúp xe bám line mượt mà, tự động điều tiết tốc độ hai bánh, chống rung lắc.
 #define AGV_LINE_PD_ENABLED 1           // 1: Bật bám line bằng PD; 0: Dùng bảng điều khiển cơ bản
-#define AGV_BENCH_LINE_KP 70.0f         // Hệ số tỉ lệ P: Lực kéo xe trở về tâm line (càng lớn kéo càng gắt)
+#define AGV_BENCH_LINE_KP 50.0f         // Hệ số tỉ lệ P: Lực kéo xe trở về tâm line (càng lớn kéo càng gắt)
 #define AGV_BENCH_LINE_KD 40.0f         // Hệ số vi phân D: Dập tắt dao động lắc lư (càng lớn xe bẻ lái càng êm)
 #define AGV_LINE_PD_BASE_SPEED 130      // Tốc độ chạy thẳng cơ sở (PWM 0..255) khi bám line tiến
 #define AGV_LINE_PD_CONTROL_MS 10       // Chu kỳ tính toán thuật toán PD (ms, 10ms = 100Hz)
@@ -45,7 +45,7 @@
 #define AGV_LEFT_TURN_CAPTURE_ENABLED 1 // 1: Bật cơ chế hãm bắt lại line sau khi cua trái
 #define AGV_LEFT_TURN_CAPTURE_PWM 190    // Tốc độ PWM bánh xe để bắt lại line sau cua trái
 #define AGV_RIGHT_TURN_CAPTURE_ENABLED 1// 1: Bật cơ chế hãm bắt lại line sau khi cua phải
-#define AGV_RIGHT_TURN_CAPTURE_ENAB 165   // Tốc độ PWM bánh xe để bắt lại line sau cua phải
+#define AGV_RIGHT_TURN_CAPTURE_ENAB 160   // Tốc độ PWM bánh xe để bắt lại line sau cua phải
 
 // ----------------------------------------------------------------------------
 // 4. CHẠY THẲNG CƠ BẢN DỰ PHÒNG (Fallback Motor Speed)
@@ -65,7 +65,7 @@
 #define AGV_BENCH_TURN_MIN_MS 700       // Thời gian tối thiểu quay góc 90 độ (ms) trước khi bắt line mới
 
 // Riêng quay đầu 180 độ (tại G1/G2 hoặc quay đầu chặng):
-#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 30) // PWM quay 180 độ (giảm 30 PWM để chống trượt bánh)
+#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 50) // PWM quay 180 độ (giảm 30 PWM để chống trượt bánh)
 
 // [CHỐNG ĂN LINE PHỤ KHI XOAY 180 ĐỘ]:
 // Thời gian xe quay mù tối thiểu (ms) trong quá trình xoay 180 độ.

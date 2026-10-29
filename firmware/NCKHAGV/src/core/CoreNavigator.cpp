@@ -18,6 +18,8 @@ void CoreNavigator::resetLineTracking() {
     cornerRecovering_ = false;
     cornerRecoveryDirection_ = lastCornerDirection_ = MotorAction::Stop;
     lastCornerDriftMs_ = 0;
+    turn180Recovering_ = false;
+    turnAroundCaptureMs_ = 0;
 }
 void CoreNavigator::rememberLine(const ControlInput& in, MotorAction action) {
     lastLinePattern_ = in.linePattern;
@@ -568,6 +570,8 @@ bool CoreNavigator::observeTurnAroundLine(const ControlInput& in) {
     oldLineDeparted_ = false;
     stationTurnCapture_ = station;
     phase_ = Phase::TurnAroundCapture;
+    turnAroundCaptureMs_ = in.now;
+    turn180Recovering_ = false;
     centerSamples_ = 0;
     confirmTrackedLine(in,Config::TURN_LINE_SAMPLE_MS,Config::TURN_AROUND_CONFIRM_MS);
     return true;
@@ -576,40 +580,63 @@ MotorAction CoreNavigator::confirmTurnAround(const ControlInput& in) {
     // The original turn clock includes confirmation; never grant extra rotation time.
     if (static_cast<uint32_t>(in.now-turnStartedMs_) >= Config::TURN_TIMEOUT_MS) {
         fault(ErrorCode::TurnTimeout);
+        turn180Recovering_ = false;
         return MotorAction::Stop;
     }
-    if (missingZone()) {
+    if (missingZone() || !in.wifi || !in.mqtt || !in.motionConfigured || in.obstacle || obstaclePaused_) {
         centerSamples_ = 0;
         turnSampleReady_ = false;
+        turn180Recovering_ = false;
         return MotorAction::Stop;
     }
-    if (!sampleTurnLine(in) || !confirmTrackedLine(in,Config::TURN_LINE_SAMPLE_MS,Config::TURN_AROUND_CONFIRM_MS))
-        return MotorAction::Stop;
+    if (sampleTurnLine(in) && confirmTrackedLine(in,Config::TURN_LINE_SAMPLE_MS,Config::TURN_AROUND_CONFIRM_MS)) {
 #if defined(ARDUINO)
     if (Config::DEBUG_ENABLED) Serial.printf(
         "[TURN180] confirmed node=%s pattern=%u branches=%u station=%d sample_target_ms=%lu max_gap_ms=%lu\n",
         current_,in.linePattern,crossedLines_,stationTurnCapture_,
         static_cast<unsigned long>(Config::TURN_LINE_SAMPLE_MS),static_cast<unsigned long>(turnMaxSampleGapMs_));
 #endif
-    if (stationTurnCapture_) {
-        if (index_ == length_) stop();
-        else {
-            phase_ = Phase::WaitingGrant;
-            nodeOrderReceived_ = false;
-            stoppedAtMs_ = segmentStartedMs_ = in.now;
-            oldLineDeparted_ = false;
+        if (stationTurnCapture_) {
+            if (index_ == length_) stop();
+            else {
+                phase_ = Phase::WaitingGrant;
+                nodeOrderReceived_ = false;
+                stoppedAtMs_ = segmentStartedMs_ = in.now;
+                oldLineDeparted_ = false;
+                resetLineTracking();
+            }
+            stationOriented_ = true;
+        } else {
+            phase_ = Phase::Following;
+            segmentStartedMs_ = in.now;
+            reverseAlignStartedMs_ = in.now;
+            reverseAligned_ = (Config::REVERSE_ALIGN_FORWARD_MS == 0);
             resetLineTracking();
+            turnSettling_ = true;
         }
-        stationOriented_ = true;
-    } else {
-        phase_ = Phase::Following;
-        segmentStartedMs_ = in.now;
-        reverseAlignStartedMs_ = in.now;
-        reverseAligned_ = (Config::REVERSE_ALIGN_FORWARD_MS == 0);
-        resetLineTracking();
-        turnSettling_ = true;
+        turn180Recovering_ = false;
+        return MotorAction::Stop;
     }
-    return MotorAction::Stop; // Translation/sonar handoff cannot happen on this sample.
+
+    if (Config::TURN_180_RECOVERY_ENABLED && (in.linePattern != 2 && in.linePattern != 3 && in.linePattern != 6)) {
+        const uint32_t captureElapsed = in.now - turnAroundCaptureMs_;
+        if (captureElapsed >= Config::TURN_180_RECOVERY_DELAY_MS) {
+            MotorAction recoveryDir = MotorAction::Stop;
+            if (in.linePattern == 0 || in.linePattern == 4) {
+                // Xoay lố sang phải (000 hoặc 100): Quay ngược chiều (PivotLeft) để cứu lại line!
+                recoveryDir = MotorAction::PivotLeft;
+            } else if (in.linePattern == 1) {
+                // Xoay chưa tới tâm (001): Tiếp tục quay phải (PivotRight)
+                recoveryDir = MotorAction::PivotRight;
+            }
+            if (recoveryDir != MotorAction::Stop) {
+                turn180Recovering_ = true;
+                return recoveryDir;
+            }
+        }
+    }
+    turn180Recovering_ = false;
+    return MotorAction::Stop;
 }
 bool CoreNavigator::observeTurnLine(const ControlInput& in) {
     if (observeTurnAroundLine(in)) return true;

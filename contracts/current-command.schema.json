@@ -15,6 +15,7 @@
         "WAIT",
         "CHARGE_START",
         "RESET_FAULT",
+        "CONFIRM_HEADING",
         "NODE_ORDER",
         "LIFT_UP",
         "LIFT_DOWN"
@@ -43,12 +44,14 @@
     "route_cmd_id": {"type":"integer","minimum":1,"maximum":2147483647},
     "path_index": {"type":"integer","minimum":0,"maximum":32},
     "node": {"type":"string","minLength":1,"maxLength":7},
+    "heading": {"enum":["N","E","S","W"]},
     "next_node": {"type":"string","minLength":1,"maxLength":7},
     "maneuver": {"enum":["STRAIGHT","LEFT","RIGHT","REVERSE","TURN_AROUND_RIGHT","STATION_TURN_RIGHT"]},
     "turn_crossings": {"type":"integer","minimum":0,"maximum":2},
     "reverse_after_turn": {"type":"boolean","default":false}
   },
   "allOf": [
+    {"if":{"properties":{"cmd":{"const":"CONFIRM_HEADING"}}},"then":{"required":["node","heading"]}},
     {"if":{"properties":{"cmd":{"enum":["LIFT_UP","LIFT_DOWN"]}}},"then":{"required":["node"],"properties":{"node":{"pattern":"^K[1-6]$"}}}},
     {
       "if": {

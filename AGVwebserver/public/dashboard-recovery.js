@@ -1,0 +1,121 @@
+'use strict';
+let shiftReviewSnapshot=null;
+let vehicleRecoveryContext=null;
+function openVehicleRecovery(id) {
+  const robot=lastState?.fleet?.agvs?.find(robot=>robot.id===id);
+  if(!robot)return;
+  vehicleRecoveryContext={id,node:robot.node,session:lastState.core_session_id,submitted:false,busy:false};
+  $('vehicleRecoveryClear').checked=false;$('vehicleRecoveryMoved').value='';
+  $('vehicleRecoveryDirection').value='';$('vehicleRecoveryHeadingVerified').checked=false;
+  $('vehicleRecoveryDialog').showModal();updateVehicleRecovery();
+}
+function updateVehicleRecovery() {
+  if(!$('vehicleRecoveryDialog')?.open||!vehicleRecoveryContext)return;
+  const ctx=vehicleRecoveryContext,robot=lastState?.fleet?.agvs?.find(robot=>robot.id===ctx.id);
+  const button=$('vehicleRecoverySubmit'),status=$('vehicleRecoveryStatus');
+  $('vehicleRecoveryTitle').textContent=`Khôi phục xe ${ctx.id}`;
+  $('vehicleRecoveryPosition').textContent=`RFID hiện tại: ${robot?.node?locationText(robot.node):'Chưa xác định'}`;
+  button.disabled=true;
+  if(!controlsReady()||!robot?.online){status.textContent='Chờ kết nối và dữ liệu mới từ xe.';return;}
+  if(ctx.session!==lastState.core_session_id||ctx.node!==robot.node){
+    status.textContent='Vị trí hoặc phiên Core đã đổi. Đóng và mở lại để kiểm tra trạng thái mới.';return;
+  }
+  if(robot.recovery_reset_pending){status.textContent='Đã gửi reset; chờ xe xác nhận hết lỗi. Xe vẫn đứng yên.';return;}
+  if(robot.heading_confirmation_pending){status.textContent='Đang chờ xe xác nhận hướng. ACK nhận lệnh chưa hoàn tất bước này.';return;}
+  const ready=robot.state==='IDLE'&&robot.recovery_node_verified===true&&
+    !robot.task_id&&!robot.target&&!(robot.path||[]).length&&!(robot.uncertain_path||[]).length&&
+    !robot.cancel_waiting_for_node&&!robot.replan_waiting_for_node&&!robot.lift?.active;
+  const headingStep=ready&&robot.heading_confirmation_required===true;
+  $('vehicleRecoveryChecks').hidden=headingStep;
+  $('vehicleRecoveryHeading').hidden=!headingStep;
+  button.textContent=headingStep?'Xác nhận hướng đầu xe':'Khôi phục xe';
+  if(ctx.busy){status.textContent='Đang gửi yêu cầu…';return;}
+  if(headingStep) {
+    const expected=robot.recovery_expected_heading;
+    $('vehicleRecoveryHeadingHint').textContent=expected?
+      `Tại ${locationText(robot.node)}, đặt đầu xe ${headingLabels[expected]} theo quy ước kho/trạm rồi chọn xác nhận. Thao tác này không làm xe tự quay.`:
+      'Chọn hướng đầu xe thực tế theo bản đồ. Thao tác này không làm xe tự quay.';
+    for(const option of $('vehicleRecoveryDirection').options)option.disabled=!!option.value&&!!expected&&option.value!==expected;
+    if(!robot.heading_confirmation_supported){status.textContent='Xe đã hết lỗi. Cần nạp firmware hỗ trợ xác nhận hướng trước khi chạy.';return;}
+    status.textContent='Xe đã hết lỗi; cần xác nhận hướng trước khi chạy.';
+    button.disabled=!$('vehicleRecoveryHeadingVerified').checked||!$('vehicleRecoveryDirection').value;
+    return;
+  }
+  if(ready&&ctx.submitted&&!robot.heading_confirmation_required){
+    status.textContent='Xe đã sẵn sàng. Đóng hộp này và chọn “Tiếp tục nhiệm vụ” nếu muốn làm tiếp việc cũ.';
+    return;
+  }
+  const home=lastState.shift?.home_stations?.[ctx.id]===robot.node;
+  if(!home&&lastState.shift?.phase!=='RUNNING'){
+    status.textContent='Ngoài trạm riêng, chỉ khôi phục trong ca đang chạy. Không đặt lại RFID bằng nút bấm.';return;
+  }
+  if(!robot.recovery_stop_verified){status.textContent='Chờ RFID mới và bằng chứng xe dừng tại đúng vị trí, hết nhiệm vụ và nâng/hạ.';return;}
+  status.textContent='Kiểm tra xe, kệ và vùng đường, sau đó chọn tình trạng di chuyển xe.';
+  button.disabled=!$('vehicleRecoveryClear').checked||!$('vehicleRecoveryMoved').value;
+}
+async function submitVehicleRecovery() {
+  const ctx=vehicleRecoveryContext,robot=lastState?.fleet?.agvs?.find(robot=>robot.id===ctx?.id);
+  if(!ctx||!robot||ctx.busy)return;
+  updateVehicleRecovery();if($('vehicleRecoverySubmit').disabled)return;
+  const heading=!$('vehicleRecoveryHeading').hidden;
+  const body=heading?{expected_node:ctx.node,heading:$('vehicleRecoveryDirection').value,physically_confirmed:true}:
+    {expected_node:ctx.node,physically_clear:true,repositioned:$('vehicleRecoveryMoved').value==='yes'};
+  ctx.busy=true;updateVehicleRecovery();
+  try {
+    const result=await control('POST',`/api/agvs/${encodeURIComponent(ctx.id)}/${heading?'recovery-heading':'recover'}`,body);
+    if(result)ctx.submitted=true;
+  } finally {ctx.busy=false;updateVehicleRecovery();}
+}
+function recoveryAllowsResume(id) {
+  const robot=lastState?.fleet?.agvs?.find(robot=>robot.id===id);
+  if(robot&&(robot.heading_confirmation_required||robot.heading_confirmation_pending||
+      !robot.heading_supported||!['N','E','S','W'].includes(robot.heading))) {
+    openVehicleRecovery(id);return false;
+  }
+  return true;
+}
+async function resumeStandaloneTask(task,button) {
+  if(!recoveryAllowsResume(task.assigned_agv||task.robot))return;
+  if(!confirm(`Tiếp tục nhiệm vụ cũ từ RFID ${locationText(task.resume_node)}? Xác nhận xe và hàng đúng trạng thái thực tế.`))return;
+  if(await control('POST',`/api/tasks/${encodeURIComponent(task.core_task_id)}/resume`,{expected_node:task.resume_node},button))
+    toast('Core đã cấp tuyến mới cho nhiệm vụ cũ.');
+}
+async function resumeWarehouseItem(order,item,button) {
+  if(!recoveryAllowsResume(item.robot))return;
+  if(!confirm(`Tiếp tục lượt ${locationText(item.pickup)} → ${locationText(item.dropoff)} từ RFID ${locationText(item.resume_node)}? Xác nhận vị trí kệ và xe thực tế đúng sổ kho.`))return;
+  if(await control('POST',`/api/orders/${encodeURIComponent(order.id)}/resume`,{
+    item_number:item.number,physically_clear:true,expected_revision:lastState.warehouse?.revision},button))
+    toast('Đã tiếp tục chặng vận chuyển của lượt cũ.');
+}
+async function resumeWarehouseAction(task,button) {
+  if(!recoveryAllowsResume(task.robot))return;
+  if(!confirm(`Tiếp tục thao tác kho từ RFID ${locationText(task.resume_node)}? Xác nhận xe và kệ đúng vị trí.`))return;
+  if(await control('POST',`/api/warehouse-actions/${encodeURIComponent(task.id)}/resume`,{
+    physically_clear:true,expected_revision:lastState.warehouse?.revision},button))toast('Đã tiếp tục thao tác kho.');
+}
+async function openShiftReview() {
+  $('shiftReviewDialog').showModal();await refreshShiftReview();
+}
+async function refreshShiftReview() {
+  const box=$('shiftReviewContent');box.replaceChildren();shiftReviewSnapshot=null;
+  $('confirmShiftReviewBtn').disabled=true;$('shiftReviewVerified').checked=false;
+  const review=await api('GET','/api/shift/review');if(!review)return;
+  shiftReviewSnapshot=review;
+  const groups=new Map();
+  for(const incident of review.incidents) {
+    const previous=groups.get(incident.message)||{count:0,at:incident.created_at};previous.count++;groups.set(incident.message,previous);
+  }
+  warehouseText(box,`${review.incidents.length} cảnh báo chưa đối soát · ${groups.size} nhóm lỗi`,'p');
+  if(review.has_more)warehouseText(box,'Đang xem một phần nhật ký; đối soát xong sẽ hiện phần tiếp theo.','p');
+  for(const [message,group] of groups)warehouseText(box,`${message} · ${group.count} lần · ${fmtDate(group.at)}`,'p','log-item');
+  if(!groups.size)warehouseText(box,'Không có lỗi chưa đối soát.','p');
+  for(const blocker of review.blockers)warehouseText(box,blocker,'p','transfer-alert');
+  $('shiftReviewStatus').textContent=review.blockers.length?'Xử lý các mục còn treo rồi tải lại danh sách.':'Sẵn sàng xác nhận; lịch sử ca được lưu trong báo cáo.';
+  $('confirmShiftReviewBtn').disabled=!!review.blockers.length;
+}
+async function confirmShiftReview() {
+  if(!shiftReviewSnapshot||!$('shiftReviewVerified').checked)return toast('Cần xác nhận đã kiểm tra thực tế.','warn');
+  const result=await api('POST','/api/shift/reconcile',{
+    review_token:shiftReviewSnapshot.review_token,physically_verified:true});
+  if(result){await refreshShiftReview();toast('Đã chốt các lỗi đã xem; lịch sử và báo cáo được giữ.');}
+}

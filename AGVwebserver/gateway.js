@@ -12,6 +12,7 @@ const {createSecurity} = require('./security');
 const {createOrderService,SERVICE_MS,LIFT_READY_TIMEOUT_MS,LIFT_RESULT_TIMEOUT_MS} = require('./orders');
 const {createWarehouseActions}=require('./warehouse-actions');
 const {createWarehouseInventory}=require('./warehouse-inventory');
+const {createShiftReview}=require('./shift-review');
 const {createLocationNames}=require('./location-names');
 const INCIDENT_RE = /^AGV_(\S+)\s+(BAO LOI|KHONG ACK lenh|MAT KET NOI)/;
 const emptyState = () => ({map:{nodes:[],edges:[],obstacles:[]},fleet:{agvs:[],pending_tasks:[],tasks:[]},mutex:{},logs:[]});
@@ -86,16 +87,24 @@ function createGateway(options = {}) {
     const supported = () => latestState.protocol_version === 1;
     const ready = () => fresh() && latestState.storage_healthy !== false;
     const browserState = () => {
-        const history=orders.linkTaskHistory(db.getTaskHistory(50));
+        const history=orders.linkTaskHistory(db.getTaskHistory(50)).map(row=>{
+            const current=row.core_session===session?latestState.fleet.tasks.find(task=>task.task_id===row.core_task_id):null;
+            return {...row,resume_available:current?.resume_available===true,resume_node:current?.resume_node||null};
+        });
         const referenced=new Set(history.map(row=>row.order_id).filter(Boolean));
+        const warehouse=inventory.snapshot();
+        const pendingMoves=new Set(warehouse.moves.filter(move=>move.status==='needs_attention').map(move=>move.key));
+        const warehousePending=order=>(order.items||[]).some(item=>pendingMoves.has(`order:${order.id}:${item.number}`));
         const visibleOrders=orders.list({includeDeleted:true})
-            .filter(order=>!order.deleted_at||['active','needs_attention'].includes(order.status));
+            .filter(order=>!order.deleted_at||['active','needs_attention'].includes(order.status)||warehousePending(order));
         const namesReason=locationNamesBlockReason();
         return {...latestState,agv_connected:connected,core_ready:ready(),protocol_supported:supported(),
         state_received_at:receivedAt ? new Date(receivedAt).toISOString() : null,stale_after_ms:staleMs,
         // Keep each broadcast immutable: the scheduler mutates order/item objects.
-        task_history:history,orders:JSON.parse(JSON.stringify(visibleOrders.filter((order,index)=>index<50||referenced.has(order.id)))),
-        warehouse_actions:JSON.parse(JSON.stringify(warehouseActions.list())),warehouse:inventory.snapshot(),
+        task_history:history,orders:JSON.parse(JSON.stringify(visibleOrders
+            .filter((order,index)=>index<50||referenced.has(order.id)||warehousePending(order))
+            .map(order=>({...order,warehouse_rollback_pending:warehousePending(order)})))),
+        warehouse_actions:JSON.parse(JSON.stringify(warehouseActions.list())),warehouse,
         location_names:{...locationNames.snapshot(),can_edit:ready()&&supported()&&latestState.mqtt_connected!==false&&!namesReason,
             reason:namesReason}};
     };
@@ -148,7 +157,8 @@ function createGateway(options = {}) {
             orders.interruptAll('Core lỗi ghi checkpoint; đối soát xe và kiện hàng');inventory.observationGap('Core lỗi ghi checkpoint trong ca');
         }
         broadcast({},positionChanged);
-        if(latestState.shift?.phase==='RUNNING')inventory.observeShift(latestState,session);
+        if(latestState.shift?.phase==='RUNNING') {inventory.observeShift(latestState,session);shiftReview.observe();}
+        else if(['CLOSING','CLOSED'].includes(latestState.shift?.phase)) {orders.endShift();warehouseActions.endShift();}
         void Promise.all([orders.tick(),warehouseActions.tick()]).then(()=>{
             inventory.observeShift(latestState,session,{orders:orders.list({includeDeleted:true}),actions:warehouseActions.list()});
         }).catch(error=>console.error('[WAREHOUSE]',error.message));
@@ -197,14 +207,14 @@ function createGateway(options = {}) {
             }
         });
     }
-    function requireCore() {
+    function requireCore(allowMqttOffline=false) {
         if (!fresh()) throw httpError(503,'Core chưa có dữ liệu mới hoặc đã mất kết nối');
         if (latestState.storage_healthy === false) throw httpError(503,'Core chưa ghi được checkpoint; đang thử lại, chưa thể điều khiển xe');
         if (!supported()) throw httpError(409,'Core chưa hỗ trợ phản hồi lệnh; hãy build bản core trong workspace');
-        if (latestState.mqtt_connected === false) throw httpError(503,'Core đang mất kết nối MQTT broker');
+        if (!allowMqttOffline && latestState.mqtt_connected === false) throw httpError(503,'Core đang mất kết nối MQTT broker');
     }
     function command(payload) {
-        requireCore();const requestId = randomUUID();
+        requireCore(payload.cmd==='end_shift');const requestId = randomUUID();
         if (requests.size >= 128) throw httpError(429,'Có quá nhiều lệnh đang chờ Core');
         const text = JSON.stringify({...payload,request_id:requestId});
         if (Buffer.byteLength(text) > 1024*1024) throw httpError(413,'Lệnh vượt giới hạn 1 MiB của core');
@@ -222,6 +232,8 @@ function createGateway(options = {}) {
         getSession:()=>session,send:command,publish:()=>broadcast(),inventory,getLocationNames:locationNames.snapshot});
     const warehouseActions=createWarehouseActions({getState:()=>ready()&&supported()?latestState:null,
       getSession:()=>session,send:command,publish:()=>broadcast(),inventory});
+    const shiftReview=createShiftReview({db,getState:()=>latestState,getSession:()=>session,
+      inventory,orders,actions:warehouseActions});
     const route = fn => (req,res,next) => Promise.resolve().then(()=>fn(req,res)).catch(next);
     function locationNamesBlockReason() {
         if (latestState.shift?.phase!=='CLOSED') return 'Đóng ca trước khi đổi tên kho/trạm.';
@@ -259,7 +271,18 @@ function createGateway(options = {}) {
         if(req.body.location_names_revision!==undefined)locationNames.assertRevision(req.body.location_names_revision);
         res.json({ok:true,...await command({cmd:'start_shift'})});
     }));
-    app.post('/api/shift/end',route(async (req,res)=>res.json({ok:true,...await command({cmd:'end_shift'})})));
+    app.post('/api/shift/end',route(async (req,res)=>{
+        requireCore(true);
+        await orders.pauseForShiftEnd();await warehouseActions.pauseForShiftEnd();
+        try {
+            const data=await command({cmd:'end_shift'});orders.endShift();warehouseActions.endShift();
+            res.json({ok:true,...data});
+        } finally {orders.unpause();warehouseActions.unpause();}
+    }));
+    app.get('/api/shift/review',route((req,res)=>{requireCore();res.json(shiftReview.snapshot());}));
+    app.post('/api/shift/reconcile',route((req,res)=>{
+        requireCore();res.json({ok:true,review:shiftReview.reconcile(req.body)});broadcast();
+    }));
     app.get('/api/map',(req,res)=>res.json(latestState.map));
     app.get('/api/map/location-names',(req,res)=>res.json(browserState().location_names));
     app.post('/api/map/location-names/swap',route((req,res)=>{
@@ -313,6 +336,13 @@ function createGateway(options = {}) {
     }));
     app.post('/api/orders/:id/resolve',route(async(req,res)=>res.json({ok:true,order:await orders.resolve(
         id(req.params.id,'order id'),req.body.physically_clear,req.body.expected_revision)})));
+    app.post('/api/orders/:id/resume',route(async(req,res)=>{
+        requireCore();res.json({ok:true,order:await orders.resume(id(req.params.id),
+          number(req.body.item_number,'item_number',1,20,true),req.body.physically_clear,req.body.expected_revision)});
+    }));
+    app.post('/api/warehouse-actions/:id/resume',route(async(req,res)=>{
+        requireCore();res.json({ok:true,action:await warehouseActions.resume(id(req.params.id),req.body.physically_clear,req.body.expected_revision)});
+    }));
     app.delete('/api/orders/:id',route((req,res)=>res.json({ok:true,...orders.remove(id(req.params.id,'order id')),scope:'dashboard'})));
     app.get('/api/agvs/:id/history',route((req,res)=>res.json(db.getAgvHistory(id(req.params.id),limit(req)))));
     app.get('/api/logs',route((req,res)=>res.json(db.getRecentSystemLogs(limit(req,100)))));
@@ -320,6 +350,29 @@ function createGateway(options = {}) {
     app.post('/api/agvs/:id/goto',route((req,res)=>task(req,res,req.params.id)));
     app.post('/api/tasks/cancel',route(async (req,res)=>res.json({ok:true,...await command({cmd:'cancel_task',...(req.body.task_id ? {task_id:id(req.body.task_id,'task_id')} : {target:target(req.body.target)})})})));
     app.post('/api/agvs/:id/clear-error',route(async (req,res)=>res.json({ok:true,...await command({cmd:'clear_error',id:id(req.params.id)})})));
+    app.post('/api/agvs/:id/recover',route(async(req,res)=>{
+        if(req.body.physically_clear!==true || typeof req.body.repositioned!=='boolean')
+            throw httpError(400,'Cần xác nhận xe đã dừng, vùng cũ trống và tình trạng di chuyển xe');
+        res.json({ok:true,...await command({cmd:'recover_vehicle',id:id(req.params.id),
+            expected_node:id(req.body.expected_node),physically_clear:true,repositioned:req.body.repositioned})});
+    }));
+    app.post('/api/agvs/:id/recovery-heading',route(async(req,res)=>{
+        if(req.body.physically_confirmed!==true || !['N','E','S','W'].includes(req.body.heading))
+            throw httpError(400,'Cần chọn và xác nhận hướng đầu xe thực tế');
+        res.json({ok:true,...await command({cmd:'confirm_recovery_heading',id:id(req.params.id),
+            expected_node:id(req.body.expected_node),heading:req.body.heading,physically_confirmed:true})});
+    }));
+    for(const mode of ['home','node'])app.post(`/api/agvs/:id/recover-${mode}`,route(async(req,res)=>{
+        if(req.body.physically_clear!==true)throw httpError(400,'Xác nhận xe đã dừng và ra hết vùng cũ');
+        res.json({ok:true,...await command({cmd:`recover_${mode}`,id:id(req.params.id),
+          expected_node:id(req.body.expected_node),physically_clear:true})});
+    }));
+    app.post('/api/tasks/:id/resume',route(async(req,res)=>{
+        const taskId=id(req.params.id);
+        if(orders.list({includeDeleted:true}).some(order=>order.items.some(item=>item.task_id===taskId))||
+          warehouseActions.list().some(action=>action.task_id===taskId))throw httpError(409,'Tiếp tục từ đơn hoặc thao tác kho tương ứng');
+        res.json({ok:true,...await command({cmd:'resume_task',task_id:taskId,expected_node:id(req.body.expected_node)})});
+    }));
     app.delete('/api/agvs/:id',route(async (req,res)=>res.json({ok:true,...await command({cmd:'remove_agv',id:id(req.params.id)})})));
     app.post('/api/map/obstacle',route(async (req,res)=>{
         const node = target(req.body.node);

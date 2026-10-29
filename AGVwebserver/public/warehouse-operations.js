@@ -101,7 +101,7 @@ function renderWarehouseSlot(state,node,parent) {
   const card=document.createElement('article');card.className='warehouse-slot-card';card.dataset.warehouseSlot=node;
   card.dataset.tone=attention?'bad':move?'warn':known&&slot.rack_id?'good':'';
   const header=operationText(card,'','div','warehouse-slot-header');operationText(header,locationText(node),'strong');
-  operationText(header,attention?'Đối soát':move?'Đặt chỗ':!known?'Chưa nhập':slot.rack_id?'Có kệ':'Trống','span');
+  operationText(header,!known?'Chưa nhập':slot.rack_id?'Có kệ':'Trống','span');
   operationText(card,!known?'Chưa xác định':slot.rack_id||(attention?'Chờ xác minh vị trí':'Ô trống'),'p','warehouse-slot-rack');
   let detail='Sẵn sàng nhận kệ';
   if(!known)detail='Nhập vị trí ban đầu';
@@ -128,15 +128,18 @@ function renderWarehouseOperations(state) {
 function renderWarehouseInventory(state) {
   const inventory=state?.warehouse;
   const nodes=warehouseNodes(state?.map);
-  const key=JSON.stringify([nodes,inventory,state?.location_names?.revision]);
+  const rollbackOrders=(state?.orders||[]).filter(order=>['needs_attention','closed'].includes(order.status)&&
+    order.items?.some(item=>inventory?.moves?.some(move=>move.status==='needs_attention'&&move.key===`order:${order.id}:${item.number}`)));
+  const key=JSON.stringify([nodes,inventory,state?.location_names?.revision,rollbackOrders.map(order=>[order.id,order.status])]);
   if(key===warehouseSlotsRenderKey)return;warehouseSlotsRenderKey=key;
   const racks=inventory?.racks||[],moves=(inventory?.moves||[]).filter(move=>['reserved','carrying','needs_attention'].includes(move.status));
   const carried=racks.filter(rack=>rack.location.type==='robot');
   const available=(inventory?.slots||[]).filter(slot=>!slot.rack_id&&!moves.some(move=>[move.pickup,move.dropoff].includes(slot.node))).length;
   const uncertain=(inventory?.slots||[]).filter(slot=>racks.some(rack=>rack.id===slot.rack_id&&rack.status==='needs_attention')||
     moves.some(move=>move.status==='needs_attention'&&[move.pickup,move.dropoff].includes(slot.node))).length;
+  const missing=racks.filter(rack=>rack.location.type==='unknown').length;
   $('warehouseShiftSummary').textContent=inventory?.initialized?
-    `${racks.length} kệ · ${available} ô sẵn sàng · ${carried.length} kệ trên xe${uncertain?` · ${uncertain} vị trí cần đối soát`:''}`:'Chưa nhập kho · Bấm Mở ca để nhập và xác nhận vị trí kệ';
+    `Toàn kho: ${racks.length-missing} kệ đã xác định · ${available} ô sẵn sàng · ${carried.length} kệ trên xe${missing?` · ${missing} kệ cần tìm`:''}${uncertain?` · ${uncertain} vị trí cần đối soát`:''}`:'Chưa nhập kho · Bấm Mở ca để nhập và xác nhận vị trí kệ';
   const slots=$('warehouseSlotCards');slots.replaceChildren();
   for(const node of nodes)renderWarehouseSlot(state,node,slots);
   if(!nodes.length)operationText(slots,'Chờ danh sách kho K1–K6.','p','transfer-metadata');
@@ -144,9 +147,15 @@ function renderWarehouseInventory(state) {
   operationText(cargo,'Kệ trên xe','strong');
   if(!inventory?.initialized)operationText(cargo,'Chưa có dữ liệu kho','span','warehouse-cargo-empty');
   else if(!carried.length)operationText(cargo,'Không có kệ trên xe','span','warehouse-cargo-empty');
+  for(const rack of racks.filter(rack=>rack.location.type==='unknown'))
+    operationText(cargo,`Thiếu kệ ${rack.id} · không thấy tại ${locationText(rack.location.id)} · cần đối soát`,'span','transfer-alert');
   for(const rack of carried) {
     const tag=operationText(cargo,`Xe ${rack.location.id} · Kệ ${rack.id} · ${rackStateNames[rack.status]||rack.status}`,'span','warehouse-cargo-tag');
     tag.dataset.rackId=rack.id;tag.dataset.tone=rack.status==='needs_attention'?'bad':'';
+  }
+  for(const order of rollbackOrders) {
+    const button=action(warehouseRollbackLabel(order),()=>resolveWarehouseOrder(order.id),null);
+    button.type='button';button.dataset.warehouseRollbackOrder=order.id;cargo.append(button);
   }
 }
 function orderWarehouseAvailability(node,kind) {

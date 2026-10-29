@@ -3,6 +3,35 @@ const assert = require('node:assert/strict');
 const {planOrder,shortestRoute} = require('../AGVwebserver/order-planner');
 const {createOrderService,SERVICE_MS} = require('../AGVwebserver/orders');
 
+test('nearest selection names a hidden unreconciled order instead of waiting without a reason',async t=>{
+  const hidden={id:'old-physical-hold',status:'needs_attention',closed_by_shift:true,created:new Date(0).toISOString(),
+    deleted_at:new Date(1).toISOString(),items:[{number:1,robot:'01',status:'interrupted',task_id:'old-task'}]};
+  const robot=liftCapable({id:'01',node:'K1',state:'IDLE',online:true,position_valid:true}),commands=[];
+  const state={map,fleet:{agvs:[robot],tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
+  const service=createOrderService({db:{getOrders:()=>[hidden],saveOrder:()=>{}},getState:()=>state,getSession:()=> 's',
+    publish:()=>{},send:async command=>{commands.push(command);return {task_id:'unexpected'};}});
+  t.after(()=>service.close());
+  const order=service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K3',quantity:1}]});
+  await service.tick();
+  assert.equal(commands.length,0);assert.equal(order.items[0].status,'queued');
+  assert.match(order.items[0].waiting_reason,/Xe 01 chờ đối soát đơn old-physical-hold/);
+  assert.equal(service.list({includeDeleted:true}).find(order=>order.id===hidden.id).status,'needs_attention');
+});
+
+test('nearest scheduler skips heading-locked robot and keeps all-locked orders queued',async t=>{
+  const commands=[],robots=['01','02'].map((id,i)=>liftCapable({id,node:i?'K2':'G1',state:'IDLE',online:true,position_valid:true,
+    heading_confirmation_required:true}));
+  const state={map,fleet:{agvs:robots,tasks:[],accepting_tasks:true},shift:{phase:'RUNNING'},mqtt_connected:true};
+  const service=createOrderService({db:{getOrders:()=>[],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'heading-lock',
+    publish:()=>{},send:async command=>{commands.push(command);return {task_id:'heading-task'};}});
+  t.after(()=>service.close());
+  const order=service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K3',quantity:1}]});
+  await service.tick();assert.equal(commands.length,0);assert.equal(order.items[0].status,'queued');
+  assert.match(order.items[0].waiting_reason,/hướng/);
+  robots[1].heading_confirmation_required=false;await service.tick();
+  assert.equal(commands[0].agv_id,'02');
+});
+
 test('deleting dashboard orders persists, preserves cargo holds and keeps hidden active orders supervised',async()=>{
   const records=new Map(),commands=[];
   records.set('held',{id:'held',status:'needs_attention',created:new Date().toISOString(),items:[
@@ -104,10 +133,13 @@ test('trial selection defaults to 01 before dispatch, explains fault, and keeps 
     assert.match(order.items[0].waiting_reason,/LINE_LOST/);assert.equal(order.items[0].status,'queued');assert.equal(commands.length,0);
     assert.deepEqual(order.items[0].route_plan.pickup,{path:['S1','K1'],cost:100});
     await service.close();service=createOrderService(options);await service.tick();
-    assert.equal(service.list()[0].status,'active','a wholly queued order has no uncertain movement to replay');
+    assert.equal(service.list()[0].status,'needs_attention','restart cannot prove a queued order belongs to the current shift');
     Object.assign(state.fleet.agvs[0],{state:'IDLE',error:''});await service.tick();
+    assert.equal(commands.length,0,'a saved queue never auto-replays after gateway restart');
+    await service.resolve(order.id,true);
+    service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]});await service.tick();
     assert.equal(commands.length,1);assert.equal(commands[0].agv_id,'01');assert.equal(commands[0].target,'K1');
-    assert.equal(service.list()[0].items[0].waiting_reason,'');
+    assert.equal(service.list().find(order=>order.status==='active').items[0].waiting_reason,'');
   } finally {await service.close();}
 });
 
@@ -335,7 +367,7 @@ test('offline robot interrupts lift and cannot mark cargo delivered',async()=>{
     robot.online = false;
     await service.tick();assert.equal(order.status,'needs_attention');assert.equal(order.items[0].status,'interrupted');
     await assert.rejects(()=>service.resolve(order.id,false),/Cần xác nhận/);
-    await assert.rejects(()=>service.resolve(order.id,true),/Dừng xe/);
+    await assert.rejects(()=>service.resolve(order.id,true),/Kết nối lại xe 01/);
     robot.online=true;
     assert.equal((await service.resolve(order.id,true)).status,'closed');
   } finally {await service.close();}

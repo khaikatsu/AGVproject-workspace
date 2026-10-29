@@ -64,14 +64,14 @@
 #define AGV_BENCH_TURN_MIN_MS 600       // Thời gian tối thiểu quay góc 90 độ (ms) trước khi bắt line mới
 
 // Riêng quay đầu 180 độ (tại G1 hoặc quay đầu chặng):
-#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 10) // PWM quay 180 độ (giảm nhẹ để tránh trượt bánh)
+#define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 30) // PWM quay 180 độ (giảm nhẹ để tránh trượt bánh)
 
 // [CHỐNG ĂN LINE PHỤ KHI XOAY 180 ĐỘ]:
 // Thời gian xe quay mù tối thiểu (ms) trong quá trình xoay 180 độ.
 
 // Trong suốt thời gian này, xe ép quay tròn liên tục và BỎ QUA mọi vạch nhánh/line phụ ở giữa.
 // Tăng lên (ví dụ 450 - 1000ms) nếu xe bị dừng sớm do ăn line phụ.
-#define AGV_TURN_180_MIN_MS 700
+#define AGV_TURN_180_MIN_MS 600
 
 // [PHANH DỪNG XÁC NHẬN SAU KHI XOAY 180 ĐỘ]:
 // Sau khi đã xoay đủ góc và mắt đọc bắt trúng vạch line đích, xe phanh đứng yên trong bao lâu (ms)
@@ -90,7 +90,7 @@
 // Thời gian tiến thêm bám line PD (ms) sau khi bắt line tại GS1 để nắn thẳng xe trước khi lùi:
 // Khuyên dùng 200 - 300ms (nhích nhẹ ~5cm nắn thẳng bánh). Đặt 0 nếu muốn xe quay xong lùi ngay lập tức.
 // Tuyệt đối không đặt quá 500ms vì nhánh line GS1 ngắn, xe sẽ chạy văng ra ngoài khoảng trống!
-#define AGV_REVERSE_ALIGN_FORWARD_MS 600
+#define AGV_REVERSE_ALIGN_FORWARD_MS 750
 
 // ----------------------------------------------------------------------------
 // 7. BÁM LINE TIẾN CƠ BẢN (Khi không dùng PD)

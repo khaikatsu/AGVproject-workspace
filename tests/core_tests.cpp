@@ -563,22 +563,21 @@ int main() {
             CHECK(fleet.directGoto("02","K4","other").empty());
             fleet.addTask("K6",0,"queued");CHECK(record(fleet,"queued")["status"]=="pending");
             CHECK(web.execute({{"cmd","end_shift"}})["ok"].get<bool>());
-            CHECK(robot("01")["target"]=="K3");CHECK(record(fleet,"last")["status"]=="dispatched");
+            CHECK(robot("01")["target"].get<std::string>().empty());CHECK(record(fleet,"last")["status"]=="cancelled");
             CHECK(!fleet.directGoto("01","K1","late").empty());
-            fleet.updateTelemetry("01","K3",85,false);shift.tick();
-            CHECK(record(fleet,"last")["status"]=="completed");CHECK(record(fleet,"queued")["status"]=="pending");
-            CHECK(robot("01")["target"]=="S1");CHECK(robot("01")["node"]=="K3");
-            fleet.updateTelemetry("01","S1",85,false);
-            fleet.tick(); // route reservations hold 02 until 01 finishes the shared approach home
-            CHECK(robot("02")["state"]=="WORKING");
-            fleet.updateTelemetry("02","K4",80,false);shift.tick();CHECK(robot("02")["target"]=="S2");
+            CHECK(record(fleet,"other")["status"]=="cancelled");CHECK(record(fleet,"queued")["status"]=="cancelled");
+            CHECK(fleet.toJson()["pending_tasks"].empty());
+            CHECK(robot("01")["cancel_waiting_for_node"]==true);
+            confirmCancelledStop(fleet,"01","S1");confirmCancelledStop(fleet,"02","S2");shift.tick();
+            CHECK(robot("01")["node"]=="S1");CHECK(robot("02")["node"]=="S2");
             arbiter.requestZone("M5","01");fleet.updateTelemetry("01","S1",85,false);fleet.updateTelemetry("02","S2",80,false);shift.tick();
             CHECK(shift.snapshot()["phase"]=="CLOSING");CHECK(!shift.snapshot()["can_start"].get<bool>());
             arbiter.releaseZone("M5","01");shift.tick();CHECK(shift.snapshot()["phase"]=="CLOSED");
             fleet.setNetworkAvailable(false);CHECK(!shift.start().empty());fleet.setNetworkAvailable(true);
             fleet.reportCharged("01",90);shift.tick();CHECK(robot("01")["state"]=="IDLE"); // không lặp CHARGE_START sau charging_done
             CHECK(web.execute({{"cmd","start_shift"}})["ok"].get<bool>());
-            CHECK(record(fleet,"queued")["status"]=="dispatched");
+            CHECK(record(fleet,"queued")["status"]=="cancelled");
+            CHECK(fleet.toJson()["pending_tasks"].empty()); // A new shift never replays last shift's queue.
             MapGraph rebootMap;rebootMap.loadDefaultDemoMap();MutexArbiter rebootArbiter(rebootMap.mutexZones());FleetManager rebootFleet(rebootMap,rebootArbiter);
             ShiftController reboot(rebootMap,rebootFleet,rebootArbiter,dir/"shift.json");
             CHECK(reboot.snapshot()["phase"]=="CLOSING");CHECK(rebootFleet.toJson()["agvs"].empty());CHECK(!rebootFleet.acceptingTasks());

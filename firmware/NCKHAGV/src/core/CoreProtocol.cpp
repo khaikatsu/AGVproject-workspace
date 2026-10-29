@@ -50,11 +50,19 @@ bool CoreProtocol::decodeCommand(const uint8_t* payload, size_t length, CoreComm
     else if (std::strcmp(cmd.c_str(), "STOP") == 0) command.type = CoreCommandType::Stop;
     else if (std::strcmp(cmd.c_str(), "CHARGE_START") == 0) command.type = CoreCommandType::ChargeStart;
     else if (std::strcmp(cmd.c_str(), "RESET_FAULT") == 0) command.type = CoreCommandType::ResetFault;
+    else if (std::strcmp(cmd.c_str(), "CONFIRM_HEADING") == 0) command.type = CoreCommandType::ConfirmHeading;
     else if (std::strcmp(cmd.c_str(), "NODE_ORDER") == 0) command.type = CoreCommandType::NodeOrder;
     else if (std::strcmp(cmd.c_str(), "LIFT_UP") == 0) command.type = CoreCommandType::LiftUp;
     else if (std::strcmp(cmd.c_str(), "LIFT_DOWN") == 0) command.type = CoreCommandType::LiftDown;
     else return false;
 
+    if (command.type == CoreCommandType::ConfirmHeading) {
+        if (!nodeText(doc["node"],command.node,sizeof(command.node)) || !doc["heading"].is<const char*>()) return false;
+        const JsonString heading = doc["heading"].as<JsonString>();
+        if (heading.size()!=1) return false;
+        command.confirmedHeading=parseHeading(heading.c_str());
+        return command.confirmedHeading!=RobotHeading::Unknown;
+    }
     if (command.type == CoreCommandType::LiftUp || command.type == CoreCommandType::LiftDown)
         return Config::SERVO_SINGLE_TEST && nodeText(doc["node"],command.node,sizeof(command.node)) &&
             command.node[0]=='K' && command.node[1]>='1' && command.node[1]<='6' && !command.node[2];
@@ -117,7 +125,7 @@ bool CoreProtocol::decodeCommand(const uint8_t* payload, size_t length, CoreComm
 bool CoreProtocol::sameCommand(const CoreCommand& a, const CoreCommand& b) {
     if (a.type != b.type || a.cmdId != b.cmdId || a.pathLength != b.pathLength ||
         a.routeCmdId != b.routeCmdId || a.pathIndex != b.pathIndex || a.turnCrossings != b.turnCrossings ||
-        a.reverseAfterTurn != b.reverseAfterTurn ||
+        a.reverseAfterTurn != b.reverseAfterTurn || a.confirmedHeading != b.confirmedHeading ||
         std::strcmp(a.node,b.node) != 0 || std::strcmp(a.nextNode,b.nextNode) != 0 || std::strcmp(a.maneuver,b.maneuver) != 0 ||
         std::strcmp(a.target, b.target) != 0) return false;
     for (uint8_t i = 0; i < a.pathLength; ++i)

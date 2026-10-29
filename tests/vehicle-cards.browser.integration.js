@@ -41,7 +41,7 @@ async function main() {
         }
         model.fleet.agvs = model.fleet.agvs.filter(candidate => candidate.id !== request.id);
       }
-      if (request.cmd === 'clear_error') Object.assign(current, {state: 'IDLE', error: ''});
+      if (request.cmd === 'recover_vehicle') Object.assign(current, {state: 'IDLE', error: '',recovery_node_verified:true});
       socket.send(JSON.stringify({type: 'command_result', request_id: request.request_id,
         core_session_id: model.core_session_id, ok: true, data: {}, state: model}));
     });
@@ -139,11 +139,16 @@ async function main() {
     }
 
     const first = model.fleet.agvs.find(candidate => candidate.id === '01');
-    Object.assign(first, {state: 'ERROR', error: '<img src=x onerror="window.__xss=1"> lỗi motor'});
+    Object.assign(first, {state: 'ERROR', error: '<img src=x onerror="window.__xss=1"> lỗi motor',
+      recovery_stop_verified:true,heading:'S',heading_supported:true,heading_source:'route'});
     push();
     await card('01').filter({hasText: 'lỗi motor'}).waitFor();
     assert.equal(await page.evaluate(() => window.__xss), undefined);
-    await card('01').getByRole('button', {name: 'Xóa lỗi', exact: true}).click();
+    await card('01').getByRole('button', {name: 'Khôi phục xe', exact: true}).click();
+    await page.locator('#vehicleRecoveryClear').check();await page.locator('#vehicleRecoveryMoved').selectOption('no');
+    await page.locator('#vehicleRecoverySubmit').click();
+    await page.locator('#vehicleRecoveryStatus').filter({hasText:'Xe đã sẵn sàng'}).waitFor();
+    await page.locator('#vehicleRecoveryDialog').evaluate(el=>el.close());
     await card('01').filter({hasText: 'Sẵn sàng'}).waitFor();
     Object.assign(first, {online: false, state: 'OFFLINE'});
     push();
@@ -179,7 +184,7 @@ async function main() {
     await page.locator('#agvLinkStatus').filter({hasText: 'Có dữ liệu mới'}).waitFor();
     assert.equal(await cards.count(), 2);
     assert.deepEqual(errors, []);
-    console.log(`PASS vehicle cards: fixed 01/02; select/history/clear/remove; rejection/stale/scope; reconnect/session; keyed DOM; desktop/mobile. Evidence: ${directory}`);
+    console.log(`PASS vehicle cards: fixed 01/02; select/history/recover/remove; rejection/stale/scope; reconnect/session; keyed DOM; desktop/mobile. Evidence: ${directory}`);
   } finally {
     clearInterval(pump);
     if (browser) await browser.close();

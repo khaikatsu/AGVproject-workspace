@@ -12,10 +12,15 @@ public:
         std::memcpy(node_,command.node,sizeof(node_));
         busy_=true;state_=up_ ? "LIFTING" : "LOWERING";return true;
     }
-    bool update(uint32_t now,bool safe) {
+    bool update(uint32_t now,bool safe,bool sensorStable,bool sensorPresent) {
         if (!busy_) return false;
         if (!safe) { interrupt();return true; }
         if (static_cast<uint32_t>(now-started_) < 5000) return false;
+        // Bound the sensor wait; never repeat the physical servo action.
+        if(!sensorStable || sensorPresent!=up_) {
+            if(static_cast<uint32_t>(now-started_)<7000)return false;
+            interrupt();return true;
+        }
         busy_=false;known_=true;loaded_=up_;state_=up_ ? "DONE_UP" : "DONE_DOWN";return true;
     }
     void interrupt() { if(busy_) {busy_=false;known_=false;state_="INTERRUPTED";} }

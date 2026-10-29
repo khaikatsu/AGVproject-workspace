@@ -62,6 +62,12 @@ void AGVController::begin() {
                       Config::BATTERY_SERIES_CELLS, Config::BATTERY_EMPTY_VOLTAGE,
                       Config::BENCH_MAX_VOLTAGE, Config::BATTERY_FULL_VOLTAGE,
                       Config::BATTERY_VOLTAGE_SCALE, Config::BATTERY_VOLTAGE_OFFSET);
+        Serial.printf("[BATTERY_COMP] enabled=%d high>=%.0f%%(%+d) mid>=%.0f%%(%+d) low>=%.0f%%(%+d) crit=(%+d)\n",
+                      Config::BATTERY_SPEED_COMP_ENABLED ? 1 : 0,
+                      Config::BATTERY_STEP_HIGH_PERCENT, Config::BATTERY_PWM_OFFSET_HIGH,
+                      Config::BATTERY_STEP_MID_PERCENT, Config::BATTERY_PWM_OFFSET_NOMINAL,
+                      Config::BATTERY_STEP_LOW_PERCENT, Config::BATTERY_PWM_OFFSET_MID,
+                      Config::BATTERY_PWM_OFFSET_LOW);
         Serial.printf("[AGV] Core motion %s; mutex encoder release=%d threshold=%lu pulses/wheel\n",
                       Config::ENABLE_CORE_MOTION ? "configured" : "locked",
                       Config::MUTEX_ENCODER_RELEASE_ENABLED,
@@ -99,7 +105,7 @@ bool AGVController::consumePriority() {
         lastRfidSeenMs_ = 0;
         previousNode_[0] = '\0';
         previousSegmentReverse_ = false;
-        heading_ = RobotHeading::Unknown; headingBayDefault_ = false;
+        heading_ = RobotHeading::Unknown; headingBayDefault_ = false; headingCommandId_ = 0;
         navigator_.resetGrants();
         clearance_.reset();
         control_.safeStop(ErrorCode::NotConnected);
@@ -126,6 +132,23 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
         if (navigator_.active()) navigator_.fault(ErrorCode::StaleCommand);
         mqtt_.publishError(ErrorCode::StaleCommand, millis());
         return;
+    }
+    if (command.type == CoreCommandType::ConfirmHeading) {
+        const auto bay = RoutePlanner::bayHeading(control_.currentNode());
+        if (navigator_.active() || control_.task().active || servo_.busy() || lift_.busy() ||
+            control_.state()!=AGV_IDLE || control_.error()!=ErrorCode::None || navigator_.error()!=ErrorCode::None ||
+            movement_.action()!=MotorAction::Stop || motor_.leftDuty()!=0 || motor_.rightDuty()!=0 ||
+            !positionConfirmed_ || positionSession_!=mqtt_.session() ||
+            static_cast<uint32_t>(millis()-lastRfidSeenMs_)>250 ||
+            std::strcmp(command.node,control_.currentNode())!=0 ||
+            command.confirmedHeading==RobotHeading::Unknown ||
+            (bay!=RobotHeading::Unknown && command.confirmedHeading!=bay) ||
+            !wifi_.isConnected() || !mqtt_.isConnected()) {
+            mqtt_.publishError(ErrorCode::RestartDenied,millis());return;
+        }
+        heading_=command.confirmedHeading;headingBayDefault_=false;headingCommandId_=command.cmdId;
+        previousNode_[0]='\0';previousSegmentReverse_=false;
+        publishTelemetry();return;
     }
     if (command.type == CoreCommandType::ResetFault) {
         const ControlInput current = input();
@@ -156,10 +179,16 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
     if (command.type == CoreCommandType::LiftUp || command.type == CoreCommandType::LiftDown) {
         const bool ready = Config::SERVO_SINGLE_TEST && servo_.liftConfigured() && !servo_.busy() && !lift_.busy() &&
             !navigator_.active() && !control_.task().active && control_.state()==AGV_IDLE &&
+            movement_.action()==MotorAction::Stop && motor_.leftDuty()==0 && motor_.rightDuty()==0 &&
             navigator_.error()==ErrorCode::None && control_.error()==ErrorCode::None &&
             positionConfirmed_ && positionSession_==mqtt_.session() &&
             std::strcmp(command.node,control_.currentNode())==0 && wifi_.isConnected() && mqtt_.isConnected();
         if (!ready) { mqtt_.publishError(ErrorCode::ServoConfiguration,millis());return; }
+        // Local check closes the gap between the server observation and receipt.
+        if(!cargo_.stable() || !cargo_.present()) {
+            control_.safeStop(cargo_.stable()?ErrorCode::CargoMissing:ErrorCode::CargoSensorUnstable);
+            publishTelemetry();return;
+        }
         const bool moved=command.type==CoreCommandType::LiftUp ? servo_.liftUp() : servo_.liftDown();
         if (!moved || !lift_.start(command,millis())) {control_.safeStop(ErrorCode::ServoConfiguration);return;}
         if(Config::DEBUG_ENABLED) Serial.printf("[LIFT] cmd=%ld state=%s gpio=17 angle=%d duration=5000\n",
@@ -254,13 +283,26 @@ void AGVController::update() {
         positionConfirmed_ = false; previousNode_[0] = '\0';
         lastRfidSeenMs_ = 0;
         previousSegmentReverse_ = false;
-        heading_ = RobotHeading::Unknown; headingBayDefault_ = false;
+        heading_ = RobotHeading::Unknown; headingBayDefault_ = false; headingCommandId_ = 0;
         navigator_.resetGrants();
         clearance_.reset();
     }
     cargo_.update(millis());
+    if (Config::DEBUG_ENABLED) {
+        static bool lastReportedCargoStable = false;
+        static bool lastReportedCargoPresent = false;
+        if (cargo_.stable() != lastReportedCargoStable || cargo_.present() != lastReportedCargoPresent) {
+            lastReportedCargoStable = cargo_.stable();
+            lastReportedCargoPresent = cargo_.present();
+            Serial.printf("[CARGO_IR] gpio=%d stable=%d present=%d -> %s\n",
+                          Config::CARGO_IR_PIN, cargo_.stable() ? 1 : 0, cargo_.present() ? 1 : 0,
+                          cargo_.present() ? "CO HANG / VAT CAN" : "TRONG TRAI");
+        }
+    }
     updateSonars();
     battery_.update(motor_.leftDuty() != 0 || motor_.rightDuty() != 0);
+    const float batteryPct = battery_.getBatteryPercentage();
+    motor_.setBatteryCompOffset(Config::batteryStepPwmOffset(batteryPct));
     servo_.update();
     bool inhibited = consumePriority();
     if (controlArmed_) control_.checkSafety(input());
@@ -299,7 +341,7 @@ void AGVController::update() {
             lastRfidSeenMs_ = 0;
             previousNode_[0] = '\0';
             previousSegmentReverse_ = false;
-            heading_ = RobotHeading::Unknown; headingBayDefault_ = false;
+            heading_ = RobotHeading::Unknown; headingBayDefault_ = false; headingCommandId_ = 0;
             control_.reachedNode("", millis());
             if (!navigator_.active() && control_.state() != AGV_MOVING) movement_.stop();
         }
@@ -341,7 +383,7 @@ void AGVController::update() {
                     else previousNode_[0] = '\0';
                     previousSegmentReverse_ = incoming && reverse;
                     heading_ = incoming ? RoutePlanner::edgeHeading(fromNode, event.node, reverse, true) : RobotHeading::Unknown;
-                    headingBayDefault_ = false;
+                    headingBayDefault_ = false; headingCommandId_ = 0;
                     control_.reachedNode(event.node, millis());
                     if (!navigator_.active() && control_.state() != AGV_MOVING) movement_.stop();
                     mqtt_.publishEvent("AGV_REACHED_NODE", event.node, millis(), control_.task().id, fromNode, reverse);
@@ -352,7 +394,7 @@ void AGVController::update() {
         if (positionConfirmed_ && !navigator_.active() && !control_.task().active &&
             navigator_.error() == ErrorCode::None && control_.error() == ErrorCode::None) {
             const auto docking = RoutePlanner::bayHeading(control_.currentNode());
-            if (docking != RobotHeading::Unknown) { heading_ = docking; headingBayDefault_ = true; }
+            if (docking != RobotHeading::Unknown && headingCommandId_==0) { heading_ = docking; headingBayDefault_ = true; }
         }
         // Preserve RC522 HALT/WUPA for fresh repeated reads. At an authorized
         // straight-through RFID the motor keeps following during cleanup.
@@ -422,23 +464,34 @@ void AGVController::update() {
             positionConfirmed_ && positionSession_==mqtt_.session() &&
             std::strcmp(control_.currentNode(),lift_.node())==0 &&
             !navigator_.active() && control_.error()==ErrorCode::None && navigator_.error()==ErrorCode::None;
-        if(lift_.update(millis(),safe)) {
+        if(lift_.update(millis(),safe,cargo_.stable(),cargo_.present())) {
             if(!safe) control_.safeStop(ErrorCode::ServoInterrupted);
+            else if(std::strcmp(lift_.state(),"INTERRUPTED")==0)
+                control_.safeStop(cargo_.stable()?ErrorCode::CargoMismatch:ErrorCode::CargoSensorUnstable);
             publishTelemetry();
         }
+    }
+    if(lift_.cargoKnown() && lift_.cargo() && !lift_.busy() && navigator_.active() &&
+        cargo_.stable() && !cargo_.present()) {
+        movement_.stop();navigator_.fault(ErrorCode::CargoLost);control_.safeStop(ErrorCode::CargoLost);
+    }
+    if(lift_.cargoKnown() && lift_.cargo() && !lift_.busy() && navigator_.active() && cargo_.unstableMs(millis())>=750) {
+        movement_.stop();navigator_.fault(ErrorCode::CargoSensorUnstable);control_.safeStop(ErrorCode::CargoSensorUnstable);
     }
     const bool sonarAcquiring = Config::ULTRASONIC_MOTION_GUARD &&
         Config::REAR_ULTRASONIC_ECHO_PIN >= 0 && sonars_.acquiring();
     const ControlInput motionInput = input();
     const MotorAction coreMotor = navigator_.active() && !sonarAcquiring
         ? navigator_.update(motionInput) : MotorAction::Stop;
-    if (navigator_.stationOriented()) {
+    if (navigator_.stationOriented() && headingCommandId_==0) {
+        headingCommandId_ = 0;
         heading_ = RoutePlanner::bayHeading(control_.currentNode());
         headingBayDefault_ = true;
     } else if (coreMotor == MotorAction::PivotLeft || coreMotor == MotorAction::PivotRight) {
-        heading_ = RobotHeading::Unknown; headingBayDefault_ = false;
+        heading_ = RobotHeading::Unknown; headingBayDefault_ = false; headingCommandId_ = 0;
     } else if (navigator_.following() && coreMotor != MotorAction::Stop) {
         // Reacquired route line fixes the front direction; backing does not flip it.
+        headingCommandId_ = 0;
         heading_ = RoutePlanner::edgeHeading(control_.currentNode(), navigator_.nextNode(), navigator_.segmentReverse());
         headingBayDefault_ = false;
     }
@@ -509,9 +562,10 @@ void AGVController::update() {
         static_cast<uint32_t>(millis() - lastBenchPrintMs_) >= 1000) {
         lastBenchPrintMs_ = millis();
         const LineReadings line = line_.readSensors();
-        Serial.printf("[BENCH] line=%d%d%d pattern=%u; ultrasonic=%.1fcm valid=%d; battery_adc=%lumV\n",
+        Serial.printf("[BENCH] line=%d%d%d pattern=%u; ultrasonic=%.1fcm valid=%d; cargo=%d; battery_adc=%lumV\n",
                       line.left, line.center, line.right, static_cast<unsigned int>(line.pattern),
                       sensor_.readDistanceCm(), sensor_.valid() ? 1 : 0,
+                      cargo_.present() ? 1 : 0,
                       static_cast<unsigned long>(battery_.adcMillivolts()));
     }
 }
@@ -564,6 +618,15 @@ void AGVController::publishTelemetry() {
     snapshot.batteryPercentage = battery_.getBatteryPercentage();
     snapshot.cargoStable = cargo_.stable();
     snapshot.cargoPresent = cargo_.present();
+    snapshot.cargoSampleSeq=cargo_.sequence();snapshot.cargoSampledAtMs=cargo_.sampledAt();
+    snapshot.cargoStableMs=cargo_.stableMs(millis());
+    snapshot.cargoRawLevel=cargo_.rawLevel();
+    if(Config::DEBUG_ENABLED && snapshot.motor==MotorAction::Stop &&
+        snapshot.leftDuty==0 && snapshot.rightDuty==0) {
+        Serial.printf("[CARGO] xe=%s gpio=%d raw=%d active=%d stable=%d present=%d\n",
+            Config::AGV_ID,Config::CARGO_IR_PIN,snapshot.cargoRawLevel,
+            Config::CARGO_IR_ACTIVE_STATE,snapshot.cargoStable,snapshot.cargoPresent);
+    }
     snapshot.buzzerOn = AGVMath::reverseBuzzerRequired(movement_.action(), motor_.leftDuty(), motor_.rightDuty());
     snapshot.buzzerPinLevel = buzzer_.pinLevel();
     snapshot.uptimeMs = millis();
@@ -572,6 +635,7 @@ void AGVController::publishTelemetry() {
     snapshot.localSession = currentSession;
     snapshot.heading = heading_;
     snapshot.headingBayDefault = headingBayDefault_;
+    snapshot.headingCommandId = headingCommandId_;
     snapshot.stationReady = Config::benchVoltageReady(snapshot.batteryVoltage) &&
         RoutePlanner::station(snapshot.position.node) &&
         snapshot.heading == RoutePlanner::bayHeading(snapshot.position.node) &&

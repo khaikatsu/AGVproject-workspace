@@ -26,6 +26,7 @@ async function fixture(t,options = {}) {
   fs.mkdirSync(path.join(__dirname,'../.qa'),{recursive:true});
   const directory = fs.mkdtempSync(path.join(__dirname,'../.qa/gateway-test-'));
   const db = createDatabase(path.join(directory,'test.db'));
+  for(const order of options.orders||[])db.saveOrder(order);
   const core = new WebSocket.Server({host:'127.0.0.1',port:0});await once(core,'listening');
   const model = state();let peer;const commands = [];
   const push = ()=>peer?.send(JSON.stringify(model));
@@ -205,13 +206,53 @@ test('delta WebSocket includes order status changes after scheduler mutates an e
   assert.equal((await f.api('POST','/api/orders',{pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]})).status,201);
   await until(()=>messages.some(m=>m.changes?.orders?.[0]?.status==='active'));
   f.model.shift.phase='CLOSING';f.push();
-  await until(()=>messages.some(m=>m.changes?.orders?.[0]?.status==='needs_attention'));
+  await until(()=>messages.some(m=>m.changes?.orders?.[0]?.status==='closed'&&m.changes.orders[0].closed_by_shift));
+});
+
+test('shift review rejects stale incident snapshots and preserves audit; end can cancel during MQTT loss',async t=>{
+  const f=await fixture(t);f.model.shift={phase:'RUNNING',supported:true};f.model.mqtt_connected=true;f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.shift?.phase==='RUNNING');
+  f.model.logs=[{seq:1,msg:'AGV_02 BAO LOI: LINE_LOST',time:'10:00'}];f.push();
+  await until(async()=>(await f.api('GET','/api/shift/review')).data.incidents.length===1);
+  assert.equal((await f.api('POST','/api/shift/reconcile',{})).status,400);
+  f.model.shift.phase='CLOSED';f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.shift?.phase==='CLOSED');
+  const old=(await f.api('GET','/api/shift/review')).data;
+  f.model.logs.push({seq:2,msg:'AGV_01 MAT KET NOI',time:'10:01'});f.push();
+  await until(async()=>(await f.api('GET','/api/shift/review')).data.incidents.length===2);
+  assert.equal((await f.api('POST','/api/shift/reconcile',{review_token:old.review_token,physically_verified:true})).status,409);
+  const current=(await f.api('GET','/api/shift/review')).data;
+  const ack=await f.api('POST','/api/shift/reconcile',{review_token:current.review_token,physically_verified:true});
+  assert.equal(ack.status,200);assert.equal(ack.data.review.incidents.length,0);
+  assert.equal(f.db.getRecentSystemLogs().length,2);
+  f.model.shift.phase='RUNNING';f.model.mqtt_connected=false;f.push();
+  await until(async()=>(await f.api('GET','/api/state')).data.mqtt_connected===false);
+  assert.equal((await f.api('POST','/api/shift/end',{})).status,200);
+  assert.equal(f.commands.at(-1).cmd,'end_shift');
+  assert.equal((await f.api('POST','/api/agvs/02/recover-home',{expected_node:'S2',physically_clear:false})).status,400);
 });
 
 test('manual heading endpoint is removed and sends no command',async t=>{
   const f=await fixture(t),before=f.commands.length;
   const r=await fetch(f.base+'/api/agvs/01/heading',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({node:'A',heading:'E',physically_confirmed:true})});
   assert.equal(r.status,404);assert.equal(f.commands.length,before);
+});
+
+test('unified recovery validates physical checks and forwards a separate heading request',async t=>{
+  const f=await fixture(t),before=f.commands.length;
+  assert.equal((await f.api('POST','/api/agvs/02/recover',{expected_node:'S2',physically_clear:true})).status,400);
+  assert.equal((await f.api('POST','/api/agvs/02/recovery-heading',{
+    expected_node:'S2',heading:'N',physically_confirmed:false})).status,400);
+  assert.equal((await f.api('POST','/api/agvs/02/recovery-heading',{
+    expected_node:'S2',heading:'UNKNOWN',physically_confirmed:true})).status,400);
+  assert.equal(f.commands.length,before);
+  assert.equal((await f.api('POST','/api/agvs/02/recover',{
+    expected_node:'S2',physically_clear:true,repositioned:true})).status,200);
+  assert.equal(f.commands.at(-1).cmd,'recover_vehicle');assert.equal(f.commands.at(-1).repositioned,true);
+  assert.equal((await f.api('POST','/api/agvs/02/recovery-heading',{
+    expected_node:'S2',heading:'N',physically_confirmed:true})).status,200);
+  assert.equal(f.commands.at(-1).cmd,'confirm_recovery_heading');assert.equal(f.commands.at(-1).heading,'N');
+  assert.ok(!f.commands.slice(before).some(command=>['direct_goto','resume_task','warehouse_lift'].includes(command.cmd)));
 });
 
 test('Array contracts: snapshot list, history, logs; snapshot apply waits for core',async t=>{
@@ -223,6 +264,35 @@ test('Array contracts: snapshot list, history, logs; snapshot apply waits for co
   assert.ok(Array.isArray((await f.api('GET','/api/kpi/history')).data));
   assert.ok(Array.isArray((await f.api('GET','/api/logs')).data));
 });
+test('API projects a reconciled hidden past-shift order as closed and dispatches only a new requested order',async t=>{
+  const legacy={id:'legacy-held-01',status:'needs_attention',closed_by_shift:true,core_session_id:'old-session',
+    created:'2026-01-01T00:00:00.000Z',updated:'2026-01-02T00:00:00.000Z',deleted_at:'2026-01-02T00:00:00.000Z',
+    items:[{number:1,pickup:'K1',dropoff:'K2',robot:'01',rack_id:'RK1',status:'interrupted',task_id:'old-task'}]};
+  const f=await fixture(t,{orders:[legacy]});
+  assert.ok((await f.api('GET','/api/state')).data.orders.some(order=>order.id===legacy.id&&order.status==='needs_attention'));
+  f.model.map={nodes:[{id:'A',type:'waypoint'},...['K1','K2'].map(id=>({id,type:'station'})),
+    ...['G1','G2'].map(id=>({id,type:'waypoint'}))],edges:[{from:'A',to:'K1',weight:1},
+      {from:'K1',to:'K2',weight:2},...['1','2'].map(id=>({from:`K${id}`,to:`G${id}`,weight:1,two_way:true}))],obstacles:[]};
+  await configureWarehouse(f,['K1']);
+  const projected=await f.api('POST',`/api/orders/${legacy.id}/resolve`,{});
+  assert.equal(projected.status,200);assert.equal(projected.data.order.resolution,'warehouse_reconciled');
+  assert.ok(projected.data.order.warehouse_reconciliation.event_id);
+  assert.ok(!(await f.api('GET','/api/state')).data.orders.some(order=>order.id===legacy.id));
+  assert.ok(!(await f.api('GET','/api/shift/review')).data.blockers.some(reason=>reason.includes('Còn đơn')),
+    'verified past-shift orders also stop blocking shift review');
+  assert.equal(f.db.getOrders()[0].status,'needs_attention','historical record is preserved');
+  assert.equal(f.commands.filter(command=>['direct_goto','warehouse_lift','reconcile_test_cargo'].includes(command.cmd)).length,0);
+  f.model.fleet.accepting_tasks=true;f.model.shift={phase:'RUNNING'};
+  f.model.fleet.agvs=[{id:'01',node:'A',state:'IDLE',online:true,position_valid:true,
+    lift:{supported:true,ready:true,fresh:true,active:false,observed_node:'A'},virtual_cargo:false}];
+  f.push();await until(async()=>(await f.api('GET','/api/state')).data.shift?.phase==='RUNNING');
+  const created=await f.api('POST','/api/orders',{pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]});
+  assert.equal(created.status,201);
+  await until(()=>f.commands.some(command=>command.cmd==='direct_goto'));
+  const dispatched=f.commands.filter(command=>command.cmd==='direct_goto');
+  assert.equal(dispatched.length,1);assert.equal(dispatched[0].agv_id,'01');assert.equal(dispatched[0].target,'K1');
+});
+
 test('warehouse orders use Core task IDs and wait at pickup before any delivery command',async t=>{
   const f = await fixture(t);
     f.model.map = {nodes:[{id:'A',type:'waypoint'},...['K1','K2','K3','K4'].map(id=>({id,type:'station'})),...['G1','G2','G3','G4'].map(id=>({id,type:'waypoint'}))],

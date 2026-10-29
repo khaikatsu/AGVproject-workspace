@@ -606,8 +606,30 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                 motion.leftDuty = diagnostic["leftDuty"].get<int>();
                 motion.rightDuty = diagnostic["rightDuty"].get<int>();
                 motion.headingSupported = diagnostic.value("headingSupported",false);
+                motion.headingConfirmationSupported = diagnostic.value("headingConfirmationSupported",false);
+                if(diagnostic.contains("headingCommandId")) {
+                    if(!diagnostic["headingCommandId"].is_number_integer())throw std::invalid_argument("headingCommandId sai");
+                    const auto headingId=diagnostic["headingCommandId"].get<int64_t>();
+                    if(headingId<0 || headingId>INT_MAX)throw std::invalid_argument("headingCommandId ngoai gioi han");
+                    motion.headingCommandId=static_cast<long>(headingId);
+                }
                 motion.stationDockingSupported = diagnostic.value("stationDockingSupported",false);
                 motion.reverseHomeSupported = diagnostic.value("reverseHomeSupported",false);
+                if(encoderBound && diagnostic.contains("cargoSensorSupported") && diagnostic["cargoSensorSupported"].is_boolean() &&
+                    diagnostic["cargoSensorSupported"].get<bool>() && diagnostic.contains("cargoStable") && diagnostic["cargoStable"].is_boolean() &&
+                    diagnostic.contains("cargoPresent") && (diagnostic["cargoPresent"].is_boolean() || diagnostic["cargoPresent"].is_null())) {
+                    bool valid=true;
+                    for(const auto* key:{"cargoSampleSeq","cargoSampleAgeMs","cargoStableMs"})
+                        if(!diagnostic.contains(key) || !diagnostic[key].is_number_integer() ||
+                            diagnostic[key].get<int64_t>()<0 || diagnostic[key].get<uint64_t>()>UINT32_MAX)valid=false;
+                    if(valid && (!diagnostic["cargoStable"].get<bool>() || diagnostic["cargoPresent"].is_boolean())) {
+                        motion.cargoSensorSupported=true;motion.cargoSensorStable=diagnostic["cargoStable"].get<bool>();
+                        motion.cargoSensorPresent=diagnostic["cargoPresent"].is_boolean() && diagnostic["cargoPresent"].get<bool>();
+                        motion.cargoSensorSeq=diagnostic["cargoSampleSeq"].get<uint32_t>();
+                        motion.cargoSensorAge=diagnostic["cargoSampleAgeMs"].get<uint32_t>();
+                        motion.cargoSensorStableMs=diagnostic["cargoStableMs"].get<uint32_t>();
+                    }
+                }
                 if(encoderBound && diagnostic.contains("liftSupported") && diagnostic["liftSupported"].is_boolean() &&
                     diagnostic.contains("liftBusy") && diagnostic["liftBusy"].is_boolean() &&
                     diagnostic.contains("liftCommandId") && diagnostic["liftCommandId"].is_number_integer() &&
@@ -670,7 +692,9 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
         }
         bool online = false;
         for (const auto& robot : fleet["agvs"]) if (robot["id"] == agvId && robot.value("online", false) && robot.value("position_valid", false) && robot["state"] != "ERROR") online = true;
-        if (!zones.contains(payload) || !online) { pushLog("[LOI] Mutex request khong hop le"); return; }
+        if (!zones.contains(payload) || !online || !g_fleet.mayRequestZone(agvId,payload)) {
+            pushLog("[LOI] Mutex request khong thuoc vung ke tiep tren tuyen xe"); return;
+        }
         if (g_arbiter.requestZone(payload, agvId)) {
             const auto grant = g_arbiter.grant(payload,agvId);
             if (!grant.is_null()) publishTo("agv/"+agvId+"/mutex_grant",grant.dump());

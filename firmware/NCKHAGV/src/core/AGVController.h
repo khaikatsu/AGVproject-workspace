@@ -67,6 +67,7 @@ private:
     bool previousSegmentReverse_ = false;
     RobotHeading heading_ = RobotHeading::Unknown;
     bool headingBayDefault_ = false;
+    int32_t headingCommandId_ = 0;
     enum class MotionGroup { Stop, Forward, Backward, PivotLeft, PivotRight };
     static MotionGroup getMotionGroup(MotorAction action) {
         switch (action) {

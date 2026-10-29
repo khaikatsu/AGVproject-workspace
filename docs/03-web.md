@@ -1,5 +1,15 @@
 # Phát triển web giám sát AGV
 
+29/10/2026, REQ-UNIFIED-RECOVERY-HEADING-20261029: thẻ xe chỉ có Khôi phục xe thay ba nút Xóa lỗi/Phục hồi tại node/Xác nhận tại trạm. Dialog dùng RFID đang báo, yêu cầu xác nhận vùng cũ trống và xe có được di chuyển bằng tay; reset xong mới xác nhận hướng nếu cần. Hướng chọn theo mũi tên bản đồ; tại kho/trạm người vận hành đặt xe đúng hướng quy ước, không có lệnh tự quay. UI hiện trạng thái chờ reset/chờ hướng và chặn bước tiếp khi đổi node/Core session hoặc mất dữ liệu. Tiếp tục nhiệm vụ vẫn riêng, không tự phát lại servo. [ADR-092](decisions/ADR-092-unified-recovery-heading.md).
+
+28/10/2026, REQ-WAREHOUSE-FAULT-RECOVERY-20261028: nút phục hồi ghi node đang báo, ví dụ **Phục hồi tại K2**. Xác nhận xe dừng và thân xe ra khỏi vùng cũ; bỏ yêu cầu chỉnh hướng trong hộp thoại chung. Tại kho K1–K6, Core cho phục hồi lỗi khi có proof RFID/STOP mới dù chưa biết hướng hoặc không còn task treo; chạy tiếp vẫn kiểm riêng hướng và quyền resume. [ADR-090](decisions/ADR-090-shift-recovery-and-binary-inventory.md).
+
+28/10/2026, LM393: thẻ xe hiển thị Có hàng/Không có hàng/Chưa xác định, hoặc chưa có firmware cảm biến. Kệ nhập đầu ca vẫn giữ, nếu xe xác nhận kho trống thì hiển thị ô trống và mã kệ thiếu cần đối soát; lịch sử/báo cáo giữ danh tính kệ. [ADR-091](decisions/ADR-091-lm393-warehouse-proof.md).
+
+28/10/2026: **Ca làm việc → Đối soát lỗi ca** gom cảnh báo đã phát sinh và các mục xe/task/mutex/kệ còn treo; xác nhận chỉ chốt bản chụp đã xem khi ca CLOSED và hết mục treo, giữ lịch sử. Thẻ xe có **Xác nhận tại S1/S2**, **Phục hồi tại RFID cũ**; chi tiết đơn có **Tiếp tục lượt N** cho chặng di chuyển bị gián đoạn cùng ca. RFID/diagnostic dừng mới vẫn bắt buộc; xác nhận không gán vị trí chưa đo. Mỗi ô kho hiển thị Có kệ/Trống và mã kệ, cảnh báo/đặt chỗ nằm ở chi tiết; form chọn hai trạng thái và mã kệ. Kết ca hủy nhiệm vụ cũ. [ADR-090](decisions/ADR-090-shift-recovery-and-binary-inventory.md).
+
+27/10/2026, bổ sung REQ-WAREHOUSE-TEST-ROLLBACK-01: **Trạng thái kho → Kệ trên xe** có nút **Hoàn tác về K…** cho lượt còn cần đối soát. Xử lý được đơn cũ đã đóng/xóa nhưng kệ vẫn treo, không cần tìm lại đơn trong bảng nhiệm vụ. Vẫn phải đưa kệ về nguồn, làm xe trống và xác nhận; xe chưa kết nối/RFID thì báo hướng dẫn kết nối lại. [ADR-089](decisions/ADR-089-test-order-rollback.md).
+
 26/10/2026, REQ-WAREHOUSE-TEST-ROLLBACK-01: đơn gián đoạn có nút **Hoàn tác về K…**. Sau khi người giám sát đưa kệ về kho lấy, làm xe trống và xác nhận, server hoàn tác lượt dang dở/đóng đơn; lượt đã hạ giữ kho giao. Kho nguồn có kệ khác hoặc xe chưa dừng sẽ báo lỗi. Chỉ một hộp xác nhận, không thêm form chọn vị trí; áp dụng cả đơn đã xóa đang chờ đối soát. [ADR-089](decisions/ADR-089-test-order-rollback.md).
 
 26/10/2026, REQ-WEB-REPORTS-ROBOT-IDS-01: **Hoạt động xe** chỉ hiển thị ID `01`, `02`; bỏ các ID lịch sử khác khỏi bảng và số lượng. Giữ thời gian của đúng ID, không cộng alias, không thay dữ liệu báo cáo đã lưu. [ADR-088](decisions/ADR-088-compact-reports-workspace.md).

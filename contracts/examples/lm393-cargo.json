@@ -1,0 +1,15 @@
+{
+  "diagnostic_extension": {
+    "version": 1, "agvId": "01", "session": 12, "uptimeMs": 12345,
+    "encoderSupported": true, "encoderBootId": 789, "encoderCoreSessionId": "current-core-session",
+    "cargoSensorSupported": true, "cargoStable": true, "cargoPresent": true,
+    "cargoSampleSeq": 1000, "cargoSampleAgeMs": 5, "cargoStableMs": 150,
+    "cargoRawLevel": 1, "cargoActiveLevel": 1, "cargoPin": 2
+  },
+  "unstable_extension": {"cargoStable": false, "cargoPresent": null, "cargoStableMs": 0},
+  "fleet_extension": {
+    "cargo_sensor": {"required": true, "supported": true, "fresh": true, "stable": true,
+      "present": true, "observed_node": "K1", "stopped_verified": true, "sample_seq": 1000}
+  },
+  "note": "Các object là phần mở rộng, ghép vào diagnostic/snapshot hiện có; áp dụng tương tự agvId02. Không publish fixture lên robot thật."
+}

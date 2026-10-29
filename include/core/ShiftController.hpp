@@ -48,6 +48,7 @@ public:
         }
         // robot01 test can start at its measured node after fresh telemetry/reset.
         fleet_.setHomeStations(homes_); fleet_.setAcceptingTasks(false);
+        fleet_.endShiftWork(); // Restored pending work belongs to the previous shift.
         transition(trialRobotId_ == "01" ? "CLOSED" : "CLOSING");
     }
 
@@ -56,7 +57,7 @@ public:
         if (!supported_) return "Ban do chua co tram sac cau hinh";
         if (phase_ == "RUNNING") {
             transition("CLOSING"); // ghi được file trước khi thay trạng thái điều phối
-            fleet_.setAcceptingTasks(false); parked_.clear();
+            fleet_.endShiftWork(); parked_.clear();
         }
         tick(); return "";
     }
@@ -158,13 +159,15 @@ public:
                 bool ownsZone = false;
                 for (const auto& z : zones.items()) if (z.value().value("owner","") == home.first) ownsZone = true;
                 const auto state = a->value("state","");
+                const bool cargoReady=!a->value("virtual_cargo",false) &&
+                    !(a->contains("lift") && (*a)["lift"].value("command_id",0L)>0 && !a->value("virtual_cargo_known",false));
                 ready = verified && (state == "IDLE" || state == "CHARGING") &&
-                    (*a)["path"].empty() && (*a)["uncertain_path"].empty() && a->value("target","").empty() && !ownsZone;
+                    (*a)["path"].empty() && (*a)["uncertain_path"].empty() && a->value("target","").empty() && !ownsZone && cargoReady;
                 const bool homeReady = ready;
                 if (trialRobotId_ == "01" && home.first == "01") {
                     ready = a->value("online",false) && a->value("position_valid",false) && state == "IDLE" &&
                         (*a)["path"].empty() && (*a)["uncertain_path"].empty() &&
-                        a->value("target","").empty() && a->value("task_id","").empty();
+                        a->value("target","").empty() && a->value("task_id","").empty() && cargoReady;
                     robot01Ready = ready;
                 }
                 if (!a->value("online",false)) reason = "Mat telemetry";
@@ -175,6 +178,7 @@ public:
                 else if (state == "LIFTING" || state == "LOWERING") reason = a->contains("lift") && (*a)["lift"].value("state","")=="PENDING"
                     ? "Cho nhung nhan lenh servo" : state=="LIFTING" ? "Dang nang hang" : "Dang ha hang";
                 else if (!verified) reason = "Dang ve tram " + home.second;
+                else if (!cargoReady) reason = "Can doi soat ke tren xe";
                 else if (ownsZone) reason = "Cho xac nhan roi mutex zone";
                 else if (ready) reason = "Da xac minh tai tram";
                 if (trialRobotId_ == "01" && ready) reason = "San sang thu tai RFID hien tai";
@@ -228,11 +232,12 @@ public:
             result["inactive_robots_ready"] = inactiveReady;
             allHome = allHome && inactiveReady;
         }
+        if (!fleet["pending_tasks"].empty()) allHome=false;
         result["all_home"] = allHome;
         // result["can_start"] = phase_ == "CLOSED" && allHome && batteriesReady && fleet_.networkAvailable();
         result["can_start"] = phase_ == "CLOSED" && allHome && (!fleet_.batteryGateEnabled() || batteriesReady) && fleet_.networkAvailable();
         if (trialRobotId_ == "01") result["can_start"] = phase_ == "CLOSED" && robot01Ready &&
-            result.value("inactive_robots_ready",true) && fleet_.networkAvailable();
+            result.value("inactive_robots_ready",true) && fleet["pending_tasks"].empty() && fleet_.networkAvailable();
         return result;
     }
 private:

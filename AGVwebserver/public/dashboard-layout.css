@@ -336,6 +336,7 @@ th { background: #16253a; color: #a8bdd5; border-bottom-width: 1px; }
 
 dialog {background:#182234;color:#e8eef7;border:1px solid #40506a;border-radius:14px;padding:28px;width:min(420px,90vw);}
 dialog::backdrop {background:rgba(4,10,20,.8);}
+#shiftReviewDialog {width:min(720px,94vw);max-height:85vh;overflow-y:auto;}
 dialog h2 {font-size:20px;margin:0 0 22px;}
 dialog label {display:block;margin-bottom:10px;}
 #loginError {color:#ff8d8d;min-height:20px;}
@@ -347,3 +348,9 @@ dialog label {display:block;margin-bottom:10px;}
 #shiftWarehouseDialog .row-btn {flex-wrap:wrap;}
 #shiftWarehouseStatus {min-height:3em;margin:14px 0;}
 @media (max-width:480px) {#shiftWarehouseDialog {padding:18px;}#shiftWarehouseDialog .row-btn button {width:100%;}}
+/* Operator recovery stays usable on narrow screens and follows form styling. */
+#vehicleRecoveryDialog label:not(.check-label){display:block;margin:12px 0;}
+#vehicleRecoveryDialog select{display:block;width:100%;min-width:0;box-sizing:border-box;margin-top:6px;padding:9px;background:var(--bg-card);color:var(--text-main);border:1px solid var(--border-color);border-radius:6px;font:inherit;}
+#vehicleRecoveryDialog .check-label{display:flex;align-items:flex-start;gap:8px;margin:12px 0;}
+#vehicleRecoveryDialog .check-label input{flex-shrink:0;margin-top:3px;}
+#vehicleRecoveryDialog .row-btn{flex-wrap:wrap;}

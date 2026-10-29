@@ -1,6 +1,49 @@
 # Hợp đồng HTTP và WebSocket web/server phiên bản 1
 
+## Khôi phục xe và hướng — 29/10/2026
+
+Bổ sung audit: khi chờ xác nhận hướng, reset/khôi phục/nâng hạ chen ngang trả409. Lỗi mới, STOP/WAIT hoặc kết ca vô hiệu yêu cầu hướng đang chờ; diagnostic cũ không hoàn tất yêu cầu mới. Hai POST resume cùng thao tác kho chỉ cho một yêu cầu đang xử lý; gateway từ chối trước ghi sổ kho nếu xe còn khóa hướng/reset. Diagnostic hoàn tất đúng lệnh có thể kết thúc retry dù ACK bị mất; ACK riêng vẫn không chứng minh hoàn tất. [Báo cáo](../docs/testing-recovery-conflicts-2026-10-29.md).
+
+REQ-UNIFIED-RECOVERY-HEADING-20261029 / [ADR-092](../docs/decisions/ADR-092-unified-recovery-heading.md). Dashboard gom thành Khôi phục xe; giữ endpoint cũ để tương thích.
+
+| Endpoint POST | Body và kết quả |
+| --- | --- |
+| `/api/agvs/:id/recover` | `{expected_node,physically_clear:true,repositioned:boolean}` → Core `recover_vehicle`; node phải khớp RFID mới/bằng chứng dừng, hết task/tuyến/lift. Ngoài trạm chỉ trong ca RUNNING; node giữa tuyến còn cần task bị gián đoạn đúng node. Không đòi biết hướng để reset, nhưng khóa chạy khi hướng chưa chắc chắn. |
+| `/api/agvs/:id/recovery-heading` | `{expected_node,heading:"N"\|"E"\|"S"\|"W",physically_confirmed:true}` → Core `confirm_recovery_heading`, gửi MQTT `CONFIRM_HEADING`. HTTP thành công là đã gửi; chờ diagnostic tương quan, không tự quay xe hoặc phát GOTO/servo. |
+
+Fleet thêm `recovery_stop_verified` (dừng đúng phiên/RFID mới, có thể còn lỗi), `recovery_reset_pending`, `heading_confirmation_required/pending/supported`, `recovery_expected_heading` (hướng quy ước tại kho/trạm; rỗng ở node khác). Xe đã được nhấc/đẩy/xoay hoặc thiếu hướng hợp lệ phải xác nhận lại. Trong phục hồi, hướng `bay_default` không tự mở khóa chạy. MCU cũ thiếu capability vẫn reset được nhưng cần nạp mới để xác nhận hướng. Core/MCU reconnect hoặc Core restart vô hiệu xác nhận cũ; Core không nhận heading `operator` từ phiên không có yêu cầu tương ứng.
+
+Giữ request_id/command_result/core_session_id, danh sách array và telemetry pipe. Ví dụ [recovery-heading.json](examples/recovery-heading.json).
+
+## LM393 — 28/10/2026
+
+REQ-LM393-CARGO-20261028: `fleet.agvs[].cargo_sensor` gồm `required,supported,fresh,stable,present,observed_node,stopped_verified,sample_seq`. Core mới luôn required cho01/02; supported thiếu/unknown/stale không được nâng hoặc suy kho trống. `present` boolean chỉ có nghĩa khi fresh+stable, còn lại chưa xác định. `stopped_verified` chỉ AGV_IDLE/NONE/STOP/PWM0/0/no task/RFID đã đọc cùng phiên. Core yêu cầu diagnostic đúng boot/Core session/connection, sample sequence và uptime tăng, sampleAge≤500ms, ổn định≥150ms, dữ liệu nhận≤1500ms. Các chứng cứ không persist qua restart/rebind.
+
+HTTP/WS `warehouse_lift` giữ payload; trả409 nếu chưa có proof có hàng tại đúng kho. Kết quả DONE đúng command/node/phiên và trạng thái cảm biến sau nâng=true/sau hạ=false mới cập nhật cargo ảo và tồn kho; không fallback timer khi required. Trước nâng không hàng: gateway `confirmMissing` cập nhật slot.rack_id=null, rack giữ status=needs_attention/location={type:"unknown",id:kho_cũ}, ghi event type=missing/evidence=cargo_sensor; move missing kết thúc reservation và đơn/action gián đoạn. Đóng/hoàn tác đơn không tái tạo kệ này; đối soát vị trí khi ca CLOSED. Người giám sát vẫn nhập toàn bộ kho đầu ca. Không thay mutex hoặc tự retry servo. [ADR-091](../docs/decisions/ADR-091-lm393-warehouse-proof.md), [ví dụ](examples/lm393-cargo.json).
+
+## Kết ca và phục hồi — 28/10/2026
+
+REQ-RECONCILED-ORDER-HOLD-20261028: đơn gốc needs_attention có closed_by_shift, mốc shift_closed_at (legacy updated) trước event đối soát toàn kho operator_verified và không còn move mở liên quan được list/HTTP/WS trình bày `status:"closed",resolution:"warehouse_reconciled",closed_at,warehouse_reconciliation:{event_id,created_at}`. Đây là kết thúc hold theo bằng chứng đã lưu; không ghi lại trạng thái DB gốc, đổi cargo/kho hoặc hoàn thành task. Đơn chưa kết ca, thiếu bằng chứng mới hoặc còn move reserved/carrying/needs_attention tiếp tục giữ xe kể cả đã xóa khỏi bảng. `resolve` đơn đã có bằng chứng trả trạng thái đã đối soát, không phát lệnh/hoàn tác thêm. nearest dùng `waiting_reason` nêu rõ ID xe/đơn, cargo, vị trí hoặc tuyến đang chặn. Không tự chạy lại đơn sau restart.
+
+[Ví dụ đơn cũ đã đối soát](examples/reconciled-order.json).
+
+REQ-SHIFT-RECOVERY-20261028 thay quy tắc cũ giữ task khi kết ca. `end_shift` hủy queue/task đang chạy và task gián đoạn có quyền resume; giữ lịch sử/counter/footprint tới proof. `fleet.tasks[]` thêm `resume_available`, `resume_node` cho task `interrupted`; đây là nhiệm vụ tạm dừng, không tự dispatch. `fleet.agvs[].recovery_node_verified` biểu diễn diagnostic STOP khỏe cùng phiên/RFID mới (≤250ms), telemetry≤1000ms, diagnostic≤1500ms. Restart/kết ca vô hiệu quyền resume. HTTP array cũ không đổi.
+
+| HTTP | Body / kết quả |
+| --- | --- |
+| POST `/api/agvs/:id/recover-home` | `{expected_node:"S2",physically_clear:true}` → `{ok,node}`. Chỉ trạm riêng, RFID và diagnostic STOP mới; không giả vị trí từ click. |
+| POST `/api/agvs/:id/recover-node` | `{expected_node:"K2",physically_clear:true}` → `{ok,node}`. Ca RUNNING, RFID/STOP mới đúng phiên. Tại K1–K6 cho phục hồi lỗi dù heading UNKNOWN hoặc không còn task treo; node giữa tuyến vẫn cần đúng node của task treo và heading hợp lệ. Không tự gán node/hướng hoặc chạy lại task. |
+| POST `/api/tasks/:id/resume` | `{expected_node:"G1"}` → `{ok,task_id}`. Chỉ task độc lập, cần proof dừng khỏe và heading hợp lệ mới trước GOTO; giữ task ID, GOTO/cmd_id mới; task thuộc kho phải dùng API bên dưới. |
+| POST `/api/orders/:id/resume` | `{item_number:1,physically_clear:true,expected_revision:N}` → `{ok,order}`. Chỉ to_pickup/to_dropoff/to_exit gián đoạn trong cùng ca/phiên, đúng xe/RFID/cargo/sổ kho; không replay lift. |
+| POST `/api/warehouse-actions/:id/resume` | `{physically_clear:true,expected_revision:N}` → `{ok,action}`. Chỉ chặng tới kho/ra gate trong cùng ca/phiên. |
+| GET `/api/shift/review` | `{shift_id,core_session_id,through_id,incidents,blockers,has_more,review_token}`. Danh sách lỗi chưa đối soát và các mục chưa xử lý. |
+| POST `/api/shift/reconcile` | `{review_token,physically_verified:true}` → `{ok,review}`. Chỉ CLOSED/hết blocker; token cũ409, thiếu xác nhận400. Ghi audit, giữ log/KPI; lỗi mới sau mốc đã xem vẫn hiện. |
+
+WS gateway–Core có `recover_home/recover_node` với `id/expected_node/physically_clear`, `resume_task` với `task_id/expected_node`, giữ request_id/command_result hiện có. Home tự trả mutex ngoài vùng sau proof dừng và khoảng cách≥50cm; thủ công xác nhận toàn thân đã ra vùng trước khi trả các token cũ, giữ quyền ở node đang đứng. RESET_FAULT chờ diagnostic khỏe sau lệnh cùng boot/kết nối, uptime tăng và lastCommandId≥reset. MQTT không đổi. API đơn hàng từ chối quantity mỗi vị trí khác1; slot K chứa duy nhất rack_id/null. [ADR-090](../docs/decisions/ADR-090-shift-recovery-and-binary-inventory.md).
+
 ## Hoàn tác lượt thử gián đoạn — 26/10/2026
+
+Bổ sung27/10/2026: `/api/orders/:id/resolve` còn chấp nhận đơn `closed` theo cơ chế cũ nếu sổ kho vẫn có đúng move `needs_attention` thuộc đơn đó; không tự mở lại/chạy đơn. Snapshot browser giữ các đơn này kể cả `deleted_at` hoặc quá50 mục và thêm `warehouse_rollback_pending:true`, phục vụ nút tại Trạng thái kho. Danh sách nhiệm vụ vẫn tôn trọng deleted_at; GET `/api/orders` giữ quy tắc danh sách hiện có. Sau hoàn tác, đơn vẫn closed/giữ deleted_at và ngữ cảnh bị ẩn khi hết move chờ. Đơn closed không có move chờ trả409; xe thiếu/offline/chưa RFID trả409 hướng dẫn kết nối lại. Payload/revision/xác nhận/Core command không đổi.
 
 REQ-WAREHOUSE-TEST-ROLLBACK-01 / [ADR-089](../docs/decisions/ADR-089-test-order-rollback.md). POST `/api/orders/:id/resolve` nhận `{physically_clear:true,expected_revision:12}`: người vận hành xác nhận kệ đã về nguồn và xe trống. Đơn phải `needs_attention`; lượt chưa hạ được hoàn tác về `move.pickup`, lượt đã hạ giữ kho giao. Lỗi409 khi kho nguồn bị chiếm, revision cũ, move/kệ không khớp hoặc xe còn task/tuyến/servo. Core mất kết nối hoặc dữ liệu cũ trả503; từ chối/timeout Core không đóng đơn hay đổi sổ kho. Kết quả200 có `order.status:"closed"`, `resolution:"rollback_to_pickup"`, `rolled_back:[{key,rack_id,robot,pickup}]`. Gửi lại đơn đã hoàn tác trả cùng bản ghi; không chạy lại lượt.
 

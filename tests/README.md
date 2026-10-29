@@ -1,5 +1,74 @@
 # Hồ sơ kiểm thử AGV
 
+## Audit xung đột khôi phục/điều phối — 29/10/2026
+
+REQ-RECOVERY-CONFLICT-AUDIT-20261029: Core21/21 ca xung đột PASS cho01/02; hồi quy shift_recovery/cargo-sensor-core PASS; web/server65/65 và browser desktop/mobile PASS. Build mới riêng tại `.qa/recovery-conflicts-20261029/core/agv_core.exe`, SHA256 `70873BBCE7D19F78EA759A7C9E567A5BB5FB2F6EE2D4512AFDFB8A6194168EE2`. Không thay runtime hoặc firmware. Các lỗi tái hiện, cách sửa và lệnh kiểm tra tại [báo cáo](../docs/testing-recovery-conflicts-2026-10-29.md).
+
+## Khôi phục xe và hướng — 29/10/2026
+
+REQ-UNIFIED-RECOVERY-HEADING-20261029 / [ADR-092](../docs/decisions/ADR-092-unified-recovery-heading.md). Chỉ kiểm tra server/web, không chạy kiểm thử hoặc build firmware.
+
+- `node --test --test-isolation=none tests/gateway.test.js tests/shift-recovery.test.js`: PASS27/27, Core giả/cổng loopback/DB riêng. Gateway từ chối thiếu xác nhận vật lý, thiếu lựa chọn xe đã được di chuyển, hướng sai; chuyển đúng command nhưng không tự resume/servo.
+- `g++ -I include -std=c++17 tests/shift_recovery.cpp -o .qa/recovery-heading-20261029/shift_recovery.exe`, chạy binary: PASS01/02 và K1–K6; reset chờ diagnostic, khóa hướng trước direct/resume, ACK không mở khóa, từ chối ID/phiên/uptime cũ hoặc motor chạy, hướng ngược trạm, MCU không hỗ trợ và gửi lặp; reconnect khóa lại.
+- `scripts/build-core.ps1 -OutputDirectory .qa/recovery-heading-20261029/core`: PASS, SHA256 `0DEF37D22680F25301BFBFF3A8FBABF9FF27C2252FAEAA113F88A51F6402D8F6`. Chưa thay/chạy Core hoặc gateway vận hành.
+- `tests/shift-recovery.browser.integration.js`: PASS luồng một nút Khôi phục xe, chờ reset/hướng riêng, không resume/servo trước xác nhận, tiếp tục nhiệm vụ/kết ca/hoàn tác/đối soát; desktop/mobile. Bằng chứng `.qa/recovery-browser-yk8YTB/desktop-recovery.png`, `mobile-recovery.png`.
+- `tests/vehicle-cards.browser.integration.js`: PASS thẻ01/02, chọn/lịch sử/khôi phục/gỡ, stale/scope/reconnect/session/keyed DOM/desktop/mobile; `.qa/vehicle-cards-rVkNT5/`.
+- Sandbox chặn loopback ở lần đầu (EACCES) và CIM ở script build; chạy lại được trong môi trường cho phép, vẫn chỉ dùng fake Core và DB riêng.
+
+Firmware01/02 source v24 chưa build/test/nạp; người dùng tự nạp và thử xe. Config01/02, mạng và hiệu chuẩn pin được đối chiếu hash với trước sửa.
+
+## Chẩn đoán mức điện LM393 — source v22
+
+REQ-LM393-RAW-DIAGNOSTIC-20261028: chỉ rà callsite/diff, không tạo/khôi phục/chạy test firmware, không build/nạp theo AGENTS.md. Cả01/02 dùng chung CargoModule lưu digitalRead một lần/mẫu và truyền cargoRawLevel qua snapshot→diagnostic; log [CARGO] chỉ khi motorSTOP/duty0/0. Giữ INPUT/polarityHIGH/debounce150ms, không sửa profile/tuning/mạng trong lượt này. Source buildID `20261028-robot01-lm393-raw-v22` / `20261028-robot02-lm393-raw-v22`. Chưa có quan sát raw trên xe; OUT sáng/tắt chưa chứng minh GPIO2 đổi mức. Diff whitespace phần sửa PASS; chưa kiểm chứng payload dung lượng/timing hoặc phần cứng.
+
+## Đơn đã đối soát không giữ xe — 28/10/2026
+
+Bổ sung áp dụng gateway sau phản hồi vẫn bị chặn: tiến trình cổng3000 PID24060 khởi động17:17, trước source sửa18:58–19:03 nên vẫn gọi nhánh rollback cũ. Đã lưu SQLite backup bằng API backup tại `.qa/gateway-reload-20261028/pre-reload.db`, kiểm tra không có đơn đã dispatch (chỉ queued), nạp lại đúng gateway thành PID2988. GET health Core ready; cảnh báo đơn `order-1793092345595-0f930f56` không còn trong snapshot, không active order/move. Đối chiếu DB readonly xác nhận bản ghi gốc needs_attention vẫn giữ và event421 operator_verified lúc19:43:33+07 mới hơn updated cũ. Không gửi RESET_FAULT/GOTO/servo hoặc dừng Core. Xe01 sau đó đang online tạiGS1, ERROR/SEGMENT_TIMEOUT; đây là lỗi vận hành riêng, chưa được xử lý hoặc coi là hết lỗi trong lượt reload gateway.
+
+REQ-RECONCILED-ORDER-HOLD-20261028 / [ADR-090](../docs/decisions/ADR-090-shift-recovery-and-binary-inventory.md). Chẩn đoán HTTP chỉ đọc: xe01 IDLE/S1/online/servo sẵn sàng; đơn mới K1→K2 chưa xe/task; đơn cũ `order-1793092345595-0f930f56` có closed_by_shift, updated trước event đối soát kho mới nhưng vẫn bị scheduler giữ xe.
+
+- Bộ hồi quy cuối **76/76 PASS**: `node --test --test-isolation=none --test-force-exit tests/gateway.test.js tests/orders.test.js tests/warehouse-inventory.test.js tests/shift-recovery.test.js tests/warehouse-actions.test.js tests/mission-model.test.js tests/security.test.js`.
+- Ca mới tái hiện cả01/02, đơn ẩn đã kết ca + bằng chứng đối soát mới giải phóng đúng hold; snapshot/resolve không ghi lại lịch sử hoặc phát lệnh. Chỉ đơn mới được yêu cầu mới phát direct_goto. Thiếu proof, proof cùng/cũ thời điểm, chưa kết ca, còn move mở đều giữ chốt; cache nhận lần đối soát mới, ẩn và reload không làm mất proof. API/đối soát ca không bị bản ghi cũ giữ; nearest hiện ID đơn thực sự đang chặn.
+- Syntax/diff whitespace PASS. Lượt API đầu bị sandbox chặn loopback EACCES; đã dừng phiên đó và chạy bộ cuối ngoài sandbox bằng Core giả/cổng0/DB tạm riêng. Không kiểm thử firmware hay xe thật.
+- Chưa khởi động lại gateway vận hành, không sửa DB/counter thật hoặc phát lệnh xe. Cần nạp lại tiến trình gateway để dùng source mới; restart vẫn đưa đơn active/queued trước đó về cần đối soát, không replay.
+
+## Phục hồi lỗi tại RFID kho — 28/10/2026
+
+REQ-WAREHOUSE-FAULT-RECOVERY-20261028 / [ADR-090](../docs/decisions/ADR-090-shift-recovery-and-binary-inventory.md). Đọc HTTP state vận hành xác nhận xe02 tại K2, online/vị trí hợp lệ nhưng heading UNKNOWN, ERROR và không task đang chạy; không gửi lệnh xe.
+
+- Biên dịch và chạy `tests/shift_recovery.cpp` với header Core hiện tại: PASS cho01/02 và12 tổ hợp xe×K1–K6 không heading/không task cũ. Chặn sai node, RFID251ms, PWM khác0, lift busy, sai connection, thiếu xác nhận hoặc ca không RUNNING; ACK/reset high-water cũ không mở IDLE. Phục hồi chỉ phát RESET_FAULT, không phát GOTO/servo hoặc tạo lại task; node G1 vẫn cần heading, resume thiếu heading không phát GOTO/tiêu quyền resume.
+- `node --check` hai file dashboard phục hồi/thẻ xe và kiểm whitespace diff: PASS. Không chạy browser hay ca phần cứng trong lượt này.
+- Build Core cuối PASS bằng `scripts/build-core.ps1 -OutputDirectory .qa/warehouse-recovery-20261028`. Binary `.qa/warehouse-recovery-20261028/agv_core.exe`, SHA256 `2063806A478C8D26988CD6D6839F278B2A63CA9CF40E26E6F9F61268B1C03986`; kiểm vendor/include PASS.
+- Không thay executable/dịch vụ Core đang chạy, không sửa DB/counter thật. Không sửa/build/nạp/kiểm thử firmware; cần khởi động Core từ source mới và tải lại web trước khi thao tác phục hồi thực tế.
+
+## LM393 lấy/hạ hàng — 28/10/2026
+
+REQ-LM393-CARGO-20261028 / [ADR-091](../docs/decisions/ADR-091-lm393-warehouse-proof.md). Source01/02 giữ GPIO2/HIGH=có hàng/ổn định150ms theo xác nhận người dùng. Không tạo/chạy test MCU, không build/nạp firmware. Không khởi động Core/broker/gateway vận hành, không sửa DB hoặc counter thật.
+
+- Node server/kho50/50 PASS: `tests/cargo-sensor.test.js` (11 ca mới), orders, warehouse-actions, warehouse-inventory, shift-recovery. Kiểm cả01/02 trong order/action; không hàng không có lệnh servo; giữ mã kệ unknown, đầu ca và audit; transaction rollback; DONE phải khớp cảm biến mới sau nâng/hạ, thiếu/cũ/unstable/sai RFID/đang chạy không suy kho trống. Gateway/security25/25 PASS riêng bằng fake Core/cổng/DB riêng.
+- Browser `tests/shift-recovery.browser.integration.js` PASS với Edge headless: trạng thái LM393 Có/Không/Chưa xác định, phục hồi/đối soát và mobile. Bằng chứng `.qa/recovery-browser-vO5w5N/mobile-review.png` đã xem. Đây là giao diện với Core giả, không là kết quả xe thật.
+- Core mới build riêng PASS tại `.qa/lm393-core-20261028/agv_core.exe` (10:30:01+07, SHA256 `DF380C9B68CAA0E7A7DA0DC868EF16664336FF37B2B06D8B75883E4DCED9642C`). `build/agv_core.exe` vận hành không được thay trong lượt LM393; người dùng F5 để build/chạy source mới sau khi cập nhật firmware phù hợp.
+- Fixture C++ server `tests/cargo-sensor-core.cpp` và `tests/servo_core.cpp` đã PASS01/02 cho proof trước lệnh, tương quan DONE5s/nâng/hạ, cargo sai không hoàn tất, đối soát không ghi đè bằng DONE cũ. Đang chạy lại với header cuối; hồi quy toàn Core đang chờ bản test đã sửa một kỳ vọng lịch sử: task đã cancelled khi end_shift không được dispatched ở ca kế.
+- JS syntax, JSON ví dụ và diff task không có lỗi whitespace. Firmware mới chỉ rà source/callsite/diff chung cho hai profile, BuildID source `20261028-robot01-lm393-v21` / `20261028-robot02-lm393-v21`. OPEN thử thực tế điện áp/boot GPIO2, polarity, nhận diện kệ trước nâng/khi chở/sau hạ, nhiễu servo và mất hàng. Chưa coi chu kỳ PWM là phép đo cơ khí hoặc bằng chứng clearance mutex.
+
+## Kết ca, phục hồi và kho nhị phân — 28/10/2026
+
+REQ-SHIFT-RECOVERY-20261028 / [ADR-090](../docs/decisions/ADR-090-shift-recovery-and-binary-inventory.md). Người dùng cho phép kiểm thử server/web bằng dữ liệu giả và DB/cổng riêng, sau đó chọn **Chỉ kiểm thử đã biên dịch** khi được hỏi về build Core. Không thử/nạp MCU, không thay Core/gateway vận hành hoặc DB thật.
+
+- PASS64/64: `node --test --test-force-exit --test-isolation=none tests/shift-recovery.test.js tests/orders.test.js tests/warehouse-actions.test.js tests/warehouse-inventory.test.js tests/gateway.test.js tests/security.test.js`. Bao gồm kết ca khi MQTT mất, đóng queued sau restart, resume đúng task/RFID/cargo/revision, không replay servo, lỗi gián đoạn lần hai không trùng event_key, token đối soát cũ409 và giữ audit, quantity>1 bị từ chối, hồi quy nâng/hạ/idempotency/rollback.
+- PASS `tests/shift-start.browser.integration.js`: form Trống/Có kệ + mã kệ, lưu/mở ca theo thứ tự, hủy/validation/revision/session, desktop/mobile. Ảnh và dữ liệu riêng: `.qa/shift-start-browser-zyjUmg`.
+- PASS `tests/shift-recovery.browser.integration.js`: Core giả, xe02/S2 ERROR→xác nhận tại trạm→resume lượt→kết ca→hoàn tác→đối soát, không phát lift, dialog mobile và không lỗi JS. Bằng chứng `.qa/recovery-browser-CsyGRA/mobile-review.png`.
+- Binary `.qa/shift-recovery-20261028/shift_recovery.exe` đã chạy PASS hai ID01/02 ở source trung gian: queue/end, proof RFID/session, RESET ACK không mởIDLE, resume đích/cmd mới và S1/S2 trả vùng cũ. Sau đó Core source siết cửa sổ request mutex, bảo vệ reset đang chờ và kệ chưa đối soát; **chưa build/chạy bản cuối**.
+- Binary `core_tests.exe` trung gian dừng ở assertion cũ `target == K3` sau end_shift. Source `tests/core_tests.cpp` đã cập nhật kỳ vọng hủy task/queue và chờ STOP proof theo yêu cầu mới, chưa compile lại. Không công bố Core cuối đã PASS hoặc đủ điều kiện triển khai.
+
+Lần chạy trong sandbox bị chặn loopback EACCES/atomic replace Windows error5; lượt gateway/browser PASS chạy ngoài sandbox với quyền kiểm thử đã được người dùng cấp. Chưa chạy hai xe thật, chưa đo quãng phanh/footprint hình học. Firmware giữ bản GitHub hiện tại; mục bỏ chốt “trạng thái tin cậy” và kho nhiều kệ vẫn OPEN.
+
+## 27/10/2026 — Hoàn tác kệ treo của đơn cũ ngay tại Trạng thái kho
+
+Bổ sung REQ-WAREHOUSE-TEST-ROLLBACK-01 / [ADR-089](../docs/decisions/ADR-089-test-order-rollback.md). Chẩn đoán chỉ đọc GET và SQLite readonly xác nhận đơn K6→K5 đã closed/deleted theo cơ chế trước nhưng move/kệ1 vẫn needs_attention trên xe01; snapshot không có robot. Không bấm đối soát hay sửa DB vận hành.
+
+`npm --prefix AGVwebserver test` PASS65/65: ca mới kiểm đơn closed/deleted còn move chờ, không tự đổi kho khi load, thiếu xác nhận/thiếu xe bị chặn, closed không có move không được xử lý, hoàn tác đúng nguồn và giữ deleted_at/retry. `tests/warehouse-rollback.browser.integration.js` PASS `.qa/warehouse-rollback-9PSR0U`: đơn cũ nằm sau55 đơn mới vẫn có ngữ cảnh/nút ngay tại Kệ trên xe, không hiện lại trong bảng nhiệm vụ; offline báo kết nối lại và giữ kệ, sau xác nhận đúng thì nguồn có kệ/đích trống, cargo marker mất; cảhai xe, mobile390/desktop1440, reload/restart và không pageerror. Ảnh `mobile-legacy-button.png` đã xem trực tiếp. Không sửa Core, MQTT hoặc firmware; bản bổ sung cần restart gateway và reload web. Bộ test dùng DB/cổng/Core giả riêng.
+
 ## 26/10/2026 — Hoàn tác lượt thử gián đoạn về kho lấy
 
 REQ-WAREHOUSE-TEST-ROLLBACK-01 / [ADR-089](../docs/decisions/ADR-089-test-order-rollback.md).

@@ -1,7 +1,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {createWarehouseActions,SERVICE_MS}=require('../AGVwebserver/warehouse-actions');
-function fixture(servo=false,scoped=false){
+function fixture(servo=false,scoped=false,onSend){
   const robot={id:'01',node:'S1',state:'IDLE',online:true,position_valid:true,error:'',path:[],task_id:null};
   if(servo)robot.lift={supported:true,fresh:true,ready:true,observed_node:'S1',active:false,state:'IDLE',command_id:0};
   const state={mqtt_connected:true,shift:scoped?{phase:'RUNNING',test_mode:'normal',operation_profile:'scoped',active_robot_ids:['01']}:{phase:'RUNNING',test_mode:'robot01'},map:{
@@ -10,6 +10,7 @@ function fixture(servo=false,scoped=false){
     fleet:{agvs:[robot],tasks:[],pending_tasks:[],accepting_tasks:true}};
   let session='session-1';const commands=[];
   const service=createWarehouseActions({getState:()=>state,getSession:()=>session,publish:()=>{},send:async payload=>{
+    if(onSend)await onSend(payload);
     commands.push(payload);
     if(payload.cmd==='warehouse_lift'){
       robot.lift={...robot.lift,active:true,state:'PENDING',command_id:commands.length};robot.state=payload.action==='pickup'?'LIFTING':'LOWERING';
@@ -24,6 +25,26 @@ test('unified Core scope 01 keeps the standalone warehouse workflow',async()=>{
     const action=await f.service.create('01',{action:'pickup',warehouse:'K1'});
     assert.equal(action.status,'to_warehouse');assert.equal(f.commands.at(-1).agv_id,'01');
   }finally{await f.service.close();}
+});
+
+test('heading lock rejects warehouse create and concurrent resumes send only one command',async()=>{
+  let release;const paused=new Promise(resolve=>release=resolve);
+  const f=fixture(false,false,command=>command.cmd==='resume_task'?paused:undefined);
+  try {
+    f.robot.heading_confirmation_required=true;
+    await assert.rejects(f.service.create('01',{action:'pickup',warehouse:'K1'}),/xác nhận hướng/);
+    assert.equal(f.commands.length,0);f.robot.heading_confirmation_required=false;
+    const action=await f.service.create('01',{action:'pickup',warehouse:'K1'});
+    f.state.fleet.tasks[0].status='interrupted';f.robot.state='ERROR';await f.service.tick();
+    Object.assign(f.robot,{state:'IDLE',error:'',task_id:null,recovery_node_verified:true});
+    f.robot.heading_confirmation_pending=true;
+    await assert.rejects(f.service.resume(action.id,true),/xác nhận hướng/);
+    f.robot.heading_confirmation_pending=false;
+    const first=f.service.resume(action.id,true);
+    await assert.rejects(f.service.resume(action.id,true),/Đang tiếp tục/);
+    release();await first;
+    assert.equal(f.commands.filter(command=>command.cmd==='resume_task').length,1);
+  } finally {release();await f.service.close();}
 });
 test('scope 02 runs its servo cycle and cannot dispatch robot 01',async()=>{
   const f=fixture(true,true);try{

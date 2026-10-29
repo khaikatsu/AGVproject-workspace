@@ -1,5 +1,9 @@
 # Hiện trạng mã và khoảng trống tích hợp
 
+CURRENT 28/10/2026, LM393: source hai profile đã nối GPIO2/HIGH=có hàng với luồng Core nâng/hạ; Core snapshot cargo_sensor tách cargo ảo, gateway xác nhận kho trống/giữ mã kệ thiếu và đối soát; vẫn nhập kho đầu ca. Core mới bắt buộc firmware sensor tương ứng trước nâng/hạ. Chi tiết/trạng thái nghiệm thu ở [ADR-091](decisions/ADR-091-lm393-warehouse-proof.md). Bản Core kết ca trước đó đã build thành công09:53:29 theo yêu cầu sau; các mô tả “chưa build” dưới đây giữ mốc lịch sử trước yêu cầu build đó.
+
+CURRENT 28/10/2026, REQ-SHIFT-RECOVERY-20261028: source Core/gateway/web hủy việc cũ khi kết ca; giữ lịch sử và footprint tới proof. Thêm đối soát lỗi có token bản chụp, phục hồi S1/S2 hoặc RFID cũ và tiếp tục chặng vận chuyển trong cùng ca. Kho mỗi K một mã kệ/Trống. Core source cuối chưa build theo lựa chọn người dùng; chưa thay dịch vụ hoặc chạy xe thật. [ADR-090](decisions/ADR-090-shift-recovery-and-binary-inventory.md) thay hành vi cũ “kết ca chờ xong task”.
+
 CURRENT 26/10/2026, REQ-WAREHOUSE-TEST-ROLLBACK-01: đối soát lượt thử gián đoạn hoàn tác kệ chưa hạ về kho lấy và đóng đơn trong transaction; Core xác nhận xe dừng rồi xóa cargo ảo, không phát MQTT/servo hoặc nhả lỗi/mutex. Lượt đã hạ giữ kho giao; nguồn bị chiếm/revision cũ/xe bận bị chặn. Không cần đổi firmware; cần chạy gateway/Core mới. [ADR-089](decisions/ADR-089-test-order-rollback.md).
 
 CURRENT 25/10/2026, REQ-CORE-HARDENING-20261025-01: hủy task giữ BLOCKED/uncertain tới proof dừng và RFID mới; startup lỗi có thông báo/exit1; migration xử lý stopped_nodes cũ; checkpoint chỉ dựng trường bền vững; có metric storage và cảnh báo chờ node/giới hạn boot. Vendor JSON đã pin về release3.12.0. [ADR-082](decisions/ADR-082-core-cancellation-startup-and-durability.md), [kiểm thử](../tests/README.md). Bản build kiểm thử riêng, chưa thay Core vận hành.

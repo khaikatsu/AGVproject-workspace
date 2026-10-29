@@ -16,6 +16,7 @@ function vehicleParticipates(robot, state = lastState) {
 
 function vehicleCanSelect(robot) {
   return !!robot && vehicleParticipates(robot) && robot.online === true && robot.position_valid !== false &&
+    !robot.heading_confirmation_required && !robot.heading_confirmation_pending &&
     !robot.cancel_waiting_for_node && !robot.replan_waiting_for_node &&
     ['IDLE', 'WORKING', 'BLOCKED'].includes(robot.state);
 }
@@ -38,14 +39,18 @@ function vehicleCardKey(state, robot, id, stale) {
   const view = robot ? {
     id, node: robot.node, state: robot.state, error: robot.error, online: robot.online,
     position_valid: robot.position_valid, participating: vehicleParticipates(robot, state),
+    recovery:[robot.heading_confirmation_required,robot.heading_confirmation_pending,robot.heading_confirmation_supported,
+      robot.recovery_reset_pending,robot.heading,robot.heading_source],
     task_id: robot.task_id, target: robot.target, path: robot.path,
     battery: vehicleBattery(robot), battery_control_source: robot.battery_control_source,
     lift_pending: robot.lift?.active && robot.lift.state === 'PENDING',
     virtual_cargo: robot.virtual_cargo, virtual_cargo_known: robot.virtual_cargo_known,
+    cargo_sensor:robot.cargo_sensor&&[robot.cargo_sensor.supported,robot.cargo_sensor.fresh,robot.cargo_sensor.stable,robot.cargo_sensor.present],
     cancel_waiting_for_node: robot.cancel_waiting_for_node, replan_waiting_for_node: robot.replan_waiting_for_node,
     encoder_session_limit_reached: robot.encoder_session_limit_reached
   } : null;
   return JSON.stringify([view, stale, state?.core_ready, state?.shift?.home_stations?.[id],state?.location_names?.revision,
+    (state?.warehouse_actions||[]).filter(action=>action.robot===id).map(action=>[action.id,action.status,action.closed_by_shift]),
     assignment && [assignment.order.status, assignment.order.reason, assignment.order.deleted_at, item],
     action && [action.action, action.warehouse, action.status],
     (state?.fleet?.tasks || []).find(task => robot?.task_id && task.task_id === robot.task_id)?.target,
@@ -62,6 +67,9 @@ function renderVehicleTelemetry(card, robot, state) {
   speed.dataset.robotSpeed = robot.id;
   const home = state.shift?.home_stations?.[robot.id];
   if (home) operationText(card, `Trạm riêng: ${locationText(home)}`, 'p', 'transfer-metadata');
+  const cargo=robot.cargo_sensor;
+  if(cargo?.required)operationText(card,`LM393: ${!cargo.supported?'Chưa có firmware cảm biến':
+    !cargo.fresh||!cargo.stable?'Chưa xác định':cargo.present?'Có hàng':'Không có hàng'}`,'p','transfer-metadata');
   const age = operationText(card, '', 'p', 'transfer-metadata');
   age.dataset.robotAge = robot.id;
   if (robot.cancel_waiting_for_node || robot.replan_waiting_for_node) {
@@ -72,6 +80,9 @@ function renderVehicleTelemetry(card, robot, state) {
     operationText(card, 'Đã vượt giới hạn phiên encoder. Đối soát xe rồi khởi động lại Core.', 'p', 'transfer-alert');
   }
   if (!vehicleParticipates(robot, state)) operationText(card, 'Ngoài phạm vi vận hành', 'p', 'transfer-metadata');
+  if(robot.recovery_reset_pending)operationText(card,'Đang chờ xe xác nhận hết lỗi.','p','transfer-alert');
+  else if(robot.heading_confirmation_pending)operationText(card,'Đang chờ xe xác nhận hướng đầu xe.','p','transfer-alert');
+  else if(robot.heading_confirmation_required)operationText(card,'Cần xác nhận hướng trước khi chạy.','p','transfer-alert');
 }
 
 function renderVehicleActions(card, id, robot) {
@@ -80,13 +91,18 @@ function renderVehicleActions(card, id, robot) {
   history.title = `Xem lịch sử xe ${id}`;
   actions.append(history);
   if (!robot) return;
+  if(robot.state==='ERROR'||robot.cancel_waiting_for_node||robot.replan_waiting_for_node||robot.uncertain_path?.length||
+    robot.heading_confirmation_required||robot.heading_confirmation_pending) {
+    actions.append(action('Khôi phục xe',()=>openVehicleRecovery(id)));
+  }
+  for(const task of lastState?.warehouse_actions||[])if(task.robot===id&&task.status==='interrupted'&&
+    !task.closed_by_shift&&['to_warehouse','to_gate'].includes(task.suspended_status))
+    actions.append(action('Tiếp tục thao tác kho',button=>resumeWarehouseAction(task,button)));
   for (const [name, text, handler] of [
     ['select', 'Chọn xe', () => selectAgv(id)],
-    ['clear', 'Xóa lỗi', button => clearAgvError(id, button)],
     ['remove', 'Gỡ khỏi Core', button => removeAGV(id, button)]
   ]) {
     if (name === 'select' && !['IDLE', 'WORKING', 'BLOCKED'].includes(robot.state)) continue;
-    if (name === 'clear' && robot.state !== 'ERROR') continue;
     if (name === 'remove' && robot.state !== 'OFFLINE') continue;
     const button = action(text, handler);
     button.dataset.vehicleAction = name;
@@ -102,9 +118,9 @@ function updateVehicleCardControls() {
       const robot = lastState?.fleet?.agvs?.find(candidate => candidate.id === button.dataset.vehicleId);
       const kind = button.dataset.vehicleAction;
       const allowed = kind === 'select' ? tasksReady() && vehicleCanSelect(robot) :
-        controlsReady() && !!robot && (kind === 'clear' ? robot.state === 'ERROR' : robot.state === 'OFFLINE');
+        controlsReady() && !!robot && robot.state === 'OFFLINE';
       button.disabled = !allowed || button.dataset.busy === 'true' ||
-        pendingControls.has(`${kind === 'remove' ? 'DELETE' : 'POST'}/api/agvs/${button.dataset.vehicleId}${kind === 'clear' ? '/clear-error' : ''}`);
+        pendingControls.has(`DELETE/api/agvs/${button.dataset.vehicleId}`);
     }
   }
 }

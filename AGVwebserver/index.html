@@ -569,7 +569,7 @@
     @media(max-width:680px) {#main-container {display:flex;flex-direction:column;} #center-panel {min-height:480px;order:-1;} #topbar input {width:210px;} #mapPreviewSvg {height:350px;} #toastContainer {left:8px;right:8px;bottom:8px;max-width:none;} }
     #headingStatus {flex-basis:100%;}
   </style>
-  <link rel="stylesheet" href="/dashboard-layout.css?v=20261026-unified-missions">
+  <link rel="stylesheet" href="/dashboard-layout.css?v=20261029-recovery-heading">
   <link rel="stylesheet" href="/warehouse-operations.css?v=20261026-layout-inventory">
   <link rel="stylesheet" href="/dashboard-missions.css?v=20261026-layout-inventory">
   <link rel="stylesheet" href="/dashboard-reports.css?v=20261026-compact-reports">
@@ -682,7 +682,8 @@
         <div id="coreModeStatus" class="field-hint" role="status">Chờ cấu hình Core</div>
         <div id="homeStationList" class="home-list"></div>
         <div class="row-btn"><button id="startShiftBtn" data-control class="btn" onclick="changeShift('start',this)">Mở ca</button><button id="endShiftBtn" data-control class="btn btn-outline" onclick="changeShift('end',this)">Kết thúc ca</button></div>
-        <p class="card-help">Kết thúc ca: hoàn thành nhiệm vụ đang chạy rồi về trạm riêng. Vị trí chỉ được xác nhận qua RFID.</p>
+        <button id="reviewShiftBtn" data-control class="btn btn-outline" onclick="openShiftReview()">Đối soát lỗi ca</button>
+        <p class="card-help">Kết thúc ca: hủy việc đang chờ/chạy, xác minh xe dừng và kệ thực tế rồi đưa xe về trạm riêng.</p>
       </section>
       <section class="card compact panel-card" data-views="overview">
         <div class="card-header">Tạo lượt chuyển kệ</div>
@@ -825,6 +826,50 @@
       </div>
     </form>
   </dialog>
+  <dialog id="vehicleRecoveryDialog" aria-labelledby="vehicleRecoveryTitle">
+    <form onsubmit="event.preventDefault();submitVehicleRecovery()">
+      <h2 id="vehicleRecoveryTitle">Khôi phục xe</h2>
+      <p id="vehicleRecoveryPosition"></p>
+      <p>Khôi phục đưa xe về trạng thái sẵn sàng. Nhiệm vụ cũ chỉ chạy tiếp khi bạn chọn “Tiếp tục nhiệm vụ”.</p>
+      <div id="vehicleRecoveryChecks">
+        <label class="check-label"><input id="vehicleRecoveryClear" type="checkbox" onchange="updateVehicleRecovery()"> Tôi đã dừng xe và kiểm tra toàn bộ thân xe, kệ đã ra khỏi các vùng khóa cũ.</label>
+        <label>Xe có được nhấc, đẩy hoặc xoay bằng tay sau sự cố không?
+          <select id="vehicleRecoveryMoved" onchange="updateVehicleRecovery()">
+            <option value="">Chọn tình trạng thực tế</option>
+            <option value="no">Không, xe giữ nguyên vị trí và hướng</option>
+            <option value="yes">Có hoặc không chắc hướng còn đúng</option>
+          </select>
+        </label>
+      </div>
+      <div id="vehicleRecoveryHeading" hidden>
+        <p id="vehicleRecoveryHeadingHint"></p>
+        <label>Hướng đầu xe trên bản đồ
+          <select id="vehicleRecoveryDirection" onchange="updateVehicleRecovery()">
+            <option value="">Chọn hướng thực tế</option>
+            <option value="N">↑ Lên (N)</option><option value="E">→ Phải (E)</option>
+            <option value="S">↓ Xuống (S)</option><option value="W">← Trái (W)</option>
+          </select>
+        </label>
+        <label class="check-label"><input id="vehicleRecoveryHeadingVerified" type="checkbox" onchange="updateVehicleRecovery()"> Tôi đã kiểm tra đầu xe thực tế đúng hướng đã chọn.</label>
+      </div>
+      <p id="vehicleRecoveryStatus" role="status" aria-live="polite"></p>
+      <div class="row-btn">
+        <button class="btn btn-outline" type="button" onclick="document.getElementById('vehicleRecoveryDialog').close()">Đóng</button>
+        <button class="btn" type="submit" id="vehicleRecoverySubmit">Khôi phục xe</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="shiftReviewDialog" aria-labelledby="shiftReviewTitle">
+    <h2 id="shiftReviewTitle">Đối soát lỗi ca</h2>
+    <div id="shiftReviewContent" aria-live="polite"></div>
+    <label class="check-label"><input id="shiftReviewVerified" type="checkbox"> Tôi đã kiểm tra xe, kệ và các vùng đường thực tế.</label>
+    <p id="shiftReviewStatus" role="status"></p>
+    <div class="row-btn">
+      <button class="btn btn-outline" onclick="refreshShiftReview()">Tải lại danh sách</button>
+      <button id="confirmShiftReviewBtn" class="btn" onclick="confirmShiftReview()">Xác nhận đã xử lý</button>
+      <button class="btn btn-outline" onclick="document.getElementById('shiftReviewDialog').close()">Đóng</button>
+    </div>
+  </dialog>
   <dialog id="loginDialog" aria-labelledby="loginTitle">
     <form id="loginForm">
       <h2 id="loginTitle">Đăng nhập hệ thống AGV</h2>
@@ -839,12 +884,13 @@
   <script src="/dashboard-reports.js?v=20261026-current-robot-ids"></script>
   <script src="/dashboard-location-names.js?v=20261026-compact-names"></script>
   <script src="/mission-model.js?v=20261026-location-names"></script>
-  <script src="/dashboard-missions.js?v=20261026-rollback"></script>
-  <script src="/warehouse-ui.js?v=20261026-compact-reports"></script>
-  <script src="/dashboard-vehicles.js?v=20261026-location-names"></script>
-  <script src="/warehouse-operations.js?v=20261026-rollback"></script>
+  <script src="/dashboard-missions.js?v=20261028-resume"></script>
+  <script src="/warehouse-ui.js?v=20261028-lm393"></script>
+  <script src="/dashboard-vehicles.js?v=20261029-recovery-heading"></script>
+  <script src="/warehouse-operations.js?v=20261028-lm393"></script>
   <script src="/dashboard-map.js?v=20261026-location-names"></script>
-  <script src="/dashboard.js?v=20261026-rollback"></script>
+  <script src="/dashboard-recovery.js?v=20261029-recovery-heading"></script>
+  <script src="/dashboard.js?v=20261029-recovery-heading"></script>
 </body>
 
 </html>

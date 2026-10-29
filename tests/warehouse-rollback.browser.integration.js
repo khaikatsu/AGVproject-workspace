@@ -28,9 +28,12 @@ async function main() {
     inventory.reserve({key:`order:${id}:1`,pickup:source,dropoff:target,robot});
     inventory.confirmLift(`order:${id}:1`,'pickup',vehicle,command,model.core_session_id);
     inventory.interrupt(`order:${id}:1`,'Đã dừng lượt thử');
-    db.saveOrder({id,status:'needs_attention',total:1,created:new Date().toISOString(),items:[
+    db.saveOrder({id,status:robot==='02'?'closed':'needs_attention',
+      ...(robot==='02'?{deleted_at:new Date().toISOString(),closed_at:new Date().toISOString()}:{}),
+      total:1,created:new Date(0).toISOString(),items:[
       {number:1,pickup:source,dropoff:target,robot,rack_id,status:'interrupted'}]});
   }
+  for(let n=0;n<55;n++)db.saveOrder({id:`newer-closed-${n}`,status:'closed',total:0,created:new Date(Date.now()+n).toISOString(),items:[]});
   model.shift.phase='RUNNING';const commands=[],errors=[],dialogs=[];let accept=false,reject=false;
   const push=()=>{if(peer?.readyState===WebSocket.OPEN)peer.send(JSON.stringify(model));};
   core.on('connection',ws=>{peer=ws;push();ws.on('message',raw=>{
@@ -55,6 +58,10 @@ async function main() {
     await page.goto(`http://127.0.0.1:${address.port}`);
     await page.locator('#agvLinkStatus').filter({hasText:'Có dữ liệu mới'}).waitFor();
     await page.locator('[data-view-target="overview"]').click();
+    const legacyButton=page.locator('[data-warehouse-rollback-order="interrupted-02"]');
+    await legacyButton.waitFor();assert.equal(await legacyButton.textContent(),'Hoàn tác về K3');
+    assert.equal(await page.locator('[data-order-id="interrupted-02"]').count(),0,'legacy deleted order remains hidden from mission history');
+    await page.waitForFunction(()=>lastState.orders.some(order=>order.id==='interrupted-02'&&order.warehouse_rollback_pending));
     const entry=page.locator('[data-order-id="interrupted-01"]');
     const button=entry.getByRole('button',{name:'Hoàn tác về K1',exact:true});await button.waitFor();
     await button.click();assert.equal(commands.length,0,'dismiss makes no change');
@@ -69,20 +76,26 @@ async function main() {
       lastState.fleet.agvs.find(robot=>robot.id==='01').virtual_cargo===false);
     assert.equal(inventory.snapshot().racks.find(rack=>rack.id==='R3').location.id,'02','the other vehicle stays unchanged');
     await page.setViewportSize({width:390,height:844});
-    await page.locator('[data-order-id="interrupted-02"]').getByRole('button',{name:'Hoàn tác về K3',exact:true}).click();
-    await page.locator('[data-order-id="interrupted-02"]').waitFor({state:'detached'});
+    model.fleet.agvs[1].online=false;push();await page.waitForFunction(()=>lastState.fleet.agvs[1].online===false);
+    await legacyButton.click();await page.locator('#toastContainer').filter({hasText:'Kết nối lại xe 02'}).waitFor();
+    assert.equal(commands.length,2,'missing/offline robot cannot clear warehouse data');
+    assert.equal(inventory.snapshot().racks.find(rack=>rack.id==='R3').location.id,'02');
+    model.fleet.agvs[1].online=true;push();await page.waitForFunction(()=>lastState.fleet.agvs[1].online===true);
+    await page.locator('#warehouseCarriedRacks').screenshot({path:path.join(directory,'mobile-legacy-button.png')});
+    await legacyButton.click();await legacyButton.waitFor({state:'detached'});
     await page.waitForFunction(()=>lastState.warehouse.moves.length===0&&lastState.fleet.agvs.every(robot=>robot.virtual_cargo===false));
     assert.equal(await page.locator('[data-virtual-cargo]').count(),0);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
     await page.screenshot({path:path.join(directory,'mobile-after.png'),fullPage:true});
     assert.deepEqual(commands.map(command=>command.cmd),['reconcile_test_cargo','reconcile_test_cargo','reconcile_test_cargo']);
     assert.equal(inventory.history().filter(event=>event.type==='rollback').length,2);
+    assert.ok(db.getOrders().find(order=>order.id==='interrupted-02').deleted_at,'reconciliation keeps display deletion');
     await page.goto('about:blank');await gateway.close();gateway=null;db.close();db=createDatabase(filename);
     address=await start();await page.goto(`http://127.0.0.1:${address.port}`);
     await page.locator('#agvLinkStatus').filter({hasText:'Có dữ liệu mới'}).waitFor();
     await page.waitForFunction(()=>lastState.warehouse.racks.every(rack=>rack.location.type==='slot')&&lastState.warehouse.moves.length===0);
     assert.ok(db.getOrders().every(order=>order.status==='closed'));assert.deepEqual(errors,[]);
-    console.log(`PASS warehouse rollback: confirm/cancel/Core rejection, two robots, marker/ledger, mobile, restart. Evidence: ${directory}`);
+    console.log(`PASS warehouse rollback: confirm/cancel/Core rejection, legacy closed/deleted order beyond 50, panel button, offline, two robots, mobile, restart. Evidence: ${directory}`);
   } finally {
     clearInterval(pump);if(browser)await browser.close();if(gateway)await gateway.close();
     for(const client of core.clients)client.terminate();await new Promise(resolve=>core.close(resolve));db.close();

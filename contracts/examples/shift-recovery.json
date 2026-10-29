@@ -1,0 +1,8 @@
+{
+  "recover_home": {"cmd":"recover_home","request_id":"recover-02-home","id":"02","expected_node":"S2","physically_clear":true},
+  "recover_node": {"cmd":"recover_node","request_id":"recover-02-node","id":"02","expected_node":"G1","physically_clear":true},
+  "resume_task": {"cmd":"resume_task","request_id":"resume-old-task","task_id":"task-old","expected_node":"G1"},
+  "http_order_resume": {"item_number":1,"physically_clear":true,"expected_revision":12},
+  "http_shift_reconcile": {"review_token":"sha256-from-current-review","physically_verified":true},
+  "interrupted_task": {"task_id":"task-old","target":"K2","priority":0,"status":"interrupted","assigned_agv":"02","resume_available":true,"resume_node":"G1"}
+}

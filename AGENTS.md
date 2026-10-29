@@ -12,6 +12,12 @@
 - Hàm, lệnh hoặc chức năng firmware mới phải bổ sung và kiểm tra cho cảxe01 vàxe02. Ưu tiên logic chung, khai báo cấu hình cho cả hai profile khi cần.
 - Giữ ID, mạng, hiệu chuẩn pin và thông số riêng từng xe; chỉ thay thông số theo yêu cầu. Nếu có ngoại lệ về chức năng giữa hai xe, hỏi người dùng trước.
 
+## Quy trình sửa firmware — yêu cầu người dùng 27/10/2026
+
+- Người dùng tự nạp và kiểm thử thực tế sau mỗi lần sửa firmware. Không tự chạy kiểm thử phần mềm, tạo thêm hoặc khôi phục test đã xóa, trừ khi người dùng yêu cầu lại.
+- Vẫn đọc mã và rà diff để kiểm tra phạm vi thay đổi, đồng bộ chức năng cho cả hai profile, giữ thông số riêng từng xe. Build/nạp chỉ thực hiện khi được yêu cầu.
+- Khi bàn giao, ghi đúng build ID và nêu rõ chưa build/kiểm thử/nạp nếu chưa thực hiện; không coi việc sửa source là đã kiểm chứng trên xe. Quy trình này thay yêu cầu chạy mô phỏng/kiểm thử bàn tự động trước bàn giao firmware ở các hướng dẫn cũ; kết quả thử thực tế do người dùng cung cấp.
+
 ## Chọn kỹ năng
 
 Kỹ năng nằm trong `.agents/skills/`. Chỉ đọc kỹ năng liên quan đến việc đang làm:

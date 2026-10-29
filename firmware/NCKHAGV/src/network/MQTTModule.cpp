@@ -400,7 +400,7 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     }
     // RFID telemetry proves location; station diagnostics additionally gate
     // completion until the physical exit-facing pivot is finished.
-    StaticJsonDocument<2048> doc;
+    StaticJsonDocument<2560> doc;
     auto object = doc.to<JsonObject>();
     base(object, session(), s.uptimeMs);
     object["state"] = stateName(s.state);
@@ -417,6 +417,7 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     }
     object["motionEnabled"] = Config::ENABLE_CORE_MOTION;
     object["headingSupported"] = true;
+    object["headingConfirmationSupported"] = true;
     object["stationDockingSupported"] = true;
     object["reverseHomeSupported"] = Config::REVERSE_HOME_SUPPORTED;
     if(Config::SERVO_SINGLE_TEST) {
@@ -434,7 +435,8 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     object["routeCommandId"] = s.routeCmdId;
     object["heading"] = headingName(s.heading);
     object["headingNode"] = node;
-    object["headingSource"] = s.heading == RobotHeading::Unknown ? "unknown" : s.headingBayDefault ? "bay_default" : "route";
+    object["headingSource"] = s.heading == RobotHeading::Unknown ? "unknown" : s.headingCommandId>0 ? "operator" : s.headingBayDefault ? "bay_default" : "route";
+    object["headingCommandId"] = s.headingCommandId;
     object["error"] = errorName(s.error);
     object["node"] = node;
     if (s.rfidAgeMs != std::numeric_limits<uint32_t>::max()) object["rfidAgeMs"] = s.rfidAgeMs;
@@ -474,7 +476,15 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     number(object, "batteryVoltage", s.batteryVoltage);
     number(object, "batteryPercentage", s.batteryPercentage);
     object["cargoStable"] = s.cargoStable;
-    object["cargoPresent"] = s.cargoStable ? s.cargoPresent : false;
+    object["cargoSensorSupported"] = Config::SERVO_SINGLE_TEST;
+    if(s.cargoStable)object["cargoPresent"]=s.cargoPresent;
+    else object["cargoPresent"]=nullptr;
+    object["cargoSampleSeq"]=s.cargoSampleSeq;
+    object["cargoSampleAgeMs"]=static_cast<uint32_t>(millis()-s.cargoSampledAtMs);
+    object["cargoStableMs"]=s.cargoStableMs;
+    object["cargoRawLevel"]=s.cargoRawLevel;
+    object["cargoActiveLevel"]=Config::CARGO_IR_ACTIVE_STATE;
+    object["cargoPin"]=Config::CARGO_IR_PIN;
     char payload[Config::MAX_PUBLISH_BYTES];
     if (serialize(doc, payload, sizeof(payload))) client_.publish(diagnosticTopic_, payload, false);
 }

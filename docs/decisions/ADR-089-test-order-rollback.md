@@ -2,6 +2,14 @@
 
 Ngày 26/10/2026. Trạng thái: IMPLEMENTED phần mềm; nghiệm thu xe thật OPEN.
 
+## Bổ sung 27/10/2026 — Đơn cũ đã đóng/xóa nhưng còn kệ treo
+
+`OBSERVED`: ảnh người dùng có K5/K6 cần đối soát và kệ1 trên xe01. GET trạng thái và SQLite chỉ đọc xác nhận move K6→K5 còn `needs_attention`, trong khi đơn đã `closed` bằng cơ chế cũ và có `deleted_at`; vì vậy không còn nút ở bảng nhiệm vụ. Không có xe trong snapshot Core tại thời điểm kiểm tra; không dùng điều này để suy ra vị trí hoặc trạng thái vật lý của xe.
+
+`IMPLEMENTED`: khối Trạng thái kho có nút `Hoàn tác về K…` theo từng đơn còn move cần đối soát. Snapshot giữ ngữ cảnh đơn có `warehouse_rollback_pending:true`, kể cả đã đóng/xóa hoặc nằm ngoài50 đơn mới nhất; không khôi phục mục đã xóa trong bảng nhiệm vụ. API resolve chấp nhận thêm đơn closed có đúng move `needs_attention`, vẫn yêu cầu xác nhận/revision, kiểm tra kho/xe/Core và transaction cũ. Đơn closed không còn move chờ bị từ chối; giữ `deleted_at`, không tự sửa dữ liệu lúc khởi động, không mở lại/chạy lại đơn. Xe thiếu/offline/chưa RFID trả409 với hướng dẫn kết nối lại. Sau hoàn tác, ngữ cảnh ẩn và nút biến mất. Các quy tắc ngày26 bên dưới được mở rộng riêng cho trường hợp này.
+
+`VERIFIED`: unit và browser mô phỏng theo [tests](../../tests/README.md). Chỉ đọc dữ liệu vận hành để chẩn đoán; không bấm đối soát, sửa DB thật, phát MQTT hay khởi động lại dịch vụ vận hành.
+
 ## Nguồn và hiện trạng
 
 `SOURCE`: người dùng hiện thử hai xe đi tuyến và nâng/hạ, chưa cần luồng cảm biến hàng hoàn chỉnh. Người dùng duyệt nút đối soát trả dữ liệu kệ của lượt gián đoạn về kho lấy, sau khi xác nhận kệ đã về vị trí cũ và xe trống. Kho nguồn có kệ khác phải bị chặn. Phương án cảm biến vẫn là PROPOSED cho giai đoạn sau.

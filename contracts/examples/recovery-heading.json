@@ -1,0 +1,10 @@
+{
+  "http_recover": {"expected_node":"S2","physically_clear":true,"repositioned":true},
+  "ws_recover": {"cmd":"recover_vehicle","request_id":"recovery-02","id":"02","expected_node":"S2","physically_clear":true,"repositioned":true},
+  "http_confirm_heading": {"expected_node":"S2","heading":"N","physically_confirmed":true},
+  "ws_confirm_heading": {"cmd":"confirm_recovery_heading","request_id":"heading-02","id":"02","expected_node":"S2","heading":"N","physically_confirmed":true},
+  "mqtt_command": {"cmd":"CONFIRM_HEADING","cmd_id":105,"node":"S2","heading":"N"},
+  "diagnostic_excerpt": {"headingConfirmationSupported":true,"headingCommandId":105,"headingSource":"operator","heading":"N","headingNode":"S2","lastCommandId":105},
+  "fleet_excerpt": {"heading_confirmation_required":false,"heading_confirmation_pending":false,"heading_confirmation_supported":true,"recovery_expected_heading":"N","recovery_reset_pending":false,"recovery_stop_verified":true},
+  "note": "Các excerpt chỉ minh họa phần bổ sung; diagnostic thật vẫn phải đủ schema1, boot/kết nối/uptime và bằng chứng dừng mới. Không dùng ACK để hoàn tất xác nhận."
+}

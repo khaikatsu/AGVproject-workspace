@@ -1,5 +1,6 @@
 const {randomUUID} = require('node:crypto');
 const {warehouseNodes} = require('./public/warehouse-rules');
+const {cargoReading,cargoResult}=require('./cargo-proof');
 
 const conflict = message=>Object.assign(new Error(message),{status:409});
 const invalid = message=>Object.assign(new Error(message),{status:400});
@@ -9,6 +10,7 @@ const now = ()=>new Date().toISOString();
 // Gateway-owned ledger: the Core remains the authority for robot/lift completion.
 function createWarehouseInventory({db,publish=()=>{}}) {
   const sql=db.db;
+  let reconciliationEvent;
   sql.exec(`
     CREATE TABLE IF NOT EXISTS warehouse_inventory (id INTEGER PRIMARY KEY CHECK(id=1), state_json TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS warehouse_events (
@@ -32,6 +34,21 @@ function createWarehouseInventory({db,publish=()=>{}}) {
   };
   const snapshot=state=>({initialized:state.initialized,revision:state.revision,updated_at:state.updated_at,
     slots:state.slots,racks:state.racks,moves:state.moves.filter(openMove)});
+  function reconciliationFor(order) {
+    if(order?.status!=='needs_attention'||order.closed_by_shift!==true)return null;
+    const closedAt=Date.parse(order.shift_closed_at||order.updated);
+    if(!Number.isFinite(closedAt))return null;
+    if(reconciliationEvent===undefined) {
+      const row=sql.prepare(`SELECT id,event_json FROM warehouse_events
+        WHERE json_extract(event_json,'$.type') IN ('initialized','reconciled')
+        AND json_extract(event_json,'$.evidence')='operator_verified' ORDER BY id DESC LIMIT 1`).get();
+      reconciliationEvent=row?{id:row.id,...JSON.parse(row.event_json)}:null;
+    }
+    if(!reconciliationEvent||!(Date.parse(reconciliationEvent.created_at)>closedAt))return null;
+    const state=read(),keys=new Set((order.items||[]).map(item=>`order:${order.id}:${item.number}`));
+    if(!state.initialized||state.moves.some(move=>keys.has(move.key)&&openMove(move)))return null;
+    return {event_id:reconciliationEvent.id,created_at:reconciliationEvent.created_at};
+  }
   function change(fn) {
     const result=sql.transaction(()=>{
       const state=read();
@@ -50,9 +67,9 @@ function createWarehouseInventory({db,publish=()=>{}}) {
   }
   function markInterrupted(state,event,move,reason) {
     if(!move || !['reserved','carrying'].includes(move.status))return;
-    move.status='needs_attention';move.reason=reason;
+    move.interrupted_from=move.status;move.status='needs_attention';move.reason=reason;
     const rack=state.racks.find(rack=>rack.id===move.rack_id);if(rack)rack.status='needs_attention';
-    event(`interrupt:${move.key}`,{type:'interrupted',rack_id:move.rack_id,robot:move.robot,
+    event(`interrupt:${move.key}:${state.revision}`,{type:'interrupted',rack_id:move.rack_id,robot:move.robot,
       move_key:move.key,source:move.pickup,target:move.dropoff,reason,message:`Kệ ${move.rack_id}: ${reason}`});
   }
   function interrupt(key,reason) {
@@ -93,7 +110,7 @@ function createWarehouseInventory({db,publish=()=>{}}) {
     }).sort((a,b)=>a.node.localeCompare(b.node));
     const ids=slots.map(slot=>slot.rack_id).filter(Boolean);
     if(new Set(slots.map(slot=>slot.node)).size!==nodes.length||new Set(ids).size!==ids.length)throw invalid('Không được trùng vị trí hoặc mã kệ');
-    return change((state,event)=>{
+    const result=change((state,event)=>{
       if(body.expected_revision!==state.revision)throw conflict('Trạng thái kho đã thay đổi; tải lại trước khi lưu');
       const previous=snapshot(state);
       state.slots=slots;state.racks=slots.filter(slot=>slot.rack_id).map(slot=>({id:slot.rack_id,status:'stored',location:{type:'slot',id:slot.node}}));
@@ -101,6 +118,7 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       event(`configure:${randomUUID()}`,{type:previous.initialized?'reconciled':'initialized',evidence:'operator_verified',
         previous,slots,message:previous.initialized?'Đã đối soát lại vị trí kệ và xác nhận xe trống':'Đã nhập trạng thái kho ban đầu'});
     });
+    reconciliationEvent=undefined;return result;
   }
   function checkMove(state,{key,pickup,dropoff,robot,standalone}) {
     if(!state.initialized)throw conflict('Nhập trạng thái kệ ban đầu trước khi tạo đơn hàng kho');
@@ -144,6 +162,37 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       return move;
     });
   }
+  function checkResume(key,robot,expectedRevision,state=read()) {
+    if(expectedRevision!==state.revision)throw conflict('Kho đã thay đổi; tải lại trước khi tiếp tục');
+    const move=state.moves.find(move=>move.key===key);
+    if(!move||move.robot!==robot.id)throw conflict('Không tìm thấy lượt chuyển kệ của xe');
+    if(move.status==='placed'||move.status==='completed'&&move.standalone) {
+      const rack=state.racks.find(rack=>rack.id===move.rack_id),onRobot=move.status==='completed'&&!!move.pickup;
+      if(!rack||(onRobot? rack.location.type!=='robot'||rack.location.id!==robot.id||
+          robot.virtual_cargo_known!==true||robot.virtual_cargo!==true||!cargoResult(robot,robot.node,true) :
+          rack.location.type!=='slot'||rack.location.id!==move.dropoff))throw conflict('Kệ đã đổi vị trí sau nâng/hạ; cần đối soát');
+      return move; // Only the gate-exit task remains; never replay the servo.
+    }
+    if(move.status!=='needs_attention'||!['reserved','carrying'].includes(move.interrupted_from))
+      throw conflict('Lượt chuyển không có trạng thái an toàn để tiếp tục');
+    const rack=state.racks.find(rack=>rack.id===move.rack_id),up=move.interrupted_from==='carrying';
+    if(!rack || (up ? rack.location.type!=='robot'||rack.location.id!==robot.id||
+      robot.virtual_cargo_known!==true||robot.virtual_cargo!==true||!cargoResult(robot,robot.node,true) :
+      rack.location.type!=='slot'||rack.location.id!==move.pickup||robot.virtual_cargo===true))
+      throw conflict('Vị trí hoặc trạng thái kệ chưa khớp để tiếp tục');
+    return move;
+  }
+  function resumeMove(key,robot,expectedRevision) {
+    return change((state,event)=>{
+      const move=checkResume(key,robot,expectedRevision,state);
+      if(move.status==='placed'||move.status==='completed')return;
+      move.status=move.interrupted_from;move.reason='';
+      const rack=state.racks.find(rack=>rack.id===move.rack_id);
+      rack.status=move.status==='carrying'?'on_robot':'stored';
+      event(`resume:${randomUUID()}`,{type:'resumed',move_key:key,rack_id:rack.id,robot:robot.id,
+        evidence:'operator_verified',message:`Tiếp tục chuyển kệ ${rack.id} sau xác minh RFID ${robot.node}`});
+    });
+  }
   function confirmLift(key,action,robot,commandId,session) {
     const eventKey=`lift:${session}:${robot.id}:${commandId}`;
     const duplicate=sql.prepare('SELECT event_json FROM warehouse_events WHERE event_key=?').get(eventKey);
@@ -158,16 +207,37 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       const node=up?move.pickup:move.dropoff,lift=robot.lift;
       if(!Number.isSafeInteger(commandId)||commandId<=0||robot.id!==move.robot||robot.node!==node||robot.state!=='IDLE'||robot.error||
         robot.online!==true||robot.position_valid===false||robot.task_id||lift?.fresh!==true||lift.command_id!==commandId||
-        lift.observed_node!==node||lift.state!==(up?'DONE_UP':'DONE_DOWN')||lift.active!==false||robot.virtual_cargo_known!==true||robot.virtual_cargo!==up)
+        lift.observed_node!==node||lift.state!==(up?'DONE_UP':'DONE_DOWN')||lift.active!==false||robot.virtual_cargo_known!==true||robot.virtual_cargo!==up||!cargoResult(robot,node,up))
         throw conflict('Chưa có kết quả servo tương quan tại đúng vị trí');
       const slot=state.slots.find(slot=>slot.node===node),rack=state.racks.find(rack=>rack.id===move.rack_id);
       if(!slot||!rack||(up?slot.rack_id!==rack.id:slot.rack_id!==null))throw conflict('Vị trí kệ không khớp sổ kho');
       slot.rack_id=up?null:rack.id;rack.location={type:up?'robot':'slot',id:up?robot.id:node};
       rack.status=up?'on_robot':'stored';move.status=up?(move.standalone?'completed':'carrying'):'placed';
       move[up?'pickup_command_id':'dropoff_command_id']=commandId;
-      event(eventKey,{type:action,evidence:'servo_cycle',rack_id:rack.id,robot:robot.id,move_key:key,source:up?node:`xe ${robot.id}`,
+      event(eventKey,{type:action,evidence:robot.cargo_sensor?.required?'servo_and_cargo_sensor':'servo_cycle',rack_id:rack.id,robot:robot.id,move_key:key,source:up?node:`xe ${robot.id}`,
         target:up?`xe ${robot.id}`:node,command_id:commandId,core_session_id:session,
         message:up?`Xe ${robot.id} đã nâng kệ ${rack.id} tại ${node}`:`Xe ${robot.id} đã đặt kệ ${rack.id} tại ${node}`});
+    });
+  }
+  function confirmMissing(key,robot,session) {
+    const state=read(),move=state.moves.find(move=>move.key===key);
+    if(move?.status==='missing')return; // Repeated observations cannot remove another rack.
+    const reading=cargoReading(robot,move?.pickup);
+    if(!move||move.status!=='reserved'||move.robot!==robot.id||!reading.required||!reading.known||reading.present!==false||
+      robot.node!==move.pickup||robot.online!==true||robot.position_valid!==true||robot.state!=='IDLE'||robot.error||
+      robot.task_id||robot.target||robot.path?.length||robot.lift?.active)
+      throw conflict('Chưa có bằng chứng kho trống khi xe dừng đúng RFID trước nâng');
+    change((state,event)=>{
+      const move=state.moves.find(move=>move.key===key),slot=state.slots.find(slot=>slot.node===move.pickup),
+        rack=state.racks.find(rack=>rack.id===move.rack_id);
+      if(!slot||!rack||slot.rack_id!==rack.id||rack.location.type!=='slot'||rack.location.id!==move.pickup)
+        throw conflict('Vị trí kệ đã thay đổi trước khi xác nhận thiếu hàng');
+      slot.rack_id=null;
+      rack.status='needs_attention';rack.location={type:'unknown',id:move.pickup};
+      move.status='missing';move.reason='LM393 xác nhận kho trống trước nâng';
+      event(`missing:${key}`,{type:'missing',evidence:'cargo_sensor',move_key:key,robot:robot.id,rack_id:rack.id,
+        source:move.pickup,target:null,core_session_id:session,sensor_seq:robot.cargo_sensor.sample_seq,
+        message:`${move.pickup} trống thực tế; cần tìm lại kệ ${rack.id}; không phát lệnh nâng`});
     });
   }
   function rollbackPlan(order,state=read()) {
@@ -176,7 +246,7 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       if(item.status==='delivered')continue;
       const move=state.moves.find(move=>move.key===`order:${order.id}:${item.number}`);
       // A confirmed dropoff remains at its destination, even if exiting failed.
-      if(move?.status==='placed'||move?.status==='rolled_back')continue;
+      if(move?.status==='placed'||move?.status==='rolled_back'||move?.status==='missing')continue;
       if(!move) {
         if(sql.prepare("SELECT 1 FROM warehouse_events WHERE json_extract(event_json,'$.move_key')=? AND json_extract(event_json,'$.type')='dropoff' LIMIT 1")
           .get(`order:${order.id}:${item.number}`))continue;
@@ -228,7 +298,8 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       events,summary:{pickups:events.filter(e=>e.type==='pickup').length,dropoffs:events.filter(e=>e.type==='dropoff').length,
         on_robots:state.racks.filter(rack=>rack.location.type==='robot').length,
         needs_attention:state.racks.filter(rack=>rack.status==='needs_attention').length},
-      unfinished_orders:context.orders?.filter(order=>!['completed','closed'].includes(order.status))||[],
+       unfinished_orders:context.orders?.filter(order=>!['completed','closed'].includes(order.status)||
+         order.closed_by_shift&&order.items?.some(item=>item.status!=='delivered'))||[],
       unfinished_actions:context.actions?.filter(action=>action.status!=='completed')||[]};
     sql.prepare('INSERT INTO warehouse_shift_reports(id,report_json,created_at) VALUES(?,?,?)')
       .run(report.id,JSON.stringify(report),report.created_at);
@@ -255,7 +326,7 @@ function createWarehouseInventory({db,publish=()=>{}}) {
     return {...snapshot(state),shift:state.shift ? {...state.shift,initial_state:undefined,initial_slots:state.shift.initial_state.slots}:null,
       events:history(20),latest_report_id:sql.prepare('SELECT id FROM warehouse_shift_reports ORDER BY created_at DESC,id DESC LIMIT 1').get()?.id||null};
   }
-  return {snapshot:currentSnapshot,configure,assertPlan,reserve,confirmLift,interrupt,rollbackPlan,rollbackOrder,
+  return {snapshot:currentSnapshot,configure,reconciliationFor,assertPlan,reserve,confirmLift,confirmMissing,interrupt,checkResume,resumeMove,rollbackPlan,rollbackOrder,
     observationGap,observeShift,history,reports,reportById,
     robotAvailable:id=>!read().racks.some(rack=>rack.location.type==='robot'&&rack.location.id===id)};
 }

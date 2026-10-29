@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -90,6 +91,7 @@ constexpr int SERVO_3_PIN = REAR_ULTRASONIC_ECHO_PIN < 0 ? 21 : -1;
 constexpr int BUZZER_PIN = REAR_ULTRASONIC_ECHO_PIN < 0 ? 0 : 21;
 constexpr int CARGO_IR_PIN = 2;
 constexpr int BUZZER_ACTIVE_STATE = 0;
+// Flying Fish IR sensor (LM393): Active-LOW (0 = co vat can/hang, 1 = trong trai)
 constexpr int CARGO_IR_ACTIVE_STATE = 1;
 constexpr uint32_t CARGO_IR_STABLE_MS = 150;
 constexpr uint32_t REVERSE_STOP_MS = 150;
@@ -467,6 +469,25 @@ constexpr int G1_TURN_AROUND_PWM = AGV_G1_TURN_AROUND_PWM;
 #else
 constexpr int G1_TURN_AROUND_PWM = 0; // Khong override o cac profile khac.
 #endif
+
+#if defined(AGV_TURN_180_RECOVERY_ENABLED)
+constexpr bool TURN_180_RECOVERY_ENABLED = AGV_TURN_180_RECOVERY_ENABLED == 1;
+#else
+constexpr bool TURN_180_RECOVERY_ENABLED = true;
+#endif
+
+#if defined(AGV_TURN_180_RECOVERY_PWM)
+constexpr int TURN_180_RECOVERY_PWM = AGV_TURN_180_RECOVERY_PWM;
+#else
+constexpr int TURN_180_RECOVERY_PWM = 165;
+#endif
+
+#if defined(AGV_TURN_180_RECOVERY_DELAY_MS)
+constexpr uint32_t TURN_180_RECOVERY_DELAY_MS = AGV_TURN_180_RECOVERY_DELAY_MS;
+#else
+constexpr uint32_t TURN_180_RECOVERY_DELAY_MS = 100;
+#endif
+static_assert(TURN_180_RECOVERY_PWM > 0 && TURN_180_RECOVERY_PWM <= 255, "Invalid turn 180 recovery PWM");
 static_assert(G1_TURN_AROUND_PWM == 0 ||
               (G1_TURN_AROUND_PWM > 0 && G1_TURN_AROUND_PWM <= 255 &&
                G1_TURN_AROUND_PWM <= TURN_SPEED), "Invalid G1 turn-around PWM");
@@ -663,6 +684,73 @@ inline bool benchVoltageReady(float voltage) {
 }
 constexpr uint32_t BATTERY_SAMPLE_INTERVAL_MS = 500;
 
+// ----------------------------------------------------------------------------
+// Bù tốc độ theo bậc thang % pin (Battery Step Speed Compensation)
+// ----------------------------------------------------------------------------
+#if defined(AGV_BATTERY_SPEED_COMP_ENABLED)
+constexpr bool BATTERY_SPEED_COMP_ENABLED = AGV_BATTERY_SPEED_COMP_ENABLED == 1;
+#else
+constexpr bool BATTERY_SPEED_COMP_ENABLED = true;
+#endif
+
+#if defined(AGV_BATTERY_STEP_HIGH_PERCENT)
+constexpr float BATTERY_STEP_HIGH_PERCENT = AGV_BATTERY_STEP_HIGH_PERCENT;
+#else
+constexpr float BATTERY_STEP_HIGH_PERCENT = 80.0f;
+#endif
+
+#if defined(AGV_BATTERY_STEP_MID_PERCENT)
+constexpr float BATTERY_STEP_MID_PERCENT = AGV_BATTERY_STEP_MID_PERCENT;
+#else
+constexpr float BATTERY_STEP_MID_PERCENT = 50.0f;
+#endif
+
+#if defined(AGV_BATTERY_STEP_LOW_PERCENT)
+constexpr float BATTERY_STEP_LOW_PERCENT = AGV_BATTERY_STEP_LOW_PERCENT;
+#else
+constexpr float BATTERY_STEP_LOW_PERCENT = 30.0f;
+#endif
+
+#if defined(AGV_BATTERY_PWM_OFFSET_HIGH)
+constexpr int BATTERY_PWM_OFFSET_HIGH = AGV_BATTERY_PWM_OFFSET_HIGH;
+#else
+constexpr int BATTERY_PWM_OFFSET_HIGH = -10;
+#endif
+
+#if defined(AGV_BATTERY_PWM_OFFSET_NOMINAL)
+constexpr int BATTERY_PWM_OFFSET_NOMINAL = AGV_BATTERY_PWM_OFFSET_NOMINAL;
+#else
+constexpr int BATTERY_PWM_OFFSET_NOMINAL = 0;
+#endif
+
+#if defined(AGV_BATTERY_PWM_OFFSET_MID)
+constexpr int BATTERY_PWM_OFFSET_MID = AGV_BATTERY_PWM_OFFSET_MID;
+#else
+constexpr int BATTERY_PWM_OFFSET_MID = 8;
+#endif
+
+#if defined(AGV_BATTERY_PWM_OFFSET_LOW)
+constexpr int BATTERY_PWM_OFFSET_LOW = AGV_BATTERY_PWM_OFFSET_LOW;
+#else
+constexpr int BATTERY_PWM_OFFSET_LOW = 15;
+#endif
+
+inline int batteryStepPwmOffset(float batteryPercent) {
+    if (!BATTERY_SPEED_COMP_ENABLED || !std::isfinite(batteryPercent) || batteryPercent < 0.0f) {
+        return 0;
+    }
+    if (batteryPercent >= BATTERY_STEP_HIGH_PERCENT) {
+        return BATTERY_PWM_OFFSET_HIGH;
+    }
+    if (batteryPercent >= BATTERY_STEP_MID_PERCENT) {
+        return BATTERY_PWM_OFFSET_NOMINAL;
+    }
+    if (batteryPercent >= BATTERY_STEP_LOW_PERCENT) {
+        return BATTERY_PWM_OFFSET_MID;
+    }
+    return BATTERY_PWM_OFFSET_LOW;
+}
+
 // Runtime MQTT topics are built from the robot ID using the Core v0 contract.
 #if defined(AGV_PROFILE_ID)
 constexpr const char* AGV_ID = AGV_PROFILE_ID;
@@ -703,15 +791,15 @@ constexpr uint32_t TELEMETRY_INTERVAL_MS = 1000;
 constexpr uint32_t NETWORK_TASK_STACK_BYTES = 12288;
 constexpr size_t MAX_PATH_NODES = 32;
 constexpr size_t MAX_COMMAND_BYTES = 1024;
-constexpr size_t MAX_PUBLISH_BYTES = SERVO_SINGLE_TEST ? 2048 : 1536;
+constexpr size_t MAX_PUBLISH_BYTES = SERVO_SINGLE_TEST ? 2560 : 1536;
 constexpr size_t COMMAND_QUEUE_LENGTH = 8;
 constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261023-robot01-server-sync-v16";
+constexpr const char* FIRMWARE_BUILD = "20261029-robot01-recovery-heading-v24";
 #elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
-constexpr const char* FIRMWARE_BUILD = "20261023-robot02-server-sync-v16";
+constexpr const char* FIRMWARE_BUILD = "20261029-robot02-recovery-heading-v24";
 #else
 constexpr const char* FIRMWARE_BUILD = "20261015-battery-smoothing";
 #endif
@@ -743,7 +831,7 @@ static_assert(!MUTEX_ENCODER_RELEASE_ENABLED ||
               "Mutex release pulse threshold must round the measured clearance upward");
 static_assert(LINE_LEFT_PIN >= 34 && LINE_CENTER_PIN >= 34 && LINE_RIGHT_PIN >= 34, "Line inputs must remain input-only pins");
 static_assert(BATTERY_ADC_PIN == 36, "Battery must remain on ADC1 GPIO36");
-static_assert(BUZZER_ACTIVE_STATE == 0 && CARGO_IR_ACTIVE_STATE == 1, "Unexpected buzzer/IR polarity");
+static_assert(BUZZER_ACTIVE_STATE == 0 && (CARGO_IR_ACTIVE_STATE == 0 || CARGO_IR_ACTIVE_STATE == 1), "Unexpected buzzer/IR polarity");
 static_assert(CARGO_IR_STABLE_MS > 0 && REVERSE_STOP_MS > 0, "Safety debounce/hold must be nonzero");
 static_assert(BASE_SPEED >= 0 && BASE_SPEED <= 255 &&
               BASE_SPEED + LEFT_SPEED_TRIM > 0 && BASE_SPEED + LEFT_SPEED_TRIM <= 255 &&

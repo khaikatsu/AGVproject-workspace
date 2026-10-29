@@ -61,6 +61,8 @@ const char* errorName(ErrorCode e) {
         case ErrorCode::StaleCommand: return "STALE_COMMAND";
         case ErrorCode::CargoMissing: return "CARGO_MISSING";
         case ErrorCode::CargoLost: return "CARGO_LOST";
+        case ErrorCode::CargoSensorUnstable: return "CARGO_SENSOR_UNSTABLE";
+        case ErrorCode::CargoMismatch: return "CARGO_RESULT_MISMATCH";
         case ErrorCode::NodeOrderMismatch: return "NODE_ORDER_MISMATCH";
         case ErrorCode::ServoInterrupted: return "SERVO_INTERRUPTED_CANCEL_TASK";
         case ErrorCode::MotionLocked: return "MOTION_LOCKED_PENDING_ZONE_CLEARANCE_CALIBRATION";
