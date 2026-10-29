@@ -92,7 +92,7 @@ constexpr int BUZZER_PIN = REAR_ULTRASONIC_ECHO_PIN < 0 ? 0 : 21;
 constexpr int CARGO_IR_PIN = 2;
 constexpr int BUZZER_ACTIVE_STATE = 0;
 // Flying Fish IR sensor (LM393): Active-High (1 = co vat can/hang, 0 = trong trai)
-constexpr int CARGO_IR_ACTIVE_STATE = 0;
+constexpr int CARGO_IR_ACTIVE_STATE = 1;
 constexpr uint32_t CARGO_IR_STABLE_MS = 150;
 constexpr uint32_t REVERSE_STOP_MS = 150;
 // Front-mounted line sensors have not been validated for backward steering.
