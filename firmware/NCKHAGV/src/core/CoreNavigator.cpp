@@ -569,16 +569,16 @@ bool CoreNavigator::observeTurnLine(const ControlInput& in) {
     const uint32_t elapsed = in.now - turnStartedMs_;
 
     // 1. Cập nhật cờ tách line cũ liên tục:
-    // Thấy khoảng trắng 000 chắc chắn đã hoàn toàn ra khỏi line cũ
+    // Chỉ khi thấy khoảng trắng 000 hoặc đã xoay qua nửa góc tối thiểu và chỉ còn mắt biên chạm
+    const uint32_t minTurnMs = Config::TURN_MIN_MS > 0 ? Config::TURN_MIN_MS : 180;
     if (in.linePattern == 0) {
         oldLineDeparted_ = true;
-    } else if (elapsed >= 80 && (in.linePattern == 1 || in.linePattern == 4)) {
-        // Sau ít nhất 80ms xoay, chỉ còn mắt biên chạm -> đã rời tâm line cũ
+    } else if (elapsed >= (minTurnMs / 2) && (in.linePattern == 1 || in.linePattern == 4)) {
         oldLineDeparted_ = true;
     }
 
-    // 2. Xe phải xoay đủ thời gian tối thiểu để thoát khỏi vạch giao lộ hiện tại (chống bắt nhầm vạch cũ)
-    if (elapsed < 180) return false;
+    // 2. Xe phải xoay đủ thời gian tối thiểu đã cấu hình (Config::TURN_MIN_MS) để thoát góc cũ
+    if (elapsed < minTurnMs) return false;
 
     // 3. Xe phải đã rời khỏi line cũ trước khi được phép bắt line mới
     if (!oldLineDeparted_) return false;
