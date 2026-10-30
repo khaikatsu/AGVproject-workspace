@@ -481,11 +481,9 @@ dialog,
   font-weight: 850 !important;
 }
 
+.operations-footnote,
 [data-theme="ptit"] .operations-footnote {
-  color: #374151 !important;            /* "Vị trí theo chu kỳ nâng/hạ..." đậm rõ nét */
-  font-weight: 650 !important;
-  font-size: 12px !important;
-  line-height: 1.5 !important;
+  display: none !important;
 }
 
 [data-theme="ptit"] #warehouseConfig summary {
@@ -629,12 +627,9 @@ dialog select,
   background-size: 20px 20px !important;
 }
 
+.map-foot,
 [data-theme="ptit"] .map-foot {
-  background: #ffffff !important;
-  border-top: 1px solid #e5e7eb !important;
-  border-radius: 0 0 12px 12px !important;
-  color: #374151 !important;
-  font-weight: 650 !important;
+  display: none !important;
 }
 
 [data-theme="ptit"] #dataFreshness,
@@ -1046,3 +1041,14 @@ dialog select,
 [data-theme="ptit"] ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* 15. Loại bỏ triệt để các ghi chú / note thừa thãi theo yêu cầu người dùng */
+#coreModeStatus,
+[data-theme="ptit"] #coreModeStatus,
+#orderDispatchHint,
+[data-theme="ptit"] #orderDispatchHint,
+.mission-heading p,
+[data-theme="ptit"] .mission-heading p {
+  display: none !important;
+}
+

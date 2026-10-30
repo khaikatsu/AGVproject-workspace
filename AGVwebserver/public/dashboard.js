@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 let ws = null, lastState = null, backendOnline = false, reconnectTimer = null, generation = 0;
 let API_BASE = /^https?:$/.test(location.protocol) ? location.origin : 'http://localhost:3000';
 let selectedAgvId = null, previewMapId = null, currentKpiId = null, kpiHistoryData = [];
@@ -526,7 +526,7 @@ async function addTask() {
   if (result) toast(`Core đã nhận nhiệm vụ ${result.task_id.slice(0,8)}`);
 }
 function renderShift(shift) {
-  const names = {RUNNING:'Đang làm việc',CLOSING:'Đã nhận kết ca · chờ xác minh xe theo các lý do bên dưới',CLOSED:'Ca đã đóng'};
+  const names = {RUNNING:'Đang làm việc',CLOSING:'Đang kết ca',CLOSED:'Ca đã đóng'};
   $('shiftStatus').textContent = shift?.supported ? names[shift.phase] || shift.phase : 'Chưa có quản lý ca trên core / bản đồ này';
   const diagnosticBattery = lastState?.fleet?.agvs?.some(robot=>robot.battery_control_source === 'diagnostic');
   const mode = $('coreModeStatus');
@@ -748,3 +748,4 @@ function initThemeSwitcher() {
   }
 }
 initThemeSwitcher();
+
