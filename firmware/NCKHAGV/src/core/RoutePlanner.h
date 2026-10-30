@@ -91,6 +91,20 @@ inline RobotHeading bayHeading(const char* id) {
     const char* gate = bayGate(id);
     return gate ? (station(id) ? edgeHeading(id,gate) : edgeHeading(gate,id)) : RobotHeading::Unknown;
 }
+inline const char* gateBay(const char* gateId) {
+    if (!gateId || !gateId[0] || !gateId[1] || gateId[2]) return nullptr;
+    if (gateId[0] == 'G' && gateId[1] >= '1' && gateId[1] <= '6') {
+        static constexpr const char* bays[] = {"K1","K2","K3","K4","K5","K6"};
+        return bays[gateId[1]-'1'];
+    }
+    if (std::strcmp(gateId,"GS1") == 0) return "S1";
+    if (std::strcmp(gateId,"GS2") == 0) return "S2";
+    return nullptr;
+}
+inline RobotHeading gateHeading(const char* gateId) {
+    const char* bay = gateBay(gateId);
+    return bay ? edgeHeading(gateId, bay) : RobotHeading::Unknown;
+}
 inline bool bayExit(const char* from, const char* to) {
     const char* gate = bayGate(from);
     return gate && to && std::strcmp(gate,to) == 0 && directedEdge(from,to);

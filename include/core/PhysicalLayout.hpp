@@ -19,6 +19,24 @@ inline std::string gate(const std::string& node) {
     return "";
 }
 inline bool warehouse(const std::string& node) {return !isHome(node) && !gate(node).empty();}
+inline bool isGate(const std::string& node) {
+    if (node == "GS1" || node == "GS2") return true;
+    return node.size() == 2 && node[0] == 'G' && node[1] >= '1' && node[1] <= '6';
+}
+inline std::string warehouseOfGate(const std::string& gateNode) {
+    if (gateNode.size() == 2 && gateNode[0] == 'G' && gateNode[1] >= '1' && gateNode[1] <= '6')
+        return "K" + gateNode.substr(1);
+    if (gateNode == "GS1") return "S1";
+    if (gateNode == "GS2") return "S2";
+    return "";
+}
+inline std::string gateFacingWarehouseHeading(const std::string& gateNode) {
+    if (gateNode == "G1" || gateNode == "G2" || gateNode == "G3") return "W";
+    if (gateNode == "G4" || gateNode == "G5" || gateNode == "G6") return "E";
+    if (gateNode == "GS1") return "N";
+    if (gateNode == "GS2") return "S";
+    return "";
+}
 inline void validate(const nlohmann::json& map) {
     const auto& nodes=map.at("nodes");const auto& edges=map.at("edges");
     for(const auto* role:{"S1","S2","K1","K2","K3","K4","K5","K6"}) {

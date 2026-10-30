@@ -418,6 +418,10 @@ void AGVController::update() {
             navigator_.error() == ErrorCode::None && control_.error() == ErrorCode::None) {
             const auto docking = RoutePlanner::bayHeading(control_.currentNode());
             if (docking != RobotHeading::Unknown && headingCommandId_==0) { heading_ = docking; headingBayDefault_ = true; }
+            else if (heading_ == RobotHeading::Unknown && headingCommandId_==0) {
+                const auto gateFacing = RoutePlanner::gateHeading(control_.currentNode());
+                if (gateFacing != RobotHeading::Unknown) { heading_ = gateFacing; headingBayDefault_ = false; }
+            }
         }
         // Preserve RC522 HALT/WUPA for fresh repeated reads. At an authorized
         // straight-through RFID the motor keeps following during cleanup.

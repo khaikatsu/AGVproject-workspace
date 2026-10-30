@@ -1113,6 +1113,18 @@ public:
                 (d.heading.empty() || d.heading=="UNKNOWN") && d.rfidAgeMs<=250 && a.headingConfirmationSupported) {
                 restoreBayHeading=true;bayNode=a.currentNode;bayHeading=PhysicalLayout::outwardHeading(a.currentNode);
             }
+            const bool stoppedAtGate = supported && a.positionValid && a.hasTelemetry &&
+                Clock::now()-a.lastSeen<=offlineTimeout_ && a.currentNode==d.node && activeRobotNoLock(id) &&
+                PhysicalLayout::isGate(a.currentNode) && a.state==AGVState::IDLE && d.state=="AGV_IDLE" &&
+                d.motor=="STOP" && d.leftDuty==0 && d.rightDuty==0 && !d.taskActive && !d.liftBusy &&
+                !a.dropoffExitPending && !a.liftWaitingRecovery && !a.liftActive;
+            if(stoppedAtGate && (a.recoveryHeadingRequired || a.heading.empty() || a.heading=="UNKNOWN" || d.headingSource=="unknown")) {
+                const std::string gHead = PhysicalLayout::gateFacingWarehouseHeading(a.currentNode);
+                if(!gHead.empty()) {
+                    a.heading = gHead; a.headingNode = a.currentNode; a.headingSource = "gate_default";
+                    a.recoveryHeadingRequired = false; changed = true;
+                }
+            }
             const bool confirmation = valid && a.headingPendingId>0 && d.headingCommandId==a.headingPendingId &&
                 d.headingSource=="operator" && d.heading==a.headingRequested && d.node==a.headingRequestedNode &&
                 d.encoderBoot==a.headingRequestBoot && d.encoderConnection==a.headingRequestConnection &&
@@ -1161,12 +1173,13 @@ public:
         auto& a = it->second;
         a.nodeOrdersSupported = d.nodeOrdersSupported && d.wifi && d.mqtt && networkAvailable_;
         a.straightThroughSupported = a.nodeOrdersSupported && d.straightThroughSupported;
+        const bool isHomeArrival = PhysicalLayout::isHome(d.node) && d.stationTurnRequired;
         if (!d.nodeOrdersSupported || !d.awaitingNodeOrder || !d.taskActive ||
             d.state != "AGV_WAITING" || d.error != "NONE" || d.motor != "STOP" ||
             d.leftDuty != 0 || d.rightDuty != 0 || !d.wifi || !d.mqtt || !networkAvailable_ ||
             d.rfidAgeMs == UINT32_MAX || !a.positionValid || a.currentNode != d.node || a.headingNode != d.node ||
             a.heading.empty() || Clock::now()-a.lastSeen > offlineTimeout_ ||
-            (a.state != AGVState::WORKING && a.state != AGVState::CHARGING_EN_ROUTE) ||
+            (!isHomeArrival && a.state != AGVState::WORKING && a.state != AGVState::CHARGING_EN_ROUTE) ||
             d.routeCommandId <= 0 || d.routeCommandId != a.routeCommandId ||
             d.pathIndex < 0 || static_cast<size_t>(d.pathIndex) > a.commandPath.size()) return;
         const size_t step = static_cast<size_t>(d.pathIndex);
@@ -2093,16 +2106,20 @@ private:
             a.nodeStopConnection==a.encoder.connection;
     }
     std::string homeDepartureErrorNoLock(const AGV& a) const {
-        if(a.recoveryHeadingRequired || a.headingPendingId>0 || a.operatorNodeReset || a.autoResetRequested)
-            return "Cho hoan tat khoi phuc va xac nhan huong truoc khi ve tram";
+        if(a.recoveryHeadingRequired || a.headingPendingId>0 || a.operatorNodeReset || a.autoResetRequested) {
+            if(!PhysicalLayout::isGate(a.currentNode) || a.operatorNodeReset || a.autoResetRequested)
+                return "Cho hoan tat khoi phuc va xac nhan huong truoc khi ve tram";
+        }
         if(a.liftActive || a.liftWaitingRecovery || a.dropoffExitPending)
             return "Cho hoan tat nang/ha va chang ra gate truoc khi ve tram";
         // Legacy fixtures have no motion diagnostic. A real bound MCU must
         // prove physical STOP after its last route; RFID/ACK alone is not it.
         if(a.encoder.boot || a.nodeOrdersSupported || a.headingSupported) {
+            const bool validHeading = (a.heading=="N" || a.heading=="E" || a.heading=="S" || a.heading=="W");
+            const bool gateHeadingFallback = PhysicalLayout::isGate(a.currentNode);
             if(!a.headingSupported || a.headingNode!=a.currentNode ||
-                (a.heading!="N" && a.heading!="E" && a.heading!="S" && a.heading!="W") ||
-                Clock::now()-a.diagnosticSeen>std::chrono::milliseconds(1500))
+                (!validHeading && !gateHeadingFallback) ||
+                Clock::now()-a.diagnosticSeen>std::chrono::milliseconds(2500))
                 return "Cho diagnostic huong dau xe hop le truoc khi ve tram";
             if(!verifiedNodeStopNoLock(a) || !a.nodeStopHealthy)
                 return "Cho diagnostic xac nhan xe dung va ket thuc tuyen cu truoc khi ve tram";
@@ -2144,8 +2161,8 @@ private:
         if (!agv.positionValid || !agv.activePath.empty() || agv.finalTarget.empty() ||
             agv.currentNode != agv.finalTarget ||
             (agv.state != AGVState::WORKING && agv.state != AGVState::CHARGING_EN_ROUTE)) return false;
-        if (agv.stationArrivalRequired && (!agv.stationReady ||
-            agv.headingNode != agv.currentNode || Clock::now() - agv.diagnosticSeen > std::chrono::seconds(3)))
+        if ((agv.stationArrivalRequired || PhysicalLayout::isHome(agv.currentNode)) && (!agv.stationReady ||
+            agv.headingNode != agv.currentNode || Clock::now() - agv.diagnosticSeen > std::chrono::seconds(5)))
             return false;
         const bool charging = agv.state == AGVState::CHARGING_EN_ROUTE;
         if (!charging && !agv.taskId.empty()) setTaskStatusNoLock(agv.taskId, "completed", agv.id);
@@ -2551,8 +2568,15 @@ private:
 
     void assignPath(AGV& agv, std::vector<std::string> path, const std::string& target, AGVState newState) {
         if(agv.recoveryHeadingRequired || agv.headingPendingId>0) {
-            interruptWorkNoLock(agv,"Can xac nhan huong dau xe truoc khi chay");
-            agv.state=AGVState::AGV_ERROR;agv.lastError="Can xac nhan huong dau xe truoc khi chay";return;
+            if(PhysicalLayout::isGate(agv.currentNode)) {
+                agv.heading = PhysicalLayout::gateFacingWarehouseHeading(agv.currentNode);
+                agv.headingNode = agv.currentNode;
+                agv.headingSource = "gate_default";
+                agv.recoveryHeadingRequired = false;
+            } else {
+                interruptWorkNoLock(agv,"Can xac nhan huong dau xe truoc khi chay");
+                agv.state=AGVState::AGV_ERROR;agv.lastError="Can xac nhan huong dau xe truoc khi chay";return;
+            }
         }
         if (!path.empty() && path.front() == agv.currentNode) path.erase(path.begin());
         if(agv.dropoffExitPending && (agv.currentNode!=agv.liftNode || target!=PhysicalLayout::gate(agv.liftNode) ||
@@ -2565,7 +2589,7 @@ private:
         agv.commandPath = path; agv.routeStart = agv.currentNode;
         agv.lastNodeOrderKey.clear(); agv.lastNodeOrderPayload.clear();
         agv.finalTarget = target;
-        agv.stationArrivalRequired = agv.stationDockingSupported && PhysicalLayout::isHome(target);
+        agv.stationArrivalRequired = PhysicalLayout::isHome(target);
         agv.stationReady = false;
         agv.state = newState;
         agv.blockedResume = AGVState::IDLE;

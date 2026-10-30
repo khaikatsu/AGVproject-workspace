@@ -653,6 +653,16 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
         obstaclePaused_ = false;
     }
     if (needsNodeOrder()) {
+        if (phase_ == Phase::StationDwell) {
+            if (static_cast<uint32_t>(in.now - stoppedAtMs_) >= 3000) {
+                nodeOrderReceived_ = true;
+            }
+            return MotorAction::Stop;
+        }
+        if (missingZone() || obstaclePaused_ || networkPaused_) {
+            stoppedAtMs_ = in.now;
+            return MotorAction::Stop;
+        }
         if (static_cast<uint32_t>(in.now - stoppedAtMs_) >= Config::SEGMENT_TIMEOUT_MS)
             fault(ErrorCode::MotionTimeout);
         return MotorAction::Stop;
@@ -792,13 +802,14 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
     }
     if (turnSettling_ && static_cast<uint32_t>(in.now-segmentStartedMs_) >= Config::LEFT_CAPTURE_SETTLE_MS)
         turnSettling_ = false;
-    if (static_cast<uint32_t>(in.now - segmentStartedMs_) >= Config::SEGMENT_TIMEOUT_MS) {
-        fault(ErrorCode::MotionTimeout); return MotorAction::Stop;
-    }
     if (missingZone()) {
         // Evidence gathered before grant revocation must not survive the hold.
         centerSamples_ = 0;
+        segmentStartedMs_ = in.now;
         return MotorAction::Stop;
+    }
+    if (static_cast<uint32_t>(in.now - segmentStartedMs_) >= Config::SEGMENT_TIMEOUT_MS) {
+        fault(ErrorCode::MotionTimeout); return MotorAction::Stop;
     }
     if (reverseAfterTurn_[index_] && !reverseAligned_ && Config::REVERSE_ALIGN_FORWARD_MS > 0) {
         if (!reverseAlignStartedMs_) reverseAlignStartedMs_ = in.now;
