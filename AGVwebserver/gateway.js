@@ -304,13 +304,87 @@ function createGateway(options = {}) {
         if(req.body.location_names_revision!==undefined)locationNames.assertRevision(req.body.location_names_revision);
         res.json({ok:true,...await command({cmd:'start_shift'})});
     }));
+    let shiftCloseMonitor = null;
+    function monitorReturnAndCloseShift() {
+        if (shiftCloseMonitor) return;
+        shiftCloseMonitor = setInterval(async () => {
+            const state = latestState;
+            const homeStations = state.shift?.home_stations || { '01': 'S1', '02': 'S2' };
+            const agvs = state.fleet?.agvs?.filter(a => a.participating !== false && a.online !== false) || [];
+            if (agvs.length === 0) {
+                clearInterval(shiftCloseMonitor);
+                shiftCloseMonitor = null;
+                return;
+            }
+            const allHome = agvs.every(a => {
+                const home = homeStations[a.id] || (a.id === '01' ? 'S1' : 'S2');
+                return a.node === home && a.state === 'IDLE' && !a.task_id;
+            });
+
+            if (allHome) {
+                clearInterval(shiftCloseMonitor);
+                shiftCloseMonitor = null;
+                console.log('[AGV-SHIFT-END] Tất cả xe đã về tới trạm Base S1/S2 an toàn. Tiến hành đóng ca Core.');
+                try {
+                    await command({cmd: 'end_shift'});
+                    orders.endShift();
+                    warehouseActions.endShift();
+                    broadcast();
+                } catch (e) {
+                    console.error('[AGV-SHIFT-END] Lỗi khi đóng ca Core:', e);
+                } finally {
+                    orders.unpause();
+                    warehouseActions.unpause();
+                }
+            }
+        }, 1000);
+        if (shiftCloseMonitor.unref) shiftCloseMonitor.unref();
+    }
+
     app.post('/api/shift/end',route(async (req,res)=>{
         requireCore(true);
-        await orders.pauseForShiftEnd();await warehouseActions.pauseForShiftEnd();
-        try {
-            const data=await command({cmd:'end_shift'});orders.endShift();warehouseActions.endShift();
-            res.json({ok:true,...data});
-        } finally {orders.unpause();warehouseActions.unpause();}
+        const homeStations = latestState.shift?.home_stations || { '01': 'S1', '02': 'S2' };
+        const activeAgvs = latestState.fleet?.agvs || [];
+
+        await orders.pauseForShiftEnd();
+        await warehouseActions.pauseForShiftEnd();
+
+        const needReturn = activeAgvs.filter(a => a.participating !== false && a.online !== false && a.node !== (homeStations[a.id] || (a.id === '01' ? 'S1' : 'S2')));
+
+        if (needReturn.length === 0) {
+            try {
+                const data = await command({cmd: 'end_shift'});
+                orders.endShift();
+                warehouseActions.endShift();
+                return res.json({ok: true, message: 'Tất cả xe đã ở trạm Base. Đã đóng ca thành công.', ...data});
+            } finally {
+                orders.unpause();
+                warehouseActions.unpause();
+            }
+        }
+
+        const dispatched = [];
+        for (const agv of needReturn) {
+            const home = homeStations[agv.id] || (agv.id === '01' ? 'S1' : 'S2');
+            try {
+                await command({cmd: 'reconcile_test_cargo', robots: [{id: agv.id, lift_command_id: agv.lift?.command_id || 0}]}).catch(()=>{});
+                const gotoResult = await command({cmd: 'direct_goto', agv_id: agv.id, target: home, priority: 100});
+                dispatched.push({id: agv.id, from: agv.node, target: home, task_id: gotoResult.task_id});
+                console.log(`[AGV-SHIFT-END] Đã phát lệnh điều xe ${agv.id} từ ${agv.node} về trạm ${home} (task: ${gotoResult.task_id})`);
+            } catch (err) {
+                console.warn(`[AGV-SHIFT-END] Không thể phát lệnh về trạm cho xe ${agv.id}: ${err.message}`);
+                dispatched.push({id: agv.id, error: err.message});
+            }
+        }
+
+        monitorReturnAndCloseShift();
+
+        res.json({
+            ok: true,
+            closing: true,
+            message: `Đã tính đường và phát lệnh đưa ${dispatched.length} xe về trạm Base S1/S2 trước khi đóng ca`,
+            dispatched
+        });
     }));
     app.get('/api/shift/review',route((req,res)=>{requireCore();res.json(shiftReview.snapshot());}));
     app.post('/api/shift/reconcile',route((req,res)=>{

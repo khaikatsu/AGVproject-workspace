@@ -482,6 +482,18 @@ static_assert(GS_ALIGN_PWM > 0 && GS_ALIGN_PWM <= GS_TURN_PWM, "Invalid GS align
 
 static_assert(TURN_180_MIN_MS >= TURN_MIN_MS && TURN_180_MIN_MS < TURN_TIMEOUT_MS,
               "Invalid turn-180 minimum duration");
+#if defined(AGV_STATION_TURN_180_PWM)
+constexpr int STATION_TURN_180_PWM = AGV_STATION_TURN_180_PWM;
+#else
+constexpr int STATION_TURN_180_PWM = 0;
+#endif
+
+#if defined(AGV_SERVO_DETACH_ON_IDLE)
+constexpr bool SERVO_DETACH_ON_IDLE = AGV_SERVO_DETACH_ON_IDLE == 1;
+#else
+constexpr bool SERVO_DETACH_ON_IDLE = true;
+#endif
+
 #if defined(AGV_G1_TURN_AROUND_PWM)
 constexpr int G1_TURN_AROUND_PWM = AGV_G1_TURN_AROUND_PWM;
 #else

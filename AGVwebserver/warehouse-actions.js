@@ -8,6 +8,7 @@ const finished=action=>['completed','interrupted'].includes(action.status);
 // Temporary warehouse tests; the servo cargo marker is not an order or a load sensor.
 function createWarehouseActions({getState,getSession,send,publish,inventory}) {
   const actions=[],resuming=new Set();let running=null,closed=false,endingShift=false;
+  const idleSince = {}, returningHome = {};
   const scopedRobot=state=>state?.shift?.trial_robot_id ||
     (state?.shift?.operation_profile==='scoped'&&state.shift.active_robot_ids?.length===1 ? state.shift.active_robot_ids[0] :
       state?.shift?.test_mode==='robot01'?'01':state?.shift?.test_mode==='robot02'?'02':null);
@@ -129,7 +130,46 @@ function createWarehouseActions({getState,getSession,send,publish,inventory}) {
         await resume(old.id,true,inventory?.snapshot().revision);return;
       }
     }
-    const action=actions.find(action=>!finished(action));if(!action||action.status.startsWith('dispatching'))return;
+    const action=actions.find(action=>!finished(action));
+    if(!action) {
+      const robotId = scopedRobot(recoveryState);
+      if(robotId && recoveryState?.shift?.phase === 'RUNNING' && recoveryState?.fleet?.accepting_tasks !== false) {
+        const robot = recoveryState.fleet.agvs.find(r => r.id === robotId);
+        const home = recoveryState.shift?.home_stations?.[robotId] || (robotId === '01' ? 'S1' : 'S2');
+        if(robot && home) {
+          if(robot.node === home) {
+            delete idleSince[robotId];
+            delete returningHome[robotId];
+          } else if(robot.node.startsWith('K')) {
+            delete idleSince[robotId];
+            return;
+          } else if(robot.state === 'IDLE' && !robot.task_id && !robot.error && robot.online !== false && robot.position_valid !== false &&
+                    !robot.lift?.active && !robot.heading_confirmation_required && !robot.heading_confirmation_pending && !robot.recovery_reset_pending &&
+                    !(robot.virtual_cargo_known === true && robot.virtual_cargo === true) &&
+                    (!inventory || inventory.robotAvailable(robotId))) {
+            if(returningHome[robotId]) {
+              if(robot.state === 'IDLE' && !robot.task_id) returningHome[robotId] = false;
+            } else if(!idleSince[robotId]) {
+              idleSince[robotId] = Date.now();
+            } else if(Date.now() - idleSince[robotId] >= 2500) {
+              returningHome[robotId] = true;
+              try {
+                console.log(`[AGV-WAREHOUSE] Xe ${robotId} hoan thanh thao tac kho -> Tu dong ve tram Base ${home}`);
+                await send({cmd:'direct_goto',agv_id:robotId,target:home,priority:0});
+              } catch(err) {
+                console.warn(`[AGV-WAREHOUSE] Xe ${robotId} ve ${home} chua thanh cong: ${err.message}`);
+                returningHome[robotId] = false;
+                idleSince[robotId] = Date.now() + 5000;
+              }
+            }
+          } else {
+            if(robot.state !== 'WORKING') delete idleSince[robotId];
+          }
+        }
+      }
+      return;
+    }
+    if(action.status.startsWith('dispatching'))return;
     const state=getState();
     if(!state||getSession()!==action.core_session_id||state.shift?.phase!=='RUNNING'){interrupt(action,'Mất dữ liệu Core hoặc ca đã thay đổi; không phát lại thao tác');return;}
     const robot=state.fleet.agvs.find(robot=>robot.id===action.robot);
@@ -147,14 +187,24 @@ function createWarehouseActions({getState,getSession,send,publish,inventory}) {
       if(robot.node!==action.warehouse){interrupt(action,'Xe rời kho khi đang nâng/hạ');return;}
       const lift=robot.lift,up=action.action==='pickup';
       if(lift?.command_id===action.lift_command_id&&lift.state==='INTERRUPTED'){interrupt(action,'Servo bị gián đoạn');return;}
-      if(!up&&loweredForExit(robot,action.warehouse,action.lift_command_id)&&at(state,action,action.warehouse)) {
-        action.dropoff_exit_pending=true;await dispatch(action,action.gate,true);return;
-      }
-      if(lift?.fresh===true&&lift.command_id===action.lift_command_id&&lift.state===(up?'DONE_UP':'DONE_DOWN')&&
-        (up||lift.dropoff_exit_supported!==true)&&
-        lift.active===false&&robot.virtual_cargo_known===true&&robot.virtual_cargo===up&&at(state,action,action.warehouse)){
+      if(!up&&at(state,action,action.warehouse)&&
+        (loweredForExit(robot,action.warehouse,action.lift_command_id) ||
+         (lift?.fresh===true&&lift.command_id===action.lift_command_id&&['DONE_DOWN','LOWERED'].includes(lift.state)&&lift.active===false))) {
+        try {
+          await send({cmd: 'reconcile_test_cargo', robots: [{id: robot.id, lift_command_id: action.lift_command_id}]});
+        } catch (err) {
+          console.warn(`[AGV-WAREHOUSE] Reconcile cargo sau ha: ${err.message}`);
+        }
         if(action.inventory_tracked)inventory.confirmLift(`action:${action.id}`,action.action,robot,action.lift_command_id,action.core_session_id);
-        await dispatch(action,action.gate,true);return;
+        action.dropoff_exit_pending=false;
+        complete(action);
+        return;
+      }
+      if(up&&lift?.fresh===true&&lift.command_id===action.lift_command_id&&lift.state==='DONE_UP'&&
+        lift.active===false&&robot.virtual_cargo_known===true&&robot.virtual_cargo===true&&at(state,action,action.warehouse)){
+        if(action.inventory_tracked)inventory.confirmLift(`action:${action.id}`,action.action,robot,action.lift_command_id,action.core_session_id);
+        complete(action);
+        return;
       }
       if(Date.now()-action.lift_sent_at>15000)interrupt(action,'Không nhận hoàn tất servo đúng lệnh; không tự lùi');
       return;

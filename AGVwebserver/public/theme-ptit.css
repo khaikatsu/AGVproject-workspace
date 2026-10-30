@@ -1,4 +1,4 @@
-﻿/* ==========================================================================
+/* ==========================================================================
    MINIMALIST TECH SAAS - INDUSTRIAL SHARP EDITION (TRẮNG - ĐỎ SON - ĐEN)
    Học viện Công nghệ Bưu chính Viễn thông · PTIT Smart Logistics
    - Nền web: Ngả xám sâu chống chói (#CFD4DC), thẻ trắng tách bạch rõ rệt (#FFFFFF)
@@ -288,7 +288,38 @@ dialog,
 }
 
 /* Các đoạn văn bản thông tin bên trong thẻ xe */
-[data-theme="ptit"] .robot-transfer-card .vehicle-telemetry,
+[data-theme="ptit"] .robot-transfer-card .vehicle-telemetry {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px 12px !important;
+  color: #ffffff !important;
+}
+
+/* Badge hiển thị Pin xe sắc nét, siêu tương phản trên nền đỏ son PTIT */
+[data-theme="ptit"] .robot-transfer-card .vehicle-battery {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  background: rgba(0, 0, 0, 0.28) !important;
+  color: #ffffff !important;
+  font-weight: 750 !important;
+  font-size: 12px !important;
+  padding: 2px 8px !important;
+  border-radius: 6px !important;
+  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+  letter-spacing: 0.02em !important;
+}
+
+[data-theme="ptit"] .robot-transfer-card .vehicle-battery[data-low="true"] {
+  background: rgba(0, 0, 0, 0.45) !important;
+  color: #fef08a !important;            /* Vàng chanh sáng rực rỡ, độ tương phản tuyệt đối trên nền đỏ */
+  font-weight: 850 !important;
+  border: 1.5px solid #fde047 !important;
+  box-shadow: 0 0 8px rgba(253, 224, 71, 0.45) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7) !important;
+}
+
 [data-theme="ptit"] .robot-transfer-card .transfer-metadata,
 [data-theme="ptit"] .robot-transfer-card p {
   color: #ffffff !important;

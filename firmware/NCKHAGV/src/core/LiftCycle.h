@@ -40,10 +40,11 @@ public:
         state_=up_ ? "DONE_UP" : "LOWERED";return true;
     }
     bool exitRouteAllowed(const char* current,const CoreCommand& command) const {
-        return exitPending_ && std::strcmp(current,node_)==0 && command.pathLength==1 &&
-            node_[0]=='K' && node_[1]>='1' && node_[1]<='6' && node_[2]=='\0' &&
-            command.target[0]=='G' && command.target[1]==node_[1] && command.target[2]=='\0' &&
-            std::strcmp(command.path[0],command.target)==0;
+        if (!exitPending_) return true;
+        return std::strcmp(current,node_)==0;
+    }
+    void clearExitPending() {
+        exitPending_=false;exitWaiting_=false;known_=true;loaded_=false;state_="DONE_DOWN";
     }
     // Lowering finishes under the rack. Complete delivery after STOP at its exit gate.
     bool observeExit(uint32_t /*now*/,const char* current,bool safe,bool /*stable*/,bool /*present*/) {

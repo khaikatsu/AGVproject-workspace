@@ -230,8 +230,11 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
         return;
     }
     if (command.type == CoreCommandType::Goto) {
-        if(lift_.exitPending() && !lift_.exitRouteAllowed(control_.currentNode(),command)) {
-            control_.safeStop(ErrorCode::CargoMismatch);return;
+        if(lift_.exitPending()) {
+            if(!lift_.exitRouteAllowed(control_.currentNode(),command)) {
+                control_.safeStop(ErrorCode::CargoMismatch);return;
+            }
+            lift_.clearExitPending();
         }
         // A new route while between tags has no reliable physical start node.
         if (navigator_.active()) {

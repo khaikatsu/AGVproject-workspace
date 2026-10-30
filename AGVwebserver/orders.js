@@ -11,6 +11,7 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
   const orders = db.getOrders();
   let tickPromise = null,stopped = false,endingShift=false;
   const resolving=new Set();
+  const idleSince = {}, returningHome = {};
   const save = order=>{
     // Pin the legacy closure boundary before later writes can move updated.
     if(order.closed_by_shift&&!order.shift_closed_at)order.shift_closed_at=order.updated;
@@ -248,19 +249,26 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
     if (lift?.command_id===item.lift_command_id && lift.state==='INTERRUPTED') {
       interrupt(order,item,`Servo xe ${item.robot} bị gián đoạn`);return;
     }
-    if(!pickup&&loweredForExit(robot,node,item.lift_command_id)&&robotAt(state,item,node)) {
-      item.lift_completed_at=new Date().toISOString();item.dropoff_exit_pending=true;
-      item.status='ready_exit';item.exit_gate=warehouseGate(state,item.dropoff);save(order);return;
+    if (!pickup && robotAt(state, item, node) &&
+        (loweredForExit(robot, node, item.lift_command_id) ||
+         (lift?.fresh === true && lift.command_id === item.lift_command_id &&
+          ['DONE_DOWN', 'LOWERED'].includes(lift.state) && lift.active === false))) {
+      // Yeu cau nguoi dung: tra hang xong, ha servo xong doi lenh trong kho luon, khong lui ra G
+      void send({cmd: 'reconcile_test_cargo', robots: [{id: robot.id, lift_command_id: item.lift_command_id}]}).catch(err => console.warn('[AGV-ORDERS] Reconcile cargo sau ha:', err.message));
+      inventory?.confirmLift(moveKey(order, item), 'dropoff', robot, item.lift_command_id, order.core_session_id);
+      item.lift_completed_at = new Date().toISOString();
+      item.dropoff_exit_pending = false;
+      delivered(order, item);
+      return;
     }
-    if (lift?.fresh===true && lift.command_id===item.lift_command_id &&
-        lift.state===(pickup?'DONE_UP':'DONE_DOWN') && lift.active===false &&
-        (pickup||robot.lift.dropoff_exit_supported!==true) &&
-        robot.virtual_cargo_known===true && robot.virtual_cargo===expected && robotAt(state,item,node)) {
-      inventory?.confirmLift(moveKey(order,item),pickup?'pickup':'dropoff',robot,item.lift_command_id,order.core_session_id);
-      item.lift_completed_at=new Date().toISOString();
-      if (pickup) item.status='ready_dropoff';
-      else {item.status='ready_exit';item.exit_gate=warehouseGate(state,item.dropoff);}
-      save(order);return;
+    if (pickup && lift?.fresh === true && lift.command_id === item.lift_command_id &&
+        lift.state === 'DONE_UP' && lift.active === false &&
+        robot.virtual_cargo_known === true && robot.virtual_cargo === true && robotAt(state, item, node)) {
+      inventory?.confirmLift(moveKey(order, item), 'pickup', robot, item.lift_command_id, order.core_session_id);
+      item.lift_completed_at = new Date().toISOString();
+      item.status = 'ready_dropoff';
+      save(order);
+      return;
     }
     if (Date.now()-item.lift_sent_at>LIFT_RESULT_TIMEOUT_MS)
       interrupt(order,item,`Không nhận hoàn tất servo đúng lệnh tại ${node}; không cho xe chạy tiếp`);
@@ -458,6 +466,89 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
             order.destinationOwners[item.dropoff] = robot.id;
             await dispatch(order,item,robot,item.pickup,'pickup',state);
           }
+        }
+      }
+
+      // Tu dong dieu xe ve tram Base (S1/S2) khi het nhiem vu va hang doi rong
+      const hasQueuedWork = orders.some(order =>
+        ['active','needs_attention'].includes(order.status) &&
+        !order.closed_by_shift &&
+        !order.restart_hold &&
+        order.core_session_id === getSession() &&
+        order.items.some(item => item.status === 'queued')
+      );
+
+      const homeStations = state.shift?.home_stations || { '01': 'S1', '02': 'S2' };
+      for (const robot of state.fleet.agvs) {
+        if (robot.participating === false) continue;
+        const home = homeStations[robot.id] || (robot.id === '01' ? 'S1' : robot.id === '02' ? 'S2' : null);
+        if (!home) continue;
+
+        if (robot.node === home) {
+          delete idleSince[robot.id];
+          delete returningHome[robot.id];
+          continue;
+        }
+
+        // Xe dang dung trong kho K1..K6 thi doi lenh trong kho, khong tu dong dieu xe ve base
+        if (robot.node.startsWith('K')) {
+          delete idleSince[robot.id];
+          continue;
+        }
+
+        if (used.has(robot.id) || hasQueuedWork) {
+          delete idleSince[robot.id];
+          continue;
+        }
+
+        if (robot.state !== 'IDLE' || robot.task_id || robot.online === false || robot.position_valid === false || robot.error) {
+          if (robot.state !== 'WORKING') delete idleSince[robot.id];
+          continue;
+        }
+
+        if (robot.lift?.active || robot.heading_confirmation_required || robot.heading_confirmation_pending || robot.recovery_reset_pending) {
+          delete idleSince[robot.id];
+          continue;
+        }
+
+        if (robot.virtual_cargo_known === true && robot.virtual_cargo === true) {
+          delete idleSince[robot.id];
+          continue;
+        }
+
+        if (inventory && !inventory.robotAvailable(robot.id)) {
+          delete idleSince[robot.id];
+          continue;
+        }
+
+        if (returningHome[robot.id]) {
+          if (robot.state === 'IDLE' && !robot.task_id) {
+            returningHome[robot.id] = false;
+          } else {
+            continue;
+          }
+        }
+
+        if (!idleSince[robot.id]) {
+          idleSince[robot.id] = Date.now();
+          continue;
+        }
+
+        if (Date.now() - idleSince[robot.id] < 2500) {
+          continue;
+        }
+
+        returningHome[robot.id] = true;
+        try {
+          console.log(`[AGV-ORDERS] Xe ${robot.id} da het nhiem vu, hang doi trong -> Tu dong ve tram Base ${home}`);
+          const res = await send({cmd: 'direct_goto', agv_id: robot.id, target: home, priority: 0});
+          if (res?.task_id) {
+            console.log(`[AGV-ORDERS] Xe ${robot.id} da nhan lenh ve tram ${home} (task: ${res.task_id})`);
+          }
+        } catch (err) {
+          console.warn(`[AGV-ORDERS] Xe ${robot.id} ve ${home} chua thanh cong: ${err.message}`);
+          returningHome[robot.id] = false;
+          idleSince[robot.id] = Date.now() + 5000;
         }
       }
   }

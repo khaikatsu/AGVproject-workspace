@@ -52,11 +52,13 @@ public:
         return index_ < length_ && turns_[index_] == RouteTurn::Right
             ? Config::RIGHT_TURN_CAPTURE_PWM : Config::LEFT_TURN_CAPTURE_PWM;
     }
+    bool stationTurning() const { return phase_ == Phase::StationTurning && Config::STATION_TURN_180_PWM > 0; }
     bool precisionPivot() const {
-        return g1TurnAroundPrecision() || recoveringLine() || cornerRecovering() ||
+        return stationTurning() || g1TurnAroundPrecision() || recoveringLine() || cornerRecovering() ||
             turn180Recovering() || (turnCaptureEnabled() && phase_ == Phase::Turning && oldLineDeparted_);
     }
     int precisionPivotPwm() const {
+        if (stationTurning()) return Config::STATION_TURN_180_PWM;
         if (turn180Recovering()) return Config::TURN_180_RECOVERY_PWM;
         if (g1TurnAroundPrecision()) return Config::G1_TURN_AROUND_PWM;
                 if (cornerRecovering()) return Config::CORNER_RECOVERY_PWM;

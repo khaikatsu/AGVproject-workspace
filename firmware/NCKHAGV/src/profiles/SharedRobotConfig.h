@@ -133,5 +133,5 @@
 // 0: Tắt tự động quay 180 độ khi về trạm (xe dừng đỗ cố định tại trạm, an toàn)
 // 1: Bật tự động quay 180 độ hướng đầu xe ra ngoài sau khi đọc thẻ trạm
 #ifndef AGV_STATION_AUTO_TURN_180_ENABLED
-#define AGV_STATION_AUTO_TURN_180_ENABLED 0      // Mặc định tắt để tránh văng vạch hoặc va chạm trạm
+#define AGV_STATION_AUTO_TURN_180_ENABLED 1      // Mặc định tắt để tránh văng vạch hoặc va chạm trạm
 #endif

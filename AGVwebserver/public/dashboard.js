@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 let ws = null, lastState = null, backendOnline = false, reconnectTimer = null, generation = 0;
 let API_BASE = /^https?:$/.test(location.protocol) ? location.origin : 'http://localhost:3000';
 let selectedAgvId = null, previewMapId = null, currentKpiId = null, kpiHistoryData = [];
@@ -578,7 +578,7 @@ function renderShift(shift) {
 }
 async function changeShift(mode,button) {
   if(mode==='start'){openShiftWarehouse();return;}
-  if(!confirm('Kết thúc ca sẽ hủy toàn bộ nhiệm vụ đang chờ và đang thực hiện. Xe nhận lệnh dừng; kiểm tra kệ còn trên xe và đưa xe về trạm. Tiếp tục?'))return;
+  if(!confirm('Kết thúc ca sẽ tự động tính đường và phát lệnh đưa các xe về trạm Base (S1/S2). Tiếp tục?'))return;
   const result = await control('POST',`/api/shift/${mode}`,{},button);
   if (result) toast(result.shift?.phase==='CLOSED'?'Ca đã đóng. Có thể kiểm tra và lưu đối soát kho.':
     'Core đã nhận kết ca. Xem lý do còn chờ của từng xe trong bảng Ca làm việc.');
@@ -725,7 +725,7 @@ function applyAppTheme(theme) {
   const brandLogo = document.getElementById('brandLogoImg');
   if (brandLogo) brandLogo.style.display = isPtit ? 'block' : 'none';
   if (brandMark) { brandMark.style.display = isPtit ? 'none' : 'grid'; brandMark.textContent = 'AGV'; }
-  if (brandSub) brandSub.textContent = isPtit ? 'PTIT Smart Logistics · Học viện CN Bưu chính Viễn thông' : 'Kho AGV · Hai xe tự hành';
+  if (brandSub) brandSub.textContent = isPtit ? 'PTIT Smart Logistics' : 'Kho AGV · Hai xe tự hành';
   if (themeToggleLabel) themeToggleLabel.textContent = isPtit ? 'Gu PTIT' : 'Chuẩn';
   if (themeBadge) themeBadge.textContent = isPtit ? 'PTIT' : 'CYBER';
   try { localStorage.setItem('agv_theme', theme); } catch(e) {}

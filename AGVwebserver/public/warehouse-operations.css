@@ -19,8 +19,9 @@
 .transfer-card-heading strong {font-size:15px;color:var(--vehicle-color,#8cbfff);}
 .transfer-card-heading .operation-badge {font-size:12px;overflow-wrap:anywhere;}
 .transfer-card-heading strong {flex-shrink:0;}
-.vehicle-telemetry {display:flex;flex-wrap:wrap;gap:6px 14px;margin:9px 0 4px;font-size:12px;color:var(--text-main);}
-.vehicle-battery[data-low="true"] {color:var(--status-warn-text);}
+.vehicle-telemetry {display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:9px 0 4px;font-size:12px;color:var(--text-main);}
+.vehicle-battery {display:inline-flex;align-items:center;padding:1px 6px;border-radius:4px;}
+.vehicle-battery[data-low="true"] {color:#fde047;font-weight:750;}
 .vehicle-actions {display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;}
 .vehicle-actions button {padding:5px 9px;font-size:12px;}
 .transfer-phase {margin:10px 0 4px;font-size:13px;font-weight:650;line-height:1.45;}

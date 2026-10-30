@@ -65,6 +65,9 @@
 #define AGV_BENCH_TURN_MIN_MS 700       // Thời gian tối thiểu quay góc 90 độ (ms) trước khi bắt line mới
 
 // Riêng quay đầu 180 độ (tại G1/G2 hoặc quay đầu chặng):
+// Toc do xoay 180 do rieng khi ve tram Base S2 (S2 auto-turn 180):
+#define AGV_STATION_TURN_180_PWM 175
+
 #define AGV_G1_TURN_AROUND_PWM (AGV_BENCH_TURN_SPEED - 50) // PWM quay 180 độ (giảm 30 PWM để chống trượt bánh)
 
 // [CHỐNG ĂN LINE PHỤ KHI XOAY 180 ĐỘ]:

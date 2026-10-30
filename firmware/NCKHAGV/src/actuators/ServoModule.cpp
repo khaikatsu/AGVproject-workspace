@@ -53,5 +53,14 @@ bool ServoModule::liftDown() {
     return liftConfigured() && setAngle(Config::SERVO_LIFT, Config::SERVO_LIFT_DOWN_ANGLES[0]) &&
         setAngle(Config::SERVO_OTHER, Config::SERVO_LIFT_DOWN_ANGLES[1]);
 }
-void ServoModule::update() { if (busy_ && static_cast<uint32_t>(millis() - movedAtMs_) >= Config::SERVO_MOVE_TIME_MS) busy_ = false; }
+void ServoModule::update() {
+    if (busy_ && static_cast<uint32_t>(millis() - movedAtMs_) >= Config::SERVO_MOVE_TIME_MS) {
+        busy_ = false;
+        if (Config::SERVO_DETACH_ON_IDLE) {
+            for (size_t i = 0; i < Config::SERVO_PINS.size(); ++i) {
+                if (attached_[i]) ledcWrite(Config::SERVO_PWM_CHANNELS[i], 0);
+            }
+        }
+    }
+}
 int ServoModule::getAngle(size_t index) const { return index < 3 ? angles_[index] : -1; }

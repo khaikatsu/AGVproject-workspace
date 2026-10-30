@@ -1577,7 +1577,7 @@ public:
             if (singleRobotTrial_ && (path.size() < 2 || path.size() - 1 > 32))
                 return "Thu mot xe can duong co huong toi node khac, toi da 32 chang";
             const bool waitingForRoute = path.empty();
-            if (waitingForRoute && map_.findShortestPath(agv.currentNode,targetNode,buildOccupiedNodesNoLock(agv.id)).empty())
+            if (waitingForRoute && map_.findShortestPath(agv.currentNode,targetNode).empty())
                 return "Khong tim duoc duong tu " + agv.currentNode + " den " + targetNode;
 
             requeued = requeueWorkNoLock(agv); // không làm mất task đang dở
