@@ -22,6 +22,9 @@ if ($env:OS -eq 'Windows_NT') {
 }
 $compilerCommand = Get-Command $Compiler -CommandType Application -ErrorAction SilentlyContinue
 if (-not $compilerCommand -and $Compiler -eq 'g++') {
+    $compilerCommand = Get-Command 'D:/devc/Dev-Cpp/TDM-GCC-64/bin/g++.exe' -CommandType Application -ErrorAction SilentlyContinue
+}
+if (-not $compilerCommand -and $Compiler -eq 'g++') {
     $compilerCommand = Get-Command 'C:/msys64/ucrt64/bin/g++.exe' -CommandType Application -ErrorAction SilentlyContinue
 }
 if (-not $compilerCommand) { throw "Không tìm thấy compiler '$Compiler'. Dùng -Compiler với đường dẫn g++.exe." }
@@ -65,3 +68,4 @@ try {
 } finally {
     $env:PATH = $previousPath
 }
+

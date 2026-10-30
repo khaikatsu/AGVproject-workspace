@@ -1,4 +1,4 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    MINIMALIST TECH SAAS - INDUSTRIAL SHARP EDITION (TRẮNG - ĐỎ SON - ĐEN)
    Học viện Công nghệ Bưu chính Viễn thông · PTIT Smart Logistics
    - Nền web: Ngả xám sâu chống chói (#CFD4DC), thẻ trắng tách bạch rõ rệt (#FFFFFF)
@@ -48,8 +48,8 @@ body[data-theme="ptit"] {
 
   /* Vehicles on Map */
   --vehicle-primary: #c4122f;
-  --vehicle-secondary: #1f2937;
-  --vehicle-selected: #c4122f;
+  --vehicle-secondary: #0284c7;
+  --vehicle-selected: #f59e0b;
   --node-mutex: #ea580c;
   --node-charging: #16a34a;
   --node-station: #c4122f;
@@ -639,12 +639,36 @@ dialog select,
   font-weight: 650 !important;
 }
 
-/* Đường bám line mỏng lại, thanh thoát, màu xám than sang trọng */
-[data-theme="ptit"] #mapSvg .edge,
-[data-theme="ptit"] #mapSvg path[data-rounded-edge],
-[data-theme="ptit"] #mapSvg line {
-  stroke: #374151 !important;           /* Xám than công nghiệp, không bị đen gắt */
-  stroke-width: 2.8px !important;       /* Mỏng thanh thoát chuẩn kỹ thuật */
+/* Đường bám line ray bản đồ cố định (chỉ áp dụng trong #edgesG) */
+[data-theme="ptit"] #edgesG .edge,
+[data-theme="ptit"] #edgesG path,
+[data-theme="ptit"] #edgesG line,
+[data-theme="ptit"] #edgesG path[data-rounded-edge] {
+  stroke: #374151 !important;           /* Xám than công nghiệp, thanh thoát */
+  stroke-width: 2.8px !important;
+}
+
+/* Đường xe dự tính di chuyển (Routes) - Nổi bật, tách biệt hoàn toàn với line ray */
+[data-theme="ptit"] #routesG line,
+[data-theme="ptit"] #routesG path {
+  stroke-width: 5.5px !important;
+  stroke-dasharray: 9 4 !important;
+  stroke-linecap: round !important;
+  opacity: 0.95 !important;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.3)) !important;
+}
+
+/* Màu tuyến dự tính riêng cho từng xe */
+[data-theme="ptit"] #routesG [data-robot-route="01"],
+[data-theme="ptit"] #routesG line[data-robot-route="01"],
+[data-theme="ptit"] #routesG path[data-robot-route="01"] {
+  stroke: #c4122f !important;           /* Xe 01: Đỏ son PTIT rực rỡ */
+}
+
+[data-theme="ptit"] #routesG [data-robot-route="02"],
+[data-theme="ptit"] #routesG line[data-robot-route="02"],
+[data-theme="ptit"] #routesG path[data-robot-route="02"] {
+  stroke: #0284c7 !important;           /* Xe 02: Xanh Cobalt/Cyan công nghệ cao, cực kỳ rõ nét */
 }
 
 /* Đầu mũi tên xám than */
@@ -1051,4 +1075,5 @@ dialog select,
 [data-theme="ptit"] .mission-heading p {
   display: none !important;
 }
+
 
