@@ -478,7 +478,7 @@ function render(state) {
   renderMap(state.map,state.fleet.agvs);renderTasks(state.fleet.pending_tasks);
   renderMutex(state.mutex);populateTaskAgvSelect(state.fleet.agvs);
   populateNodeOptions(state.map);populateOrderWarehouses(state.map);renderOrders(state.orders || []);renderObstacleAction();renderSummary(state);
-  $('mapTitle').textContent = `${state.map.map_name || 'Bản đồ kho'} • phiên bản ${state.map.revision ?? '—'}`;
+  if ($('mapTitle')) $('mapTitle').textContent = '';
   updateVehicleRecovery();
 }
 function renderEmpty() {
@@ -711,3 +711,40 @@ setInterval(()=>{
   if(lastState)renderWarehouseOperations(lastState);
   if(!robotMotionFrame)animateRobotMarkers();
 },1000);
+
+
+// PTIT / Standard Theme Switcher
+function applyAppTheme(theme) {
+  const isPtit = theme === 'ptit';
+  document.documentElement.setAttribute('data-theme', theme);
+  document.body.setAttribute('data-theme', theme);
+  const brandMark = document.querySelector('.brand-mark');
+  const brandSub = document.querySelector('.brand-subtitle');
+  const themeToggleLabel = document.getElementById('themeToggleLabel');
+  const themeBadge = document.getElementById('themeBadge');
+  const brandLogo = document.getElementById('brandLogoImg');
+  if (brandLogo) brandLogo.style.display = isPtit ? 'block' : 'none';
+  if (brandMark) { brandMark.style.display = isPtit ? 'none' : 'grid'; brandMark.textContent = 'AGV'; }
+  if (brandSub) brandSub.textContent = isPtit ? 'PTIT Smart Logistics · Học viện CN Bưu chính Viễn thông' : 'Kho AGV · Hai xe tự hành';
+  if (themeToggleLabel) themeToggleLabel.textContent = isPtit ? 'Gu PTIT' : 'Chuẩn';
+  if (themeBadge) themeBadge.textContent = isPtit ? 'PTIT' : 'CYBER';
+  try { localStorage.setItem('agv_theme', theme); } catch(e) {}
+}
+
+function initThemeSwitcher() {
+  let savedTheme = 'ptit';
+  try {
+    savedTheme = localStorage.getItem('agv_theme') || 'ptit';
+  } catch(e) {}
+  applyAppTheme(savedTheme);
+
+  const toggleBtn = document.getElementById('themeToggleBtn');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      const current = document.body.getAttribute('data-theme') || 'ptit';
+      const nextTheme = current === 'ptit' ? 'standard' : 'ptit';
+      applyAppTheme(nextTheme);
+    });
+  }
+}
+initThemeSwitcher();

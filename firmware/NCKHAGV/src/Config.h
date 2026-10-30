@@ -797,9 +797,9 @@ constexpr size_t EVENT_QUEUE_LENGTH = 16;
 constexpr size_t RECENT_COMMAND_IDS = 16;
 constexpr bool DEBUG_ENABLED = true;
 #if defined(AGV_ROBOT_PROFILE_01) && AGV_ROBOT_PROFILE_01 == 1
-constexpr const char* FIRMWARE_BUILD = "20261030-robot01-cargo-monitor-v28";
+constexpr const char* FIRMWARE_BUILD = "20261030-robot01-ptit-cargo-monitor-v34";
 #elif defined(AGV_ROBOT_PROFILE_02) && AGV_ROBOT_PROFILE_02 == 1
-constexpr const char* FIRMWARE_BUILD = "20261030-robot02-cargo-monitor-v28";
+constexpr const char* FIRMWARE_BUILD = "20261030-robot02-ptit-cargo-monitor-v34";
 #else
 constexpr const char* FIRMWARE_BUILD = "20261015-battery-smoothing";
 #endif

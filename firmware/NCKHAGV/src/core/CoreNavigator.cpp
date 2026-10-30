@@ -577,7 +577,10 @@ bool CoreNavigator::observeTurnLine(const ControlInput& in) {
         oldLineDeparted_ = true;
     }
 
-    // 2. Xe phải đã rời khỏi line cũ trước khi được phép bắt line mới
+    // 2. Xe phải xoay đủ thời gian tối thiểu để thoát khỏi vạch giao lộ hiện tại (chống bắt nhầm vạch cũ)
+    if (elapsed < 180) return false;
+
+    // 3. Xe phải đã rời khỏi line cũ trước khi được phép bắt line mới
     if (!oldLineDeparted_) return false;
 
     // 3. Đón line mới: mắt giữa chạm line (010, 011, 110, 111)

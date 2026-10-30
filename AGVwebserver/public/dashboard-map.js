@@ -271,7 +271,7 @@ function renderStaticMap(map, agvs, prefix) {
     const blocked = obstacles.has(node.id);
     const circle = svgElement('circle', {
       cx: point.x, cy: point.y, r: preview ? 16 : 20,
-      fill: blocked ? '#7f1d1d' : '#1e293b',
+      fill: blocked ? '#7f1d1d' : 'var(--bg-panel, #ffffff)',
       stroke: blocked ? 'var(--status-error)' : nodeColors[node.type] || '#475569',
       'stroke-width': 2, class: 'node-clickable'
     });
