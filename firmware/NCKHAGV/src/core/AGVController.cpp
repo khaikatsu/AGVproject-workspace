@@ -596,7 +596,25 @@ void AGVController::update() {
             motorAction != MotorAction::PivotLeft && motorAction != MotorAction::PivotRight;
         // Capture the previous edge before context() clears it on fault/STOP.
         encoder_.update(millis());
-        stoppedPosition_.update(encoder_.snapshot(), control_.currentNode(), mqtt_.session(), localized,
+        const auto encSnap = encoder_.snapshot();
+        if (translating) {
+            if (encSnap.leftTicks != lastStallLeftTicks_ || encSnap.rightTicks != lastStallRightTicks_) {
+                lastStallLeftTicks_ = encSnap.leftTicks;
+                lastStallRightTicks_ = encSnap.rightTicks;
+                lastStallCheckMs_ = millis();
+            } else if (Config::MOTOR_STALL_TIMEOUT_MS > 0 &&
+                       static_cast<uint32_t>(millis() - lastStallCheckMs_) >= Config::MOTOR_STALL_TIMEOUT_MS) {
+                movement_.stop();
+                navigator_.fault(ErrorCode::MotionTimeout);
+                control_.safeStop(ErrorCode::MotionTimeout);
+                lastStallCheckMs_ = millis();
+            }
+        } else {
+            lastStallCheckMs_ = millis();
+            lastStallLeftTicks_ = encSnap.leftTicks;
+            lastStallRightTicks_ = encSnap.rightTicks;
+        }
+        stoppedPosition_.update(encSnap, control_.currentNode(), mqtt_.session(), localized,
             navigator_.error() != ErrorCode::None || control_.error() != ErrorCode::None,
             motorAction == MotorAction::Stop && motor_.leftDuty() == 0 && motor_.rightDuty() == 0,
             motorAction == MotorAction::PivotLeft || motorAction == MotorAction::PivotRight,

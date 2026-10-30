@@ -89,7 +89,12 @@ inline const char* bayGate(const char* id) {
 }
 inline RobotHeading bayHeading(const char* id) {
     const char* gate = bayGate(id);
-    return gate ? (station(id) ? edgeHeading(id,gate) : edgeHeading(gate,id)) : RobotHeading::Unknown;
+    if (!gate) return RobotHeading::Unknown;
+    if (Config::STATION_AUTO_TURN_180_ENABLED) {
+        return station(id) ? edgeHeading(id,gate) : edgeHeading(gate,id);
+    } else {
+        return edgeHeading(gate,id);
+    }
 }
 inline const char* gateBay(const char* gateId) {
     if (!gateId || !gateId[0] || !gateId[1] || gateId[2]) return nullptr;

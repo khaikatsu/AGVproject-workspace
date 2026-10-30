@@ -103,4 +103,7 @@ private:
     uint32_t startupRightTicks_ = 0;
     MotionGroup lastBoostGroup_ = MotionGroup::Stop;
     uint32_t lastBoostLogMs_ = 0;
+    uint32_t lastStallCheckMs_ = 0;
+    uint32_t lastStallLeftTicks_ = 0;
+    uint32_t lastStallRightTicks_ = 0;
 };

@@ -111,3 +111,27 @@
 #ifndef AGV_TURN_180_RECOVERY_DELAY_MS
 #define AGV_TURN_180_RECOVERY_DELAY_MS 100      // Thời gian phanh dừng chờ ban đầu (ms) trước khi kích hoạt cứu line
 #endif
+
+// ----------------------------------------------------------------------------
+// CẤU HÌNH TỰ ĐỘNG KHÓA VÙNG KHI XE BỊ KẸT (Obstacle & Motor Stall Timeout)
+// ----------------------------------------------------------------------------
+// Khi xe bị cản trở bởi vật cản phía trước quá thời gian quy định,
+// Firmware kích hoạt lỗi Obstacle để Server khóa node/phân đoạn, bảo vệ luồng xe.
+#ifndef AGV_OBSTACLE_STUCK_TIMEOUT_MS
+#define AGV_OBSTACLE_STUCK_TIMEOUT_MS 5000       // Thời gian chờ vật cản tối đa trước khi báo lỗi (ms)
+#endif
+
+// Khi động cơ đang cấp lệnh chạy nhưng xung Encoder hai bánh không thay đổi,
+// Firmware xác định xe bị kẹt bánh hoặc kẹt cơ khí để báo lỗi và chốt vị trí dừng.
+#ifndef AGV_MOTOR_STALL_TIMEOUT_MS
+#define AGV_MOTOR_STALL_TIMEOUT_MS 2500          // Thời gian phát hiện kẹt động cơ (ms)
+#endif
+
+// ----------------------------------------------------------------------------
+// CẤU HÌNH TỰ ĐỘNG QUAY 180 ĐỘ KHI VỀ TRẠM SẠC (Station Auto Turn 180)
+// ----------------------------------------------------------------------------
+// 0: Tắt tự động quay 180 độ khi về trạm (xe dừng đỗ cố định tại trạm, an toàn)
+// 1: Bật tự động quay 180 độ hướng đầu xe ra ngoài sau khi đọc thẻ trạm
+#ifndef AGV_STATION_AUTO_TURN_180_ENABLED
+#define AGV_STATION_AUTO_TURN_180_ENABLED 0      // Mặc định tắt để tránh văng vạch hoặc va chạm trạm
+#endif

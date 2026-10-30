@@ -419,6 +419,24 @@ constexpr int CORNER_RECOVERY_STEERING_SIGN = 1;
 // Operator requests stop at or below 15 cm; verify on the physical sensor.
 constexpr float OBSTACLE_DISTANCE_CM = 15.0f;
 constexpr float OBSTACLE_CLEAR_CM = 20.0f;
+
+#if defined(AGV_OBSTACLE_STUCK_TIMEOUT_MS)
+constexpr uint32_t OBSTACLE_STUCK_TIMEOUT_MS = AGV_OBSTACLE_STUCK_TIMEOUT_MS;
+#else
+constexpr uint32_t OBSTACLE_STUCK_TIMEOUT_MS = 5000;
+#endif
+
+#if defined(AGV_MOTOR_STALL_TIMEOUT_MS)
+constexpr uint32_t MOTOR_STALL_TIMEOUT_MS = AGV_MOTOR_STALL_TIMEOUT_MS;
+#else
+constexpr uint32_t MOTOR_STALL_TIMEOUT_MS = 2500;
+#endif
+
+#if defined(AGV_STATION_AUTO_TURN_180_ENABLED)
+constexpr bool STATION_AUTO_TURN_180_ENABLED = AGV_STATION_AUTO_TURN_180_ENABLED == 1;
+#else
+constexpr bool STATION_AUTO_TURN_180_ENABLED = false;
+#endif
 // Bounded software trial, not a measured turn time. Pivot exits when a line
 // is reacquired after leaving the original line; bench calibration is pending.
 #if defined(AGV_BENCH_TURN_MIN_MS)

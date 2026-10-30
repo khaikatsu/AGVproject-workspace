@@ -391,7 +391,7 @@ void CoreNavigator::reachedNode(const char* node, uint32_t now, const ControlInp
     reverseAligned_ = false;
     reverseAlignStartedMs_ = 0;
     if (RoutePlanner::station(node)) {
-        if (parkedReverse) {
+        if (parkedReverse || !Config::STATION_AUTO_TURN_180_ENABLED) {
             if (index_ == length_) stop();
             else {
                 phase_ = Phase::WaitingGrant;
@@ -634,6 +634,11 @@ MotorAction CoreNavigator::update(const ControlInput& in) {
     if (in.obstacle) {
         if (Config::REAR_ULTRASONIC_ECHO_PIN < 0) { fault(ErrorCode::Obstacle); return MotorAction::Stop; }
         if (!obstaclePaused_) { obstaclePaused_ = true; obstaclePausedAtMs_ = in.now; }
+        if (Config::OBSTACLE_STUCK_TIMEOUT_MS > 0 &&
+            static_cast<uint32_t>(in.now - obstaclePausedAtMs_) >= Config::OBSTACLE_STUCK_TIMEOUT_MS) {
+            fault(ErrorCode::Obstacle);
+            return MotorAction::Stop;
+        }
         centerSamples_ = 0;
         turnSampleReady_ = false;
         captureHistory_ = captureCount_ = 0;
