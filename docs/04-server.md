@@ -1,5 +1,17 @@
 # Phát triển server và lưu trữ
 
+30/10/2026 mới nhất: [ADR-101](decisions/ADR-101-shift-home-departure-readiness.md) chặn tuyến returnToHome mới và retry BLOCKED khi chưa có hướng/STOP/RFID mới đúng phiên hoặc lệnh cũ chưa ACK. Giữ CLOSING và lý do chờ, không phát GOTO sai hoặc tự gỡ lỗi; tuyến đã phát không lặp mỗi tick. STALE_COMMAND ghi core_context như INVALID_COMMAND. Core đã build riêng, chưa áp vận hành; không đổi firmware/timeout/counter.
+
+30/10/2026: [ADR-100](decisions/ADR-100-direct-goto-busy-guard-and-error-context.md) chặn directGoto chồng tuyến độc lập capability, giữ task/target/path đang hoạt động và trả409. INVALID_COMMAND lưu core_context trước interrupt/STOP để truy vết. Build riêng thành công, chưa thay Core vận hành; không sửa firmware.
+
+30/10/2026 mới nhất: [ADR-099](decisions/ADR-099-cargo-monitoring-and-direct-reconciliation.md) bỏ proof LM393 khỏi nâng/hạ/chạy tiếp; vẫn đúng ID/phiên/RFID/STOP/5000ms. Core nhận cargoMonitoringOnly từ MCUv28 và dùng diagnostic uptime tăng độc lập cảm biến. Sổ kho chờ DONE/task gate, không tự ghi missing từ cargo. Đối soát cargo bỏ gate/cảm biến/diagnostic/trạm, cho MQTT offline; giữ task/tuyến/lift active, không actuator/nhả lỗi/mutex. Chưa build/test/triển khai.
+
+30/10/2026, mới nhất: `orders.resolve` thực hiện transaction sổ kho/đóng đơn trực tiếp; không gọi Core `reconcile_test_cargo` và không yêu cầu `physically_clear`. Event dùng `operator_requested/inventory_only/physical_completion_verified:false`; giữ cargo Core/cảm biến, revision, kiểm tra xung đột và báo cáo cũ. [ADR-098](decisions/ADR-098-one-click-inventory-rollback.md) thay luồng hoàn tác ADR-089.
+
+30/10/2026: [ADR-097](decisions/ADR-097-healthy-home-without-heading-confirmation.md) bỏ chu kỳ xác nhận hướng cho xe khỏe đỗ đúng S1/S2. Diagnostic mới, đúng phiên, motorSTOP và không task/footprint/lift/reset nhận hướng bay_default hoặc docking route/ready đúng quy ước; lỗi chỉ reconnect được tự gỡ trong phạm vi này. Không tự xóa lỗi thật, cargo hoặc mutex.
+
+30/10/2026: [ADR-096](decisions/ADR-096-durable-shift-closure-and-reconciliation.md) tách mốc ca CLOSED bền vững khỏi điều kiện mở ca mới. Đơn đã kết ca không bị ghi lại khi Core mất kết nối; mốc legacy được ghim trước save và bằng chứng đối soát được publish ngay sau commit. Cần Core/gateway mới, giữ toàn bộ chốt và lịch sử.
+
 29/10/2026, REQ-DROPOFF-EXIT-PROOF-20261029: Core nhận capability `dropoffExitSupported`; sau LOWERED tại kho giữ cargo=true/dropoff_exit_pending, chỉ cấp chặng lùi một cạnh K→G. Đúng DONE_DOWN/lift ID/boot/kết nối/cảm biến trống mới tại gate mới xóa hold. Scheduler đơn/thao tác một xe chờ thêm task gate completed rồi mới confirmLift/ghi sổ kho, không ghi giao ngay khi servo hạ hết5s. Checkpoint giữ hold sau restart nhưng không khôi phục quyền chạy hoặc proof phiên. Chưa build/test/chạy bản sửa. [ADR-093](decisions/ADR-093-dropoff-exit-cargo-proof.md).
 
 29/10/2026, REQ-UNIFIED-RECOVERY-HEADING-20261029: Core giữ khóa hướng khi phục hồi thiếu hướng chắc chắn/xe được di chuyển hoặc đổi boot/kết nối/restart. Khóa áp dụng directGoto/resume/dispatch/assignPath và chốt phát GOTO/NODE_ORDER/CHARGE_START. Xác nhận hướng dùng yêu cầu riêng khi xe đã khỏe, chứng minh dừng đúng node; chỉ diagnostic operator khớp cmd_id/node/hướng/boot/kết nối/uptime mới mở khóa. Không suy thành công từ ACK hoặc hướng bay_default. [ADR-092](decisions/ADR-092-unified-recovery-heading.md).

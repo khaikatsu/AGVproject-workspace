@@ -1,12 +1,12 @@
 const {randomUUID}=require('node:crypto');
 const {shortestRoute}=require('./order-planner');
 const {isWarehouseNode}=require('./public/warehouse-rules');
-const {cargoReading,cargoResult,loweredForExit,dropoffDoneAtGate}=require('./cargo-proof');
+const {loweredForExit,dropoffDoneAtGate}=require('./cargo-proof');
 const SERVICE_MS=5000;
 const finished=action=>['completed','interrupted'].includes(action.status);
 
 // Temporary warehouse tests; the servo cargo marker is not an order or a load sensor.
-function createWarehouseActions({getState,getSession,send,publish,inventory,cargoScanTimeoutMs = 0}) {
+function createWarehouseActions({getState,getSession,send,publish,inventory}) {
   const actions=[],resuming=new Set();let running=null,closed=false,endingShift=false;
   const scopedRobot=state=>state?.shift?.trial_robot_id ||
     (state?.shift?.operation_profile==='scoped'&&state.shift.active_robot_ids?.length===1 ? state.shift.active_robot_ids[0] :
@@ -55,8 +55,7 @@ function createWarehouseActions({getState,getSession,send,publish,inventory,carg
     return robot&&robot.online!==false&&robot.position_valid!==false&&!robot.error&&robot.state==='IDLE'&&!robot.task_id&&robot.node===node;}
   function complete(action){action.status='completed';action.task_id=null;action.completed_at=new Date().toISOString();changed();}
   function servoReady(action){const robot=getState()?.fleet.agvs.find(robot=>robot.id===action.robot);
-    return robot?.node===action.warehouse&&robot.lift?.ready===true&&robot.lift.fresh===true&&robot.lift.observed_node===action.warehouse&&
-      cargoResult(robot,action.warehouse,true);}
+    return robot?.node===action.warehouse&&robot.lift?.ready===true&&robot.lift.fresh===true&&robot.lift.observed_node===action.warehouse;}
   async function startServo(action){
     action.service_until=new Date(Date.now()+SERVICE_MS).toISOString();
     action.status='dispatching_lift';changed();
@@ -71,16 +70,10 @@ function createWarehouseActions({getState,getSession,send,publish,inventory,carg
     action.task_id=null;action.service_until=new Date(Date.now()+SERVICE_MS).toISOString();
     if(!action.servo){action.status='waiting';changed();return;}
     action.status='waiting_servo';action.lift_wait_started_at=Date.now();changed();
-    // Inspect an empty pickup before sending any servo command.
+    // Start the timed servo cycle as soon as the stopped robot/lift are ready.
     await inspectAndStart(action);
   }
   async function inspectAndStart(action){
-    const robot=getState()?.fleet.agvs.find(robot=>robot.id===action.robot),cargo=cargoReading(robot,action.warehouse);
-    if(cargo.required&&cargo.known&&!cargo.present){
-      if(action.action==='pickup' && (Date.now() - (action.lift_wait_started_at || 0) < cargoScanTimeoutMs)) return;
-      if(action.action==='pickup'&&action.inventory_tracked)inventory.confirmMissing(`action:${action.id}`,robot,action.core_session_id);
-      interrupt(action,action.action==='pickup'?`${action.warehouse} thực tế không có hàng; không nâng kệ`:'Xe không còn hàng trước khi hạ');return;
-    }
     if(servoReady(action))await startServo(action);
   }
   async function dispatch(action,target,exit){
@@ -158,8 +151,8 @@ function createWarehouseActions({getState,getSession,send,publish,inventory,carg
         action.dropoff_exit_pending=true;await dispatch(action,action.gate,true);return;
       }
       if(lift?.fresh===true&&lift.command_id===action.lift_command_id&&lift.state===(up?'DONE_UP':'DONE_DOWN')&&
-        (up||lift.dropoff_exit_supported!==true&&robot.cargo_sensor?.required!==true)&&
-        lift.active===false&&robot.virtual_cargo_known===true&&robot.virtual_cargo===up&&cargoResult(robot,action.warehouse,up)&&at(state,action,action.warehouse)){
+        (up||lift.dropoff_exit_supported!==true)&&
+        lift.active===false&&robot.virtual_cargo_known===true&&robot.virtual_cargo===up&&at(state,action,action.warehouse)){
         if(action.inventory_tracked)inventory.confirmLift(`action:${action.id}`,action.action,robot,action.lift_command_id,action.core_session_id);
         await dispatch(action,action.gate,true);return;
       }

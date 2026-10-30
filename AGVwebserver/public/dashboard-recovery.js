@@ -22,15 +22,15 @@ function updateVehicleRecovery() {
   }
   if(robot.recovery_reset_pending){status.textContent='Đã gửi reset; chờ xe xác nhận hết lỗi. Xe vẫn đứng yên.';return;}
   if(robot.heading_confirmation_pending){status.textContent='Đang chờ xe xác nhận hướng. ACK nhận lệnh chưa hoàn tất bước này.';return;}
-  const ready=robot.state==='IDLE'&&robot.recovery_node_verified===true&&
+  const home=lastState.shift?.home_stations?.[ctx.id]===robot.node;
+  const ready=robot.state==='IDLE'&&(home?robot.position_valid===true:robot.recovery_node_verified===true)&&
     !robot.task_id&&!robot.target&&!(robot.path||[]).length&&!(robot.uncertain_path||[]).length&&
     !robot.cancel_waiting_for_node&&!robot.replan_waiting_for_node&&!robot.lift?.active;
-  const home=lastState.shift?.home_stations?.[ctx.id]===robot.node;
   $('vehicleRecoveryChecks').hidden=home;
   $('vehicleRecoveryHeading').hidden=home;
   button.textContent='Khôi phục và tiếp tục';
   if(ctx.busy){status.textContent='Đang gửi yêu cầu…';return;}
-  if(home){status.textContent=ready&&!robot.heading_confirmation_required?'Xe đã sẵn sàng tại trạm.':'Trạm bảo dưỡng đang tự kiểm tra RFID, firmware, cơ cấu và kết nối. Xe chỉ sẵn sàng khi mọi điều kiện đạt.';return;}
+  if(home){status.textContent=ready&&!robot.heading_confirmation_required?'Xe đã sẵn sàng tại trạm. Không cần xác nhận hướng thủ công.':'Xe tự khôi phục tại trạm riêng, không cần chọn hướng. Đang chờ diagnostic khỏe và xác nhận dừng; lỗi hoặc công việc chưa xử lý vẫn giữ chốt.';return;}
   {
     const expected=robot.recovery_expected_heading;
     $('vehicleRecoveryHeadingHint').textContent=expected?

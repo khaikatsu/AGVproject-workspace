@@ -25,10 +25,15 @@ async function main(){
       assert.equal(sent.url,`/api/agvs/${id}/recover`);assert.deepEqual(sent.body,{expected_node:'G1',heading:'E',physically_clear:true,continue_task:true});
       await page.evaluate(()=>{$('vehicleRecoveryDialog').close();lastState.fleet.agvs[0].node=lastState.shift.home_stations[lastState.fleet.agvs[0].id];openVehicleRecovery(lastState.fleet.agvs[0].id)});
       assert.equal(await page.locator('#vehicleRecoverySubmit').isDisabled(),true);
-      assert.match(await page.locator('#vehicleRecoveryStatus').textContent(),/tự kiểm tra/);
+      assert.match(await page.locator('#vehicleRecoveryStatus').textContent(),/tự khôi phục.*không cần chọn hướng/);
+      assert.equal(await page.locator('#vehicleRecoveryHeading').isVisible(),false);
+      await page.evaluate(()=>{Object.assign(lastState.fleet.agvs[0],{state:'IDLE',position_valid:true,
+        recovery_node_verified:false,heading_confirmation_required:false,task_id:'',target:'',path:[],uncertain_path:[]});updateVehicleRecovery();});
+      assert.match(await page.locator('#vehicleRecoveryStatus').textContent(),/sẵn sàng tại trạm.*Không cần xác nhận hướng thủ công/);
       await page.evaluate(()=>$('vehicleRecoveryDialog').close());
     }
-    assert.deepEqual(errors,[]);console.log('PASS browser 01/02: one physical check + direction, exact API, automatic home, no page errors');
+    assert.equal(await page.evaluate(()=>requests.length),2,'home readiness sends no request');
+    assert.deepEqual(errors,[]);console.log('PASS browser 01/02: one physical check + direction outside home, healthy home without fresh RFID anchor/manual heading, no extra request or page errors');
   }finally{await browser.close();}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

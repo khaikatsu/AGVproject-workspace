@@ -12,9 +12,9 @@
       "environment": [
         { "name": "_NO_DEBUG_HEAP", "value": "1" },
         { "name": "AGV_CORE_WS_HOST", "value": "127.0.0.1" },
-        { "name": "PATH", "value": "C:/msys64/ucrt64/bin;${env:PATH}" }
+        { "name": "PATH", "value": "C:/msys64/ucrt64/bin;C:/Program Files/Mosquitto;${env:PATH}" }
       ],
-      "externalConsole": true,
+      "externalConsole": false,
       "MIMode": "gdb",
       "miDebuggerPath": "C:/msys64/ucrt64/bin/gdb.exe"
     }

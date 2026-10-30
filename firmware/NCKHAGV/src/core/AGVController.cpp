@@ -161,7 +161,7 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
         if(std::strcmp(control_.currentNode(),Config::AGV_ID[1]=='1'?"S1":"S2")==0 &&
             positionConfirmed_&&positionSession_==mqtt_.session()&&millis()-lastRfidSeenMs_<=250&&
             !navigator_.active()&&!control_.task().active&&!servo_.busy()&&!lift_.busy()&&
-            motor_.leftDuty()==0&&motor_.rightDuty()==0&&cargo_.stable()) {
+            motor_.leftDuty()==0&&motor_.rightDuty()==0) {
             lift_.abandonAtMaintenance();
             if(!saveLift()){control_.safeStop(ErrorCode::Configuration);return;}
         }
@@ -202,17 +202,7 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
             positionConfirmed_ && positionSession_==mqtt_.session() &&
             std::strcmp(command.node,control_.currentNode())==0 && wifi_.isConnected() && mqtt_.isConnected();
         if (!ready) { mqtt_.publishError(ErrorCode::ServoConfiguration,millis());return; }
-        // Local check closes the gap between the server observation and receipt.
-        // Cho phep cam bien hang on dinh trong toi da 300ms sau khi vua dung xe
-        uint32_t cargoWaitStart = millis();
-        while ((!cargo_.stable() || !cargo_.present()) && (static_cast<uint32_t>(millis() - cargoWaitStart) < 300)) {
-            cargo_.update(millis());
-            delay(10);
-        }
-        if(!cargo_.stable() || !cargo_.present()) {
-            control_.safeStop(cargo_.stable()?ErrorCode::CargoMissing:ErrorCode::CargoSensorUnstable);
-            publishTelemetry();return;
-        }
+        // LM393 remains telemetry; it does not authorize or delay the lift.
         // Commit intent before PWM; a reboot resumes the same target and ID.
         lift_.setOwner(mqtt_.coreIdentity());
         if(!lift_.owner() || !lift_.start(command,millis()) || !saveLift()) {lift_.interrupt();control_.safeStop(ErrorCode::Configuration);return;}
@@ -240,7 +230,7 @@ void AGVController::handleCommand(const CoreCommand& command, bool inhibited) {
         return;
     }
     if (command.type == CoreCommandType::Goto) {
-        if(lift_.exitPending() && (!lift_.exitRouteAllowed(control_.currentNode(),command) || !cargo_.stable())) {
+        if(lift_.exitPending() && !lift_.exitRouteAllowed(control_.currentNode(),command)) {
             control_.safeStop(ErrorCode::CargoMismatch);return;
         }
         // A new route while between tags has no reliable physical start node.
@@ -497,8 +487,7 @@ void AGVController::update() {
         const auto current=input();const auto error=control_.error();
         const bool recoverable=error==ErrorCode::None||error==ErrorCode::NotConnected||error==ErrorCode::WifiTimeout||error==ErrorCode::MqttTimeout;
         const bool ready=!inhibited&&recoverable&&lift_.owner()==mqtt_.coreIdentity()&&current.wifi&&current.mqtt&&current.motionConfigured&&
-            current.distanceValid&&!current.obstacle&&current.lineConfigured&&cargo_.stable()&&
-            ((!lift_.resumePending()&&!lift_.up())||cargo_.present())&&
+            current.distanceValid&&!current.obstacle&&current.lineConfigured&&
             positionConfirmed_&&positionSession_==mqtt_.session()&&millis()-lastRfidSeenMs_<=250&&
             std::strcmp(control_.currentNode(),lift_.node())==0&&!navigator_.active()&&!control_.task().active&&!servo_.busy();
         if(!ready)liftRecoveryStableMs_=0;
@@ -525,17 +514,8 @@ void AGVController::update() {
             (navigator_.error()==ErrorCode::None||networkOnly) && AGVMath::motionVoltageError(battery_.readVoltage())==ErrorCode::None;
         if(lift_.update(millis(),safe,cargo_.stable(),cargo_.present())) {
             if(!safe) control_.safeStop(ErrorCode::ServoInterrupted);
-            else if(std::strcmp(lift_.state(),"INTERRUPTED")==0)
-                control_.safeStop(cargo_.stable()?ErrorCode::CargoMismatch:ErrorCode::CargoSensorUnstable);
             publishTelemetry();
         }
-    }
-    if(lift_.cargoKnown() && lift_.cargo() && !lift_.busy() && !lift_.exitPending() && navigator_.active() &&
-        cargo_.stable() && !cargo_.present()) {
-        movement_.stop();navigator_.fault(ErrorCode::CargoLost);control_.safeStop(ErrorCode::CargoLost);
-    }
-    if(lift_.cargoKnown() && lift_.cargo() && !lift_.busy() && !lift_.exitPending() && navigator_.active() && cargo_.unstableMs(millis())>=750) {
-        movement_.stop();navigator_.fault(ErrorCode::CargoSensorUnstable);control_.safeStop(ErrorCode::CargoSensorUnstable);
     }
     const bool sonarAcquiring = Config::ULTRASONIC_MOTION_GUARD &&
         Config::REAR_ULTRASONIC_ECHO_PIN >= 0 && sonars_.acquiring();
@@ -570,10 +550,6 @@ void AGVController::update() {
         movement_.action()==MotorAction::Stop && motor_.leftDuty()==0 && motor_.rightDuty()==0 &&
         static_cast<uint32_t>(millis()-lastRfidSeenMs_)<=250;
     if(lift_.observeExit(millis(),control_.currentNode(),exitSafe,cargo_.stable(),cargo_.present())) {
-        if(std::strcmp(lift_.state(),"INTERRUPTED")==0) {
-            movement_.stop();navigator_.fault(cargo_.stable()?ErrorCode::CargoMismatch:ErrorCode::CargoSensorUnstable);
-            control_.safeStop(cargo_.stable()?ErrorCode::CargoMismatch:ErrorCode::CargoSensorUnstable);
-        }
         publishTelemetry();
     }
     if(!saveLift()) {lift_.interrupt();movement_.stop();control_.safeStop(ErrorCode::Configuration);}
@@ -738,7 +714,7 @@ void AGVController::publishTelemetry() {
     const auto stationInput=input();
     snapshot.maintenanceReady=std::strcmp(control_.currentNode(),Config::AGV_ID[1]=='1'?"S1":"S2")==0&&
         stationInput.wifi&&stationInput.mqtt&&stationInput.motionConfigured&&stationInput.lineConfigured&&
-        stationInput.distanceValid&&!stationInput.obstacle&&cargo_.stable()&&
+        stationInput.distanceValid&&!stationInput.obstacle&&
         (stationInput.linePattern==7||AGVMath::lineAction(stationInput.linePattern)!=MotorAction::Stop)&&
         positionConfirmed_&&positionSession_==mqtt_.session()&&millis()-lastRfidSeenMs_<=250&&
         !navigator_.active()&&!control_.task().active&&!servo_.busy()&&!lift_.busy()&&

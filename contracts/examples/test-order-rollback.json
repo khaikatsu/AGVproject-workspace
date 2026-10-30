@@ -2,24 +2,13 @@
   "http_request": {
     "method": "POST",
     "path": "/api/orders/order-test-1/resolve",
-    "body": {"physically_clear": true, "expected_revision": 12}
-  },
-  "core_request": {
-    "cmd": "reconcile_test_cargo",
-    "request_id": "rollback-request-1",
-    "physically_clear": true,
-    "robots": [{"id": "01", "lift_command_id": 71}, {"id": "02", "lift_command_id": 72}]
-  },
-  "core_result": {
-    "type": "command_result",
-    "request_id": "rollback-request-1",
-    "core_session_id": "test-session",
-    "ok": true,
-    "data": {"reconciled": [{"id": "01", "lift_command_id": 71}, {"id": "02", "lift_command_id": 72}]}
+    "body": {"expected_revision": 12}
   },
   "order_result_fields": {
     "status": "closed",
     "resolution": "rollback_to_pickup",
+    "rollback_scope": "inventory_only",
+    "physical_completion_verified": false,
     "rolled_back": [
       {"key": "order:order-test-1:1", "rack_id": "R1", "robot": "01", "pickup": "K1"},
       {"key": "order:order-test-1:2", "rack_id": "R3", "robot": "02", "pickup": "K3"}

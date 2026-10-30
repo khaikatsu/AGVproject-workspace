@@ -102,6 +102,9 @@ function updateConnection() {
   const shift = lastState?.shift;
   $('startShiftBtn').disabled = !controlsReady() || !shift?.supported || !shift.can_start || $('startShiftBtn').dataset.busy === 'true';
   $('endShiftBtn').disabled = !dataFresh() || !lastState?.protocol_supported || !shift?.supported || shift.phase !== 'RUNNING' || $('endShiftBtn').dataset.busy === 'true';
+  $('endShiftBtn').textContent = shift?.phase==='CLOSED'?'Ca đã đóng':shift?.phase==='CLOSING'?'Đang kết ca':'Kết thúc ca';
+  $('endShiftBtn').title = !dataFresh()?'Chờ Core có dữ liệu mới':shift?.phase==='CLOSED'?'Ca này đã kết thúc':
+    shift?.phase==='CLOSING'?'Đã nhận kết ca. Xem lý do từng xe trong bảng Ca làm việc.':'';
   updateWarehouseControls();
   updateWarehouseInventoryControls();
   renderWarehouseOperations(lastState);renderTransferForm();
@@ -241,10 +244,9 @@ async function deleteDashboardRecord(kind,id,button) {
   } finally {pendingControls.delete(key);button.dataset.busy='false';updateConnection();}
 }
 function warehouseRollbackLabel(order) {
-  const moves=lastState?.warehouse?.moves||[];
-  const sources=[...new Set((order?.items||[]).filter(item=>item.status!=='delivered'&&
-    moves.some(move=>move.key===`order:${order.id}:${item.number}`)).map(item=>locationText(item.pickup)))];
-  return sources.length?`Hoàn tác về ${sources.join(', ')}`:'Đối soát';
+  const sources=[...new Set((order?.items||[]).filter(item=>item.status!=='delivered'&&item.pickup)
+    .map(item=>locationText(item.pickup)))];
+  return sources.length?`Hoàn tác về ${sources.join(', ')}`:'Hoàn tác';
 }
 async function resolveWarehouseOrder(orderId) {
   const key=`resolve:${orderId}`;
@@ -252,11 +254,10 @@ async function resolveWarehouseOrder(orderId) {
   const order=lastState?.orders?.find(order=>order.id===orderId);
   if(!order)return;
   const revision=lastState?.warehouse?.revision;
-  if(!confirm(`${warehouseRollbackLabel(order)}? Xác nhận kệ của lượt dang dở đã về kho lấy và xe đã trống. Lượt đã hạ xong được giữ nguyên.`))return;
   pendingControls.add(key);
   try {
-    const result=await api('POST',`/api/orders/${encodeURIComponent(orderId)}/resolve`,{physically_clear:true,expected_revision:revision});
-    if(result)toast('Đã đối soát và hoàn tác lượt dang dở');
+    const result=await api('POST',`/api/orders/${encodeURIComponent(orderId)}/resolve`,{expected_revision:revision});
+    if(result)toast('Đã hoàn tác hàng dang dở về kho trên sổ kho');
   } finally {pendingControls.delete(key);}
 }
 function updateRobotAges() {
@@ -434,7 +435,7 @@ function populateTaskAgvSelect(agvs) {
   agvs.forEach(a=>{
     const option = new Option(`${a.id} — ${labels[a.state] || a.state}`,a.id);
     option.disabled = a.participating === false || (trial && a.id !== '01') || (trialRobot && a.id !== trialRobot) || (twoRobotTrial && !['01','02'].includes(a.id)) ||
-      !['IDLE','WORKING','BLOCKED'].includes(a.state) || a.online === false || a.position_valid === false;
+      !vehicleCanSelect(a);
     select.add(option);
   });
   if (trial) {
@@ -518,12 +519,14 @@ async function addTask() {
   const target = $('task_target').value.trim(),priority = Number($('task_priority').value),robot = $('task_agv').value;
   if (lastState?.shift?.single_robot_trial === true && robot !== '01')
     return toast('Chế độ thử một xe chỉ nhận GOTO trực tiếp xe 01','warn');
+  if(robot&&!vehicleCanSelect(lastState?.fleet?.agvs?.find(candidate=>candidate.id===robot)))
+    return toast('Xe chưa rảnh hoặc chưa khôi phục xong. Chờ tuyến hiện tại kết thúc trước khi giao lệnh mới.','warn');
   const route = robot ? `/api/agvs/${encodeURIComponent(robot)}/goto` : '/api/tasks';
   const result = await control('POST',route,{target,priority},$('submitTaskBtn'));
   if (result) toast(`Core đã nhận nhiệm vụ ${result.task_id.slice(0,8)}`);
 }
 function renderShift(shift) {
-  const names = {RUNNING:'Đang làm việc',CLOSING:'Đã hủy việc cũ · chờ xác minh dừng / đưa xe về trạm',CLOSED:'Đã tập kết tại trạm • chờ bắt đầu ca'};
+  const names = {RUNNING:'Đang làm việc',CLOSING:'Đã nhận kết ca · chờ xác minh xe theo các lý do bên dưới',CLOSED:'Ca đã đóng'};
   $('shiftStatus').textContent = shift?.supported ? names[shift.phase] || shift.phase : 'Chưa có quản lý ca trên core / bản đồ này';
   const diagnosticBattery = lastState?.fleet?.agvs?.some(robot=>robot.battery_control_source === 'diagnostic');
   const mode = $('coreModeStatus');
@@ -546,8 +549,15 @@ function renderShift(shift) {
     'Cho xac nhan roi mutex zone':'Chờ xác nhận rời vùng mutex','Da xac minh tai tram':'Đã xác minh tại trạm'};
   for (const robot of shift?.robots || []) {
     const line = document.createElement('div');
-    const reason = reasons[robot.reason] || (robot.reason?.startsWith('Dang ve tram ') ? `Đang về ${locationText(robot.home_station)}` : robot.reason || '');
-    line.textContent = `${robot.id} → ${locationText(robot.home_station)}: ${reason}${robot.actual_node ? ` • RFID gần nhất: ${locationText(robot.actual_node)}` : ''}`;
+    const vehicle=lastState?.fleet?.agvs?.find(entry=>entry.id===robot.id);
+    let reason = reasons[robot.reason] || (robot.reason?.startsWith('Dang ve tram ') ? `Đang về ${locationText(robot.home_station)}` : robot.reason || '');
+    if(robot.reason==='Can doi soat ke tren xe') {
+      if(vehicle?.recovery_reset_pending)reason='Đang chờ xe xác nhận reset lỗi';
+      else if(vehicle?.heading_confirmation_pending)reason='Đang chờ xe xác nhận hướng';
+      else if(vehicle?.heading_confirmation_required)reason=vehicle.node===lastState?.shift?.home_stations?.[robot.id]
+        ?'Chờ xe tự khôi phục tại trạm, không cần chọn hướng':'Cần xác nhận hướng trong Khôi phục xe';
+    }
+    line.textContent = `${robot.id} → ${locationText(robot.home_station)}: ${reason}${vehicle?.error?` • ${vehicle.error}`:''}${robot.actual_node ? ` • RFID gần nhất: ${locationText(robot.actual_node)}` : ''}`;
     line.style.color = robot.ready ? colors.IDLE : colors.BLOCKED;list.append(line);
   }
   if (shift?.phase === 'CLOSED' && !shift.can_start) {
@@ -570,7 +580,8 @@ async function changeShift(mode,button) {
   if(mode==='start'){openShiftWarehouse();return;}
   if(!confirm('Kết thúc ca sẽ hủy toàn bộ nhiệm vụ đang chờ và đang thực hiện. Xe nhận lệnh dừng; kiểm tra kệ còn trên xe và đưa xe về trạm. Tiếp tục?'))return;
   const result = await control('POST',`/api/shift/${mode}`,{},button);
-  if (result) toast(mode === 'start' ? 'Core đã mở ca làm việc' : 'Core đã nhận kết thúc ca; theo dõi xe về trạm');
+  if (result) toast(result.shift?.phase==='CLOSED'?'Ca đã đóng. Có thể kiểm tra và lưu đối soát kho.':
+    'Core đã nhận kết ca. Xem lý do còn chờ của từng xe trong bảng Ca làm việc.');
 }
 async function cancelTask(task,button) {
   const payload = task.task_id ? {task_id:task.task_id} : {target:task.target};

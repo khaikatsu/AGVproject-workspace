@@ -571,7 +571,7 @@ int main() {
             confirmCancelledStop(fleet,"01","S1");confirmCancelledStop(fleet,"02","S2");shift.tick();
             CHECK(robot("01")["node"]=="S1");CHECK(robot("02")["node"]=="S2");
             arbiter.requestZone("M5","01");fleet.updateTelemetry("01","S1",85,false);fleet.updateTelemetry("02","S2",80,false);shift.tick();
-            CHECK(shift.snapshot()["phase"]=="CLOSING");CHECK(!shift.snapshot()["can_start"].get<bool>());
+            CHECK(shift.snapshot()["phase"]=="CLOSED");CHECK(!shift.snapshot()["can_start"].get<bool>());
             arbiter.releaseZone("M5","01");shift.tick();CHECK(shift.snapshot()["phase"]=="CLOSED");
             fleet.setNetworkAvailable(false);CHECK(!shift.start().empty());fleet.setNetworkAvailable(true);
             fleet.reportCharged("01",90);shift.tick();CHECK(robot("01")["state"]=="IDLE"); // không lặp CHARGE_START sau charging_done
@@ -722,9 +722,34 @@ int main() {
             CHECK(fleet.toJson()["agvs"][0]["target"]==""); // không suy vị trí từ trạm mặc định
             fleet.updateTelemetry("01","S1",80,false);shift.tick();CHECK(shift.snapshot()["phase"]=="CLOSED");
             fleet.setOfflineTimeout(1);std::this_thread::sleep_for(std::chrono::milliseconds(1100));fleet.tick();shift.tick();
-            CHECK(!shift.snapshot()["can_start"].get<bool>());CHECK(shift.snapshot()["phase"]=="CLOSING");
+            CHECK(!shift.snapshot()["can_start"].get<bool>());CHECK(shift.snapshot()["phase"]=="CLOSED");
             fleet.updateTelemetry("01","S1",80,false);shift.tick();CHECK(fleet.toJson()["agvs"][0]["state"]=="ERROR");
             CHECK(!shift.start().empty());
+        }
+        {
+            const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+            for (const std::string id : {"01","02"}) for (const std::string saved : {"CLOSED","RUNNING","CLOSING"}) {
+                const auto dir=root/".qa"/("shift-restart-"+id+saved+std::to_string(Clock::now().time_since_epoch().count()));
+                std::filesystem::create_directories(dir);
+                const auto file=dir/"shift.json";
+                {std::ofstream out(file);out<<json{{"phase",saved}};}
+                const std::string home=id=="01"?"S1":"S2";
+                MapGraph map;map.loadDefaultDemoMap();MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);
+                std::vector<json> commands;
+                fleet.setPublishCallback([&](const std::string&,const std::string& payload){commands.push_back(json::parse(payload));});
+                ShiftController shift(map,fleet,arbiter,file,{{id,home}},false,false,"",{id});
+                CHECK(shift.snapshot()["phase"]==(saved=="CLOSED"?"CLOSED":"CLOSING"));
+                CHECK(!shift.snapshot()["can_start"].get<bool>());CHECK(!fleet.acceptingTasks());
+                CHECK(fleet.toJson()["agvs"].empty());CHECK(!shift.start().empty());
+                if(saved=="CLOSED") {
+                    fleet.updateTelemetry(id,home,80,false);shift.tick();
+                    fleet.reportError(id,"NETWORK_UNAVAILABLE");shift.tick();
+                    CHECK(shift.snapshot()["phase"]=="CLOSED");CHECK(!shift.snapshot()["can_start"].get<bool>());
+                    CHECK(shift.end().empty());CHECK(shift.snapshot()["phase"]=="CLOSED");
+                    CHECK(!shift.start().empty());CHECK(!fleet.acceptingTasks());
+                }
+                CHECK(std::none_of(commands.begin(),commands.end(),[](const json& c){return c.value("cmd","")=="GOTO"||c.value("cmd","")=="CHARGE_START";}));
+            }
         }
         {
             MapGraph map;map.loadDefaultDemoMap();MutexArbiter arbiter(map.mutexZones());FleetManager fleet(map,arbiter);

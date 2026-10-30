@@ -41,7 +41,8 @@ async function main() {
         }
         model.fleet.agvs = model.fleet.agvs.filter(candidate => candidate.id !== request.id);
       }
-      if (request.cmd === 'recover_vehicle') Object.assign(current, {state: 'IDLE', error: '',recovery_node_verified:true});
+      if (['recover_vehicle','recover_and_continue'].includes(request.cmd))
+        Object.assign(current, {state: 'IDLE', error: '',recovery_node_verified:true});
       socket.send(JSON.stringify({type: 'command_result', request_id: request.request_id,
         core_session_id: model.core_session_id, ok: true, data: {}, state: model}));
     });
@@ -74,6 +75,24 @@ async function main() {
     await card('02').getByRole('button', {name: 'Chọn xe', exact: true}).click();
     assert.match(await page.locator('#selectionText').innerText(), /Đã chọn 02/);
     await page.evaluate(() => cancelSelection());
+    for(const id of ['01','02']) {
+      const candidate=model.fleet.agvs.find(r=>r.id===id);
+      for(const patch of [{state:'WORKING',task_id:'active-route',target:'K1',path:['K1']},
+          {state:'BLOCKED',task_id:'waiting-route'}, {state:'IDLE',task_id:'not-yet-cleared'},
+          {state:'IDLE',recovery_reset_pending:true}, {state:'IDLE',lift:{active:true}}]) {
+        Object.assign(candidate,robot(id),patch);push();
+        await page.waitForFunction(({id,patch})=>Object.entries(patch).every(([key,value])=>
+          JSON.stringify(lastState.fleet.agvs.find(r=>r.id===id)[key])===JSON.stringify(value)),{id,patch});
+        assert.equal(await card(id).getByRole('button',{name:'Chọn xe',exact:true}).isDisabled(),true);
+        assert.equal(await page.locator(`#task_agv option[value="${id}"]`).isDisabled(),true);
+        const before=commands.length;
+        await page.evaluate(id=>{document.getElementById('task_agv').value=id;void addTask();},id);
+        await page.waitForTimeout(50);assert.equal(commands.length,before,'busy/recovering robot sends no new GOTO');
+        delete candidate.recovery_reset_pending;delete candidate.lift;
+      }
+      Object.assign(candidate,robot(id));push();
+      await page.waitForFunction(id=>!document.querySelector(`[data-robot-transfer="${id}"] [data-vehicle-action="select"]`).disabled,id);
+    }
     await page.evaluate(() => {
       window.__vehicleCards = [...document.querySelectorAll('[data-robot-transfer]')];
       window.__vehicleHeaders = window.__vehicleCards.map(element => element.firstElementChild);
@@ -140,14 +159,15 @@ async function main() {
 
     const first = model.fleet.agvs.find(candidate => candidate.id === '01');
     Object.assign(first, {state: 'ERROR', error: '<img src=x onerror="window.__xss=1"> lỗi motor',
+      node:'K1',heading_confirmation_supported:true,
       recovery_stop_verified:true,heading:'S',heading_supported:true,heading_source:'route'});
     push();
     await card('01').filter({hasText: 'lỗi motor'}).waitFor();
     assert.equal(await page.evaluate(() => window.__xss), undefined);
     await card('01').getByRole('button', {name: 'Khôi phục xe', exact: true}).click();
-    await page.locator('#vehicleRecoveryClear').check();await page.locator('#vehicleRecoveryMoved').selectOption('no');
+    await page.locator('#vehicleRecoveryClear').check();await page.locator('#vehicleRecoveryDirection').selectOption('N');
     await page.locator('#vehicleRecoverySubmit').click();
-    await page.locator('#vehicleRecoveryStatus').filter({hasText:'Xe đã sẵn sàng'}).waitFor();
+    await page.locator('#vehicleRecoveryStatus').filter({hasText:'Đã khôi phục'}).waitFor();
     await page.locator('#vehicleRecoveryDialog').evaluate(el=>el.close());
     await card('01').filter({hasText: 'Sẵn sàng'}).waitFor();
     Object.assign(first, {online: false, state: 'OFFLINE'});

@@ -1,5 +1,15 @@
 # Phát triển web giám sát AGV
 
+30/10/2026 mới nhất: LM393 ghi theo dõi và vẫn hiển thị có/không/chưa xác định dù required:false. Đối soát kệ xe gọi ngay không hộp xác nhận/gate/cargo trống; hoàn tác đơn liên quan với revision mới rồi xóa cargo ảo. Nút không phụ thuộc MQTT, cần Core sẵn sàng; task/tuyến/servo active phải dừng/hủy trước. [ADR-099](decisions/ADR-099-cargo-monitoring-and-direct-reconciliation.md).
+
+30/10/2026, mới nhất: **Hoàn tác về K…** thực hiện ngay một lần bấm trên sổ kho, không hộp xác nhận hoặc mở form đối soát, không chờ xe/Core/cargo. Lượt đã giao giữ nguyên; cargo tiếp tục hiển thị quan sát riêng. Áp dụng cả đơn cũ thiếu move khi dữ liệu kệ/nguồn còn hợp lệ; lỗi revision/xung đột kho báo tại chỗ. [ADR-098](decisions/ADR-098-one-click-inventory-rollback.md) thay các mô tả hoàn tác cũ dưới đây.
+
+30/10/2026: theo [ADR-097](decisions/ADR-097-healthy-home-without-heading-confirmation.md), xe khỏe tại trạm riêng tự dùng hướng quy ước, không chọn hướng/bấm khôi phục. UI thẻ xe và bảng ca phân biệt chờ tự phục hồi trạm với xác nhận hướng giữa đường; dialog tại trạm không dùng riêng tuổi RFID anchor cũ để báo chưa sẵn sàng khi Core đã phục hồi xe khỏe. Giữ chốt lỗi/cargo/đường và không tự mở ca.
+
+30/10/2026: [ADR-096](decisions/ADR-096-durable-shift-closure-and-reconciliation.md) hiển thị nút **Đang kết ca** sau khi đã nhận kết ca, **Ca đã đóng** khi kết thúc; không mô tả CLOSED là bằng chứng xe hiện còn ở trạm. Danh sách trạm hiện lỗi xe và phân biệt chờ reset/xác nhận hướng với đối soát kệ. Lần lưu kho hợp lệ cập nhật ngay đơn cũ theo bằng chứng, không cần đợi thêm snapshot Core.
+
+30/10/2026: đơn đã kết ca có mã kệ nhưng không còn move tương ứng hiện nút **Đối soát kho**. Khi Core/MQTT mới và ca CLOSED, nút mở form nhập/đối soát toàn kho để người dùng kiểm tra vị trí kệ và xe trống trước khi lưu; không gọi hoàn tác thiếu dữ liệu. Core cũ/mất kết nối hoặc ca chưa đóng chỉ hiện hướng dẫn. Lượt còn move giữ nút Hoàn tác và quy trình cũ. [ADR-089](decisions/ADR-089-test-order-rollback.md).
+
 30/10/2026: [ADR-094](decisions/ADR-094-maintenance-and-coordinated-recovery.md) thay dialog hai bước bằng một xác nhận vùng và hướng→Khôi phục và tiếp tục. S1/S2 chỉ hiển thị tự kiểm tra bảo dưỡng; Core giữ chốt tới proof ổn định. Dialog giải thích thiếu RFID/telemetry/diagnostic hoặc proof dừng. Các endpoint cũ còn để tương thích.
 
 29/10/2026, REQ-UNIFIED-RECOVERY-HEADING-20261029: thẻ xe chỉ có Khôi phục xe thay ba nút Xóa lỗi/Phục hồi tại node/Xác nhận tại trạm. Dialog dùng RFID đang báo, yêu cầu xác nhận vùng cũ trống và xe có được di chuyển bằng tay; reset xong mới xác nhận hướng nếu cần. Hướng chọn theo mũi tên bản đồ; tại kho/trạm người vận hành đặt xe đúng hướng quy ước, không có lệnh tự quay. UI hiện trạng thái chờ reset/chờ hướng và chặn bước tiếp khi đổi node/Core session hoặc mất dữ liệu. Tiếp tục nhiệm vụ vẫn riêng, không tự phát lại servo. [ADR-092](decisions/ADR-092-unified-recovery-heading.md).

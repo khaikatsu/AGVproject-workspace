@@ -40,16 +40,18 @@ public:
                 if ((id != "01" && id != "02") || homes_.count(id) != 1) supported_ = false;
         }
         if (!supported_) return; // đồ thị fixture/legacy không có cặp trạm: giữ chức năng cũ
+        std::string savedPhase = "CLOSING";
         if (std::filesystem::exists(file_)) {
             std::ifstream input(file_); json data; input >> data;
             const auto saved = data.at("phase").get<std::string>();
             if (saved != "RUNNING" && saved != "CLOSING" && saved != "CLOSED")
                 throw std::runtime_error("File trang thai ca khong hop le");
+            savedPhase = saved;
         }
         // robot01 test can start at its measured node after fresh telemetry/reset.
         fleet_.setHomeStations(homes_); fleet_.setAcceptingTasks(false);
         fleet_.endShiftWork(); // Restored pending work belongs to the previous shift.
-        transition(trialRobotId_ == "01" ? "CLOSED" : "CLOSING");
+        transition(trialRobotId_ == "01" || savedPhase == "CLOSED" ? "CLOSED" : "CLOSING");
     }
 
     bool supported() const { return supported_; }
@@ -80,7 +82,8 @@ public:
         return "";
     }
     void tick() {
-        if (!supported_ || phase_ == "RUNNING") return;
+        // Missing proof blocks the next start; it cannot reopen a closed shift.
+        if (!supported_ || phase_ == "RUNNING" || phase_ == "CLOSED") return;
         auto fleet = fleet_.toJson();
         const auto zones = arbiter_.toJson();
         auto status = snapshot(fleet,zones);
@@ -95,7 +98,6 @@ public:
             if (status["all_home"].get<bool>() && phase_ == "CLOSING") transition("CLOSED");
             return; // Chon pham vi luc khoi dong khong duoc tu phat GOTO/CHARGE_START.
         }
-        if (phase_ == "CLOSED" && !status["all_home"].get<bool>()) transition("CLOSING");
         const auto homesInShift = knownHomes(fleet);
         const bool oneKnownRobot = homesInShift.size() == 1 && fleet["agvs"].size() == 1;
         const bool unmeasured = oneKnownRobot && !fleet["agvs"][0].value("battery_measured",false);
@@ -179,6 +181,13 @@ public:
                 else if (state == "BLOCKED") reason = "Cho duong ve tram sac";
                 else if (state == "LIFTING" || state == "LOWERING") reason = a->contains("lift") && (*a)["lift"].value("state","")=="PENDING"
                     ? "Cho nhung nhan lenh servo" : state=="LIFTING" ? "Dang nang hang" : "Dang ha hang";
+                else if (actual!=home.second && state=="IDLE" &&
+                    (a->value("heading_confirmation_required",false) || a->value("heading_confirmation_pending",false) ||
+                     (a->value("heading_supported",false) && a->value("heading","UNKNOWN")=="UNKNOWN")))
+                    reason = "Cho huong dau xe hop le truoc khi ve tram";
+                else if (actual!=home.second && state=="IDLE" && a->value("encoder_supported",false) &&
+                    !a->value("recovery_node_verified",false))
+                    reason = "Cho diagnostic xac nhan xe dung truoc khi ve tram";
                 else if (!verified) reason = "Dang ve tram " + home.second;
                 else if (!cargoReady) reason = "Can doi soat ke tren xe";
                 else if (ownsZone) reason = "Cho xac nhan roi mutex zone";

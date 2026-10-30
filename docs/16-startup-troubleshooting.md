@@ -1,5 +1,23 @@
 # Chẩn đoán khởi động gateway và core — 29/09/2026
 
+### Kiểm tra web–Core chập chờn — 30/10/2026, 08:48–08:54+07
+
+SOURCE bổ sung: người dùng xác nhận chính nhãn Core đổi Mất kết nối/dữ liệu cũ, không chỉ thẻ xe OFFLINE. IMPLEMENTED giảm tải đồng bộ task: chuẩn bị hai statement SQLite một lần thay vì lặp prepare mỗi task/snapshot. Benchmark20lượt/1000task trên bản sao DB trong `.qa/durable-shift-20261030/link-sync-benchmark.db`: trung bình41,8→3,9ms, max51,4→7,5ms; không bỏ đồng bộ hoặc xóa lịch sử. Thêm health.core_link và log có timestamp cho open/close/fresh/stale/mismatch để bắt lần gián đoạn tiếp theo; không tăng timeout.
+
+VERIFIED: gateway/security/restart29/29, orders/inventory38/38 PASS; có ca sai delta bắt close1002/reconnect và giữ chặn dữ liệu cũ. Áp dụng gateway mới PID7576, giữ Core17136 và phiên cũ, kho revision450; chỉ restart gateway sau kiểm tra không task/cargo. Đo sau áp qua Edge20s/20lần health: không đóng WebSocket, không lỗiJS hoặc đổi nhãn Core sang stale; HTTP max74ms, Core gap max360ms/monitor lag102ms, connections1/close=null/mismatch0. Chưa bắt được lần gián đoạn người dùng báo; chưa kết luận tối ưu SQLite là nguyên nhân duy nhất hoặc đã loại bỏ mọi gián đoạn. Log vận hành `.qa/durable-shift-20261030/link-diagnostics/gateway.stderr.log` ghi lại sự kiện mới.
+
+OBSERVED sau áp ADR-096: chỉ một Core PID17136 và một gateway PID4328, Core session `1793324555161960300-4279368604`. Đo WebSocket Core trực tiếp/gateway22s, Edge dashboard24s và đo đồng thời Edge/Core/health50,4s: không ngắt socket ngoài chủ động kết thúc probe, không lệch delta sequence hoặc lỗi JavaScript. Ở lượt50,4s Core172frame/gap lớn nhất432ms, web167frame/gap490ms;12lần health không lỗi, chậm nhất121ms; nhãn Core luôn Có dữ liệu mới, timer web lag tối đa41,7ms. Log gateway chỉ có2ECONNREFUSED lúc mở trước Core, không thấy lỗi mới trong thời gian đo. Một số lần gọi HTTP riêng trước đó timeout5–8s; chưa bắt được nguyên nhân hoặc tái hiện trong lượt đo đồng thời, nên chưa kết luận loại trừ gián đoạn ngoài cửa sổ quan sát.
+
+API cuối08:53:50+07: Core connected/ready, MQTT/storage đều true; xe01 OFFLINE. Subscribe chỉ đọc `agv/01/status` nhận retained `offline`; không nhận status02 trong3s. Xe mất MQTT khác với gateway mất Core; retained status không chứng minh vị trí hoặc robot dừng. Ca cũ đang CLOSING vì thiếu proof xe, chưa cưỡng ép đóng, reset cargo/kho hoặc nới timeout. Trạng thái runtime có thể đổi sau mốc quan sát. Người dùng cần tải lại web tại `http://127.0.0.1:3000/` để nhận script hiện tại, và đối chiếu nhãn Web/Core/xe nếu tái diễn.
+
+### Ctrl+F5 đóng ngay trước menu — 30/10/2026
+
+OBSERVED: chạy `build/agv_core.exe --select-mode` với PATH của cấu hình VS Code cũ (`C:/msys64/ucrt64/bin` cộng PATH kế thừa) thoát với mã `-1073741515` (`0xC0000135`, thiếu DLL), chưa hiện menu. Binary hiện tại import `mosquitto.dll`; máy có DLL này tại `C:/Program Files/Mosquitto`, còn UCRT64 cung cấp `libmosquitto.dll` với tên khác.
+
+Đã thêm `C:/Program Files/Mosquitto` vào PATH trong `.vscode/launch.json`, sau UCRT64, và đặt `externalConsole: false` để dùng terminal tích hợp, giữ thông báo sau khi tiến trình thoát. Chọn **AGV core (workspace root)** rồi Ctrl+F5; nhập lựa chọn tại tab **Terminal**, không nhập trong Debug Console.
+
+VERIFIED: chạy binary hiện có với PATH đã sửa và truyền `0` vào menu hiện đủ lựa chọn, thoát mã0. Chưa trực tiếp bấm Ctrl+F5 trong UI, chưa build lại hoặc chọn phạm vi để khởi động dịch vụ vận hành. Không đổi source Core, firmware, checkpoint hoặc counter.
+
 ### Build báo thiếu `mosquitto/mqtt_protocol.h` — 29/10/2026
 
 Sau khi hợp nhất `main`, header trung gian `include/mosquitto.h` che header Mosquitto của MSYS2 UCRT64 vì script truyền `-I include`. Header này gọi `mosquitto/mqtt_protocol.h`, không có trong bộ thư viện trên máy. Đã bỏ header trung gian để `#include <mosquitto.h>` trong Core dùng trực tiếp header của compiler, giữ nguyên liên kết `-lmosquitto`.

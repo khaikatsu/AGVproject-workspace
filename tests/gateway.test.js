@@ -28,7 +28,7 @@ async function fixture(t,options = {}) {
   const db = createDatabase(path.join(directory,'test.db'));
   for(const order of options.orders||[])db.saveOrder(order);
   const core = new WebSocket.Server({host:'127.0.0.1',port:0});await once(core,'listening');
-  const model = state();let peer;const commands = [];
+  const model = Object.assign(state(),options.state);let peer;const commands = [];
   const push = ()=>peer?.send(JSON.stringify(model));
   core.on('connection',ws=>{
     peer = ws;push();
@@ -75,6 +75,17 @@ async function namedLocations(t) {
   await until(async()=>(await f.api('GET','/api/state')).data.shift?.phase==='CLOSED');
   return f;
 }
+test('fleet recovery state ignores closed legacy holds and retains hidden unresolved holds',async t=>{
+  for(const status of ['closed','needs_attention'])await t.test(status,async t=>{
+    const f=await fixture(t,{state:{shift:{phase:'RUNNING'}},orders:[{id:'legacy-recovery-hold',status,fleet_recovery_hold:true,
+      deleted_at:new Date(0).toISOString(),created:new Date(0).toISOString(),
+      items:[{status:'interrupted',robot:'01',task_id:'old-task'}]}]});
+    const snapshot=(await f.api('GET','/api/state')).data;
+    assert.equal(snapshot.fleet_recovery.state,status==='closed'?'NORMAL':'WAITING_FLEET');
+    assert.equal(f.commands.length,0);
+  });
+});
+
 test('location names persist, swap within roles, reject stale writes and never mutate Core graph or warehouse',async t=>{
   const f=await namedLocations(t),map=JSON.stringify(f.model.map),inventory=(await f.api('GET','/api/warehouse')).data;
   f.db.syncTasks([{task_id:'old',target:'K1',status:'completed'}],'session-1');
@@ -333,14 +344,14 @@ test('warehouse orders use Core task IDs and wait at pickup before any delivery 
   assert.equal(f.commands.filter(command=>command.cmd === 'direct_goto' && ['K3','K4'].includes(command.target)).length,0);
   f.model.fleet.agvs[0].online = false;f.push();
   await until(async()=> (await f.api('GET','/api/orders')).data[0].status === 'needs_attention');
-  assert.equal((await f.api('POST',`/api/orders/${first.id}/resolve`,{})).status,400);
+  assert.equal((await f.api('POST',`/api/orders/${first.id}/resolve`,{})).status,409);
   const revision=(await f.api('GET','/api/warehouse')).data.revision;
-  assert.equal((await f.api('POST',`/api/orders/${first.id}/resolve`,{physically_clear:true,expected_revision:revision})).status,409);
-  f.model.fleet.agvs[0].online=true;f.push();
-  await until(async()=>(await f.api('GET','/api/state')).data.fleet.agvs[0].online);
-  assert.equal((await f.api('POST',`/api/orders/${first.id}/resolve`,{physically_clear:true,expected_revision:revision})).data.order.status,'closed');
+  const beforeCommands=f.commands.length;
+  const resolved=await f.api('POST',`/api/orders/${first.id}/resolve`,{expected_revision:revision});
+  assert.equal(resolved.status,200);assert.equal(resolved.data.order.status,'closed');
+  assert.equal(resolved.data.order.rollback_scope,'inventory_only');
   assert.equal((await f.api('GET','/api/warehouse')).data.moves.length,0);
-  assert.equal(f.commands.at(-1).cmd,'reconcile_test_cargo');
+  assert.equal(f.commands.length,beforeCommands,'undo sends no Core command');
 });
 test('warehouse API records confirmed rack moves and saves one downloadable report only at CLOSED',async t=>{
   const f=await fixture(t);
@@ -421,7 +432,22 @@ test('Socket connected with stale data blocks controls; restart seq is scoped by
   assert.equal(f.db.getRecentSystemLogs().length,2);
   await pause(100);const health = (await f.api('GET','/api/health')).data;
   assert.equal(health.agv_connected,true);assert.equal(health.core_ready,false);
+  assert.ok(health.core_link.state_age_ms>=80);
+  assert.equal(health.core_link.connections,1);
+  assert.equal(health.core_link.core_session_id,'session-2');
   assert.equal((await f.api('POST','/api/tasks',{target:'T'})).status,503);
+});
+
+test('Core link diagnostics retain sequence mismatch and close reason after reconnect',async t=>{
+  const f=await fixture(t);
+  f.peer().send(JSON.stringify({type:'state_delta',base_state_seq:999,state_seq:1000,changes:{}}));
+  await until(async()=>(await f.api('GET','/api/health')).data.core_link.connections>=2);
+  const health=(await f.api('GET','/api/health')).data;
+  assert.equal(health.core_ready,true);
+  assert.equal(health.core_link.sequence_mismatches,1);
+  assert.equal(health.core_link.last_close.code,1002);
+  assert.equal(health.core_link.last_close.reason,'Core delta sequence mismatch');
+  assert.equal(f.commands.length,0,'diagnostics and reconnect never dispatch commands');
 });
 test('Disconnect while awaiting a command returns uncertainty and preserves the old map',async t=>{
   const f = await fixture(t,{noObstacleReply:true,timeout:2000});

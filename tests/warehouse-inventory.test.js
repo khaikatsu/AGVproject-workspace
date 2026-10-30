@@ -87,7 +87,61 @@ test('reconciled order projection survives dashboard deletion and reload without
   assert.equal(view.status,'closed');assert.ok(view.deleted_at);assert.ok(view.warehouse_reconciliation);
   assert.equal(db.getOrders()[0].status,'needs_attention');
 });
-test('test reconciliation restores both interrupted racks, clears reservations, persists and permits a new pickup',async t=>{
+for(const id of ['01','02'])test(`ended ${id} order retains warehouse proof through disconnect and service restart`,async t=>{
+  const {db,inventory,core}=fixture(t),commands=[];
+  const old={id:`stable-${id}`,status:'needs_attention',closed_by_shift:true,
+    created:'2026-01-01T00:00:00.000Z',updated:'2026-01-02T00:00:00.000Z',deleted_at:'2026-01-03T00:00:00.000Z',
+    items:[{number:1,pickup:'K2',dropoff:'K1',rack_id:'R01',robot:id,status:'to_dropoff'}]};
+  db.saveOrder(old);const original=structuredClone(db.getOrders());
+  const make=ledger=>createOrderService({db,inventory:ledger,getState:()=>core,getSession:()=> 'restart',
+    publish:()=>{},send:async request=>{commands.push(request);return {task_id:'new-task'};}});
+  let service=make(inventory);
+  for(let cycle=0;cycle<3;cycle++) {
+    service.interruptAll('Mất kết nối Core');service.interruptAll('Dữ liệu Core đã cũ');service.endShift();
+    const view=service.list({includeDeleted:true})[0];
+    assert.equal(view.status,'closed');assert.equal(view.resolution,'warehouse_reconciled');
+    assert.deepEqual(db.getOrders(),original,'connection events never move the ended order closure boundary');
+    await service.close();service=make(createWarehouseInventory({db}));
+  }
+  t.after(()=>service.close());assert.equal(commands.length,0);
+  core.shift.phase='RUNNING';core.fleet.agvs=[robotAt(id,'G2')];
+  const next=service.create({pickups:[{pickup:'K2',quantity:1}],deliveries:[{dropoff:'K1',quantity:1}]});
+  await service.tick();assert.equal(next.items[0].robot,id,'a stale item phase cannot retain a reconciled robot');
+  assert.equal(commands.length,1);assert.equal(commands[0].cmd,'direct_goto');
+});
+
+test('first inventory publish after configure includes the new operator reconciliation proof',t=>{
+  const db=createDatabase(':memory:');t.after(()=>db.close());
+  const core=coreState(),order={id:'cache',status:'needs_attention',closed_by_shift:true,
+    updated:'2026-01-01T00:00:00.000Z',items:[]};
+  let inventory,observed;
+  inventory=createWarehouseInventory({db,publish:()=>{observed=inventory.reconciliationFor(order);}});
+  assert.equal(inventory.reconciliationFor(order),null,'cache the absence of prior proof');
+  inventory.configure(layout,core);
+  assert.ok(observed?.event_id,'subscribers see proof on the first committed publish');
+});
+
+for(const id of ['01','02'])test(`ended ${id} rollback changes only the ledger despite sensor cargo`,async t=>{
+  const {db,inventory,core}=fixture(t),vehicle=robotAt(id,'K2'),key=`order:home-${id}:1`;
+  inventory.reserve({key,pickup:'K2',dropoff:'K1',robot:id});done(vehicle,55,true);
+  inventory.confirmLift(key,'pickup',vehicle,55,'core');inventory.interrupt(key,'Interrupted after lowering');
+  const order={id:`home-${id}`,status:'needs_attention',closed_by_shift:true,created:new Date(0).toISOString(),
+    updated:new Date().toISOString(),items:[{number:1,pickup:'K2',dropoff:'K1',rack_id:'R01',robot:id,status:'interrupted'}]};
+  db.saveOrder(order);vehicle.node=id==='01'?'S1':'S2';vehicle.lift.active=false;
+  vehicle.cargo_sensor={present:true,fresh:true,stable:true};core.fleet.agvs=[vehicle];core.shift={phase:'CLOSING',home_stations:{[id]:vehicle.node}};
+  const commands=[],beforeVehicle=structuredClone(vehicle);
+  const service=createOrderService({db,inventory,getState:()=>core,getSession:()=> 'core',publish:()=>{},
+    send:async cmd=>{commands.push(cmd);}});t.after(()=>service.close());
+  const result=await service.resolve(order.id,undefined,inventory.snapshot().revision);
+  assert.equal(commands.length,0);assert.deepEqual(vehicle,beforeVehicle);
+  assert.equal(result.status,'closed');assert.equal(result.rollback_scope,'inventory_only');
+  assert.equal(inventory.snapshot().racks.find(r=>r.id==='R01').location.id,'K2');
+  assert.equal(inventory.snapshot().moves.length,0);
+  assert.equal(inventory.history().find(event=>event.type==='rollback').evidence,'operator_requested');
+  assert.equal(db.getOrders()[0].physical_completion_verified,false);
+});
+
+test('ledger undo restores both interrupted racks atomically and persists without clearing robot cargo',async t=>{
   const {db,inventory,core}=fixture(t),commands=[];
   const order={id:'rollback-two',status:'needs_attention',created:new Date().toISOString(),items:[
     {number:1,pickup:'K2',dropoff:'K1',robot:'01',rack_id:'R01',status:'interrupted'},
@@ -102,10 +156,9 @@ test('test reconciliation restores both interrupted racks, clears reservations, 
     for(const entry of payload.robots||[]) {const robot=robots.find(robot=>robot.id===entry.id);robot.virtual_cargo=false;robot.virtual_cargo_known=true;}
     return {task_id:'next'};
   }});t.after(()=>service.close());
-  await assert.rejects(()=>service.resolve(order.id,false,before.revision),/Cần xác nhận/);
   await assert.rejects(()=>service.resolve(order.id,true,before.revision-1),/đã thay đổi/);
-  robots[1].state='WORKING';await assert.rejects(()=>service.resolve(order.id,true,before.revision),/Dừng xe 02/);
-  assert.equal(commands.length,0);assert.deepEqual(inventory.snapshot(),before);robots[1].state='IDLE';
+  core.mqtt_connected=false;robots[1].online=false;
+  assert.equal(commands.length,0);assert.deepEqual(inventory.snapshot(),before);
   db.db.exec("CREATE TRIGGER rollback_fail BEFORE INSERT ON warehouse_events WHEN json_extract(NEW.event_json,'$.type')='rollback' BEGIN SELECT RAISE(ABORT,'disk-test'); END");
   await assert.rejects(()=>service.resolve(order.id,true,before.revision),/disk-test/);
   assert.deepEqual(inventory.snapshot(),before);assert.equal(db.getOrders()[0].status,'needs_attention');
@@ -121,15 +174,15 @@ test('test reconciliation restores both interrupted racks, clears reservations, 
   assert.equal(inventory.snapshot().moves.length,0);assert.ok(inventory.robotAvailable('01')&&inventory.robotAvailable('02'));
   assert.equal(inventory.history().filter(event=>event.type==='rollback').length,2);
   const count=commands.length;await service.resolve(order.id,true,before.revision);assert.equal(commands.length,count,'retry is idempotent');
-  assert.deepEqual(commands[0],{cmd:'reconcile_test_cargo',physically_clear:true,robots:[{id:'01',lift_command_id:77},{id:'02',lift_command_id:0}]});
+  assert.equal(commands.length,0);assert.equal(robots[0].virtual_cargo,true,'sensor/Core cargo is not overwritten');
   const restarted=createWarehouseInventory({db});assert.equal(restarted.snapshot().moves.length,0);
   assert.equal(restarted.snapshot().racks.find(rack=>rack.id==='R01').location.id,'K2');
-  core.shift.phase='RUNNING';
+  core.shift.phase='RUNNING';core.mqtt_connected=true;robots[1].online=true;
   const next=service.create({pickups:[{pickup:'K2',quantity:1}],deliveries:[{dropoff:'K1',quantity:1}]});
-  await service.tick();assert.equal(next.items[0].status,'waiting_pickup_lift');
+  await service.tick();assert.equal(next.items[0].status,'queued','undo does not claim physical cargo clearance for a later movement');
 });
 
-test('legacy closed/deleted order can rollback only its remaining interrupted move, never without explicit confirmation',async t=>{
+test('legacy closed/deleted order rolls back its remaining interrupted move without robot or confirmation',async t=>{
   const {db,inventory,core}=fixture(t),robot=robotAt('01','K2'),commands=[];
   const order={id:'legacy-closed',status:'closed',deleted_at:new Date().toISOString(),created:new Date(0).toISOString(),items:[
     {number:1,pickup:'K2',dropoff:'K1',robot:'01',rack_id:'R01',status:'interrupted'}]};
@@ -142,16 +195,46 @@ test('legacy closed/deleted order can rollback only its remaining interrupted mo
   const service=createOrderService({db,inventory,getState:()=>core,getSession:()=> 's',publish:()=>{},send:async payload=>{commands.push(payload);return {};}});
   t.after(()=>service.close());
   assert.deepEqual(inventory.snapshot(),before,'loading legacy records never migrates their cargo automatically');
-  await assert.rejects(()=>service.resolve(order.id,false,before.revision),/Cần xác nhận/);
   await assert.rejects(()=>service.resolve('closed-without-move',true,before.revision),/chưa ở trạng thái/);
-  await assert.rejects(()=>service.resolve(order.id,true,before.revision),/Kết nối lại xe 01/);
   assert.equal(commands.length,0);assert.deepEqual(inventory.snapshot(),before);
-  core.fleet.agvs=[robot];
-  const result=await service.resolve(order.id,true,before.revision);
+  const result=await service.resolve(order.id,undefined,before.revision);
   assert.equal(result.resolution,'rollback_to_pickup');assert.equal(result.deleted_at,order.deleted_at);
   assert.equal(inventory.snapshot().slots.find(slot=>slot.node==='K2').rack_id,'R01');
-  assert.equal(inventory.snapshot().moves.length,0);assert.equal(commands.length,1);
-  await service.resolve(order.id,true,before.revision);assert.equal(commands.length,1);
+  assert.equal(inventory.snapshot().moves.length,0);assert.equal(commands.length,0);
+  await service.resolve(order.id,true,before.revision);assert.equal(commands.length,0);
+});
+
+for(const id of ['01','02'])test(`legacy ${id} item without a move rolls back from known ledger data while Core is unavailable`,async t=>{
+  const {db,inventory,core}=fixture(t),vehicle=robotAt(id,'K2'),key=`order:missing-move-${id}:1`;
+  inventory.reserve({key,pickup:'K2',dropoff:'K1',robot:id});done(vehicle,55,true);
+  inventory.confirmLift(key,'pickup',vehicle,55,'s');
+  const stored=JSON.parse(db.db.prepare('SELECT state_json FROM warehouse_inventory').get().state_json);
+  stored.moves=[];db.db.prepare('UPDATE warehouse_inventory SET state_json=?').run(JSON.stringify(stored));
+  const order={id:`missing-move-${id}`,status:'needs_attention',closed_by_shift:true,deleted_at:'2026-01-01',
+    created:new Date(0).toISOString(),updated:new Date().toISOString(),items:[
+      {number:1,pickup:'K2',dropoff:'K1',robot:id,rack_id:'R01',status:'interrupted'}]};
+  db.saveOrder(order);
+  const service=createOrderService({db,inventory,getState:()=>null,getSession:()=>null,publish:()=>{},
+    send:async()=>{throw Error('undo must never send commands');}});t.after(()=>service.close());
+  const result=await service.resolve(order.id,undefined,inventory.snapshot().revision);
+  assert.equal(result.status,'closed');assert.equal(result.deleted_at,order.deleted_at);
+  assert.equal(result.rolled_back[0].pickup,'K2');assert.equal(inventory.snapshot().moves.length,0);
+  assert.deepEqual(inventory.snapshot().racks.find(rack=>rack.id==='R01').location,{type:'slot',id:'K2'});
+  assert.equal(inventory.history()[0].physical_completion_verified,false);
+  const before=inventory.snapshot();await service.resolve(order.id);assert.deepEqual(inventory.snapshot(),before);
+});
+
+test('legacy undo never recreates a missing rack or moves a rack from a later warehouse position',t=>{
+  const {db,inventory}=fixture(t),order={id:'legacy',items:[{number:1,pickup:'K2',dropoff:'K1',robot:'01',rack_id:'R01',status:'interrupted'}]};
+  const stored=JSON.parse(db.db.prepare('SELECT state_json FROM warehouse_inventory').get().state_json);
+  stored.racks.find(rack=>rack.id==='R01').location={type:'unknown',id:'K2'};
+  stored.slots.find(slot=>slot.node==='K2').rack_id=null;
+  db.db.prepare('UPDATE warehouse_inventory SET state_json=?').run(JSON.stringify(stored));
+  assert.deepEqual(inventory.rollbackPlan(order),[]);
+  stored.racks.find(rack=>rack.id==='R01').location={type:'slot',id:'K1'};
+  stored.slots.find(slot=>slot.node==='K1').rack_id='R01';
+  db.db.prepare('UPDATE warehouse_inventory SET state_json=?').run(JSON.stringify(stored));
+  assert.throws(()=>inventory.rollbackPlan(order),/đổi vị trí/);
 });
 
 test('rollback preserves a confirmed dropoff, rejects occupied source, and leaves saved reports immutable',async t=>{

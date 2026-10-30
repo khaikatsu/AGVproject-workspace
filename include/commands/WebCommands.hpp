@@ -49,8 +49,6 @@ public:
                 if(!error.empty()) return failure(result,409,error);
                 data["command_id"]=commandId;
             } else if (cmd == "reconcile_test_cargo") {
-                if(!j.contains("physically_clear") || j["physically_clear"]!=true)
-                    return failure(result,400,"Can xac nhan ke da ve kho lay va xe trong");
                 const auto& entries=j.at("robots");
                 if(!entries.is_array() || entries.empty() || entries.size()>2)return failure(result,400,"Danh sach xe sai");
                 std::vector<std::pair<std::string,long>> robots;
@@ -62,9 +60,12 @@ public:
                         return failure(result,400,"ID xe/lenh nang ha sai hoac trung");
                     robots.emplace_back(robot,entry["lift_command_id"].get<long>());
                 }
-                const auto error=fleet_.reconcileTestCargo(robots);
+                if(j.contains("home_rollback")&&!j["home_rollback"].is_boolean())return failure(result,400,"home_rollback phai la boolean");
+                const bool homeRollback=j.value("home_rollback",false);
+                const auto error=fleet_.reconcileTestCargo(robots,homeRollback);
                 if(!error.empty())return failure(result,409,error);
                 data["reconciled"]=entries;
+                data["scope"]="virtual_cargo_only";data["physical_completion_verified"]=false;
             } else if (cmd == "confirm_zone_clear") {
                 if (!j.value("physically_clear",false)) return failure(result,400,"Can xac nhan da dung xe va vung trong");
                 const auto zone = id(j,"zone"), owner = id(j,"owner");

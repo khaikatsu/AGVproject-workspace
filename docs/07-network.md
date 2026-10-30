@@ -1,5 +1,9 @@
 # Giao thức mạng và hợp đồng MCU với server
 
+30/10/2026 mới nhất: diagnostic schema1 thêm cargoMonitoringOnly:true cho01/02; Core yêu cầu trước lift5s; sensor snapshot required:false/monitoring_only:true. Cargo vẫn có raw/active/present/stable/seq/tuổi để theo dõi. POST /api/agvs/:id/reconcile-cargo nhận {}, không đòi physically_clear; WS reconcile_test_cargo giữ batch ID/lift_command_id tương thích, bỏ proof cargo/gate/diagnostic, trả scope:virtual_cargo_only/physical_completion_verified:false. Không đổi topic, telemetry pipe, ACK hoặc QoS. [ADR-099](decisions/ADR-099-cargo-monitoring-and-direct-reconciliation.md).
+
+30/10/2026: gateway bổ sung `GET /api/health.core_link` và log `[AGV-LINK]` có timestamp cho open/close/fresh/stale/sequence_mismatch. Chẩn đoán giữ số lần kết nối, close code/reason, tuổi state, gap state lớn nhất và độ trễ vòng monitor; không tăng stale5s hoặc bỏ chốt điều khiển. Tối ưu SQLite tái dùng prepared statement đồng bộ task. Không đổi payload MCU/WS. Kết quả đo tại [hướng dẫn khởi động](16-startup-troubleshooting.md).
+
 CURRENT30/10/2026 v27: [ADR-095](decisions/ADR-095-lm393-active-low.md) đổi LM393 sang LOW/raw0=có hàng, HIGH/raw1=trống theo ảnh người dùng, cho cả01/02. Diagnostic cargoActiveLevel=0; cargoPresent=true/false giữ nguyên ý nghĩa có/không hàng nên Core/gateway không đảo. Tại gate HIGH ổn định mới proof trống/DONE_DOWN; các mô tả HIGH=có hàng/LOW=trống bên dưới giữ mốc lịch sử. Không đổi schema/topic/ACK; chưa build/test/nạp firmware.
 
 `maintenanceReady` là phép kiểm tra cục bộ tại trạm: nguồn, line, sonar, mạng, RFID mới, motor dừng, hết tuyến/servo và mẫu cargo ổn định. Core chỉ đếm cửa sổ ổn định bảo dưỡng khi cờ nàytrue; khi điều kiện lại mất thì hủy cửa sổ và cho phép một lần reset mới sau khi ổn định trở lại. Cờ này không xác nhận góc servo, hướng đặt xe hoặc kệ đã được đối soát.
@@ -22,7 +26,7 @@ RESET_FAULT từ luồng xác nhận vật lý mới thêm `verified_recovery:tr
 
 28/10/2026: HTTP/WS thêm phục hồi node/home và resume task theo [hợp đồng](../contracts/web-server.md), [ví dụ](../contracts/examples/shift-recovery.json). Dùng lại RESET_FAULT/GOTO/cmd_id và diagnostic hiện có, không đổi MQTT/firmware. ACK reset chưa mở IDLE: phục hồi thủ công cần diagnostic khỏe sau lệnh, đúng RFID/boot/kết nối và high-water command. [ADR-090](decisions/ADR-090-shift-recovery-and-binary-inventory.md).
 
-26/10/2026, REQ-WAREHOUSE-TEST-ROLLBACK-01: WS v1 gateway→Core thêm `reconcile_test_cargo`, batch ID01/02+lift_command_id và xác nhận xe trống. Core cần diagnostic dừng đúng boot/kết nối còn mới rồi chỉ cập nhật cargo ảo phục vụ lượt thử. Không gửi MQTT hoặc thêm command MCU; firmware không cần nạp lại. [Hợp đồng](../contracts/web-server.md), [ví dụ](../contracts/examples/test-order-rollback.json), [ADR-089](decisions/ADR-089-test-order-rollback.md).
+30/10/2026, REQ-ONE-CLICK-INVENTORY-ROLLBACK-20261030: HTTP resolve chỉ cần `expected_revision`, hoàn tác sổ kho không gửi command Core/MQTT hoặc đòi xác nhận cargo. `reconcile_test_cargo` cũ vẫn tồn tại cho endpoint đối soát cargo riêng, không còn thuộc luồng Hoàn tác đơn. Không đổi telemetry/diagnostic/firmware hoặc WS version. [Hợp đồng](../contracts/web-server.md), [ví dụ](../contracts/examples/test-order-rollback.json), [ADR-098](decisions/ADR-098-one-click-inventory-rollback.md).
 
 26/10/2026, REQ-WEB-LOCATION-NAMES-01: hoán đổi tên kho/trạm chỉ nằm ở HTTP/WS browser–gateway và SQLite. Trường `location_names_revision` opt-in dịch tên sang ID vật lý tại gateway; MQTT command/telemetry, UID, bảng tuyến và trạm riêng của hai xe giữ ID cũ. Không có gói cấu hình tên gửi xuống MCU. [Hợp đồng và ví dụ](../contracts/web-server.md), [ADR-087](decisions/ADR-087-server-location-names.md).
 

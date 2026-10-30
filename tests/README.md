@@ -1,5 +1,37 @@
 # Hồ sơ kiểm thử AGV
 
+## Kết ca rời gate về trạm — 30/10/2026
+
+[ADR-101](../docs/decisions/ADR-101-shift-home-departure-readiness.md): build Core riêng `.qa/shift-return-build-20261030/agv_core.exe` PASS, SHA256 `2D45C5954A93EBA026157E2DCA903019E965B4A6D8F451C9D59DBF5E0E3B4EED`. Compile/run độc lập `tests/shift-return-readiness.cpp`, `tests/shift-lifecycle.cpp`, `tests/home-heading.cpp`, `tests/direct-goto-guard.cpp` PASS bằng UCRT64 g++17, include ứng dụng, không firmware/broker/DB vận hành. Mỗi test có log tại `.qa/shift-return-fix-20261030/<tên-test>.log`; build tại `.qa/shift-return-build-20261030.log`.
+
+Ca mới kiểm cả01/02: task vừa hoàn tất theo RFID nhưng hướng UNKNOWN/MCU còn task/motor còn chạy/RFID cũ/sai boot/ACK chưa tới thì kết ca chưa phát GOTO; diagnostic STOP khỏe với hướng hợp lệ cho đúng một tuyến về, không lặp sau tick. Task chưa xong được hủy qua WAIT, ACK hoặc high-water cũ chưa đủ; proof mới đúng lệnh mới cho về, không replay task. Giữ chốt hướng tại home, CLOSED bền vững và chặn GOTO chồng tuyến. Không chạy lại bộ core_tests tổng đang có fixture thiếu hướng đã nêu ở ADR-100; không coi các test tập trung là PASS toàn bộ hồi quy.
+
+Chưa thay/restart Core vận hành hoặc thử xe thật. Không sửa/build/test/nạp firmware;01/02 giữ cargo-monitor-v28. Cần dừng Core cũ và build/chạy bản mới để áp dụng, không tự ép CLOSED, sửa counter hoặc xóa lỗi/khóa hướng.
+
+## GOTO chồng tuyến và INVALID_COMMAND — 30/10/2026
+
+[ADR-100](../docs/decisions/ADR-100-direct-goto-busy-guard-and-error-context.md): Core build riêng `.qa/invalid-command-recovery-20261030/agv_core.exe` thành công; `tests/direct-goto-guard.cpp` compile/run PASS cho01/02 capability unknown/present/lost, command_result409, không gửi GOTO hoặc requeue chồng, giữ task/tuyến, STOP/ERROR và ngữ cảnh lỗi. Log `.qa/invalid-command-recovery-focused.log`. Edge headless `tests/vehicle-cards.browser.integration.js` desktop/mobile PASS, gồm khóa giao lệnh khi WORKING/BLOCKED/task còn treo/reset/lift, phục hồi hiện hành, reconnect/scope và keyed DOM; bằng chứng `.qa/vehicle-cards-y7zgNQ`, log `.qa/invalid-command-recovery-browser.log`.
+
+Lệnh `scripts/build-core.ps1 -OutputDirectory .qa/invalid-command-recovery-20261030 -Tests` build được cả Core/test nhưng bộ hồi quy tổng dừng ở `after-mid-route-reset`, do fixture thiếu xác nhận hướng; probe riêng xác nhận trả `Can xac nhan huong dau xe truoc khi chay`. Không báo toàn bộ core_tests PASS hoặc nới chốt hướng để ép test. Log `.qa/invalid-command-recovery-build.log`. Không build/test/nạp firmware, restart Core vận hành, sửa DB/counter hoặc thử xe thật.
+
+## Hoàn tác sổ kho một lần bấm — 30/10/2026
+
+Theo [ADR-098](../docs/decisions/ADR-098-one-click-inventory-rollback.md): `node --test --test-isolation=none tests/orders.test.js tests/warehouse-inventory.test.js`43/43 PASS, gateway24/24 PASS. Browser `tests/warehouse-rollback.browser.integration.js` với Playwright/Edge headless PASS desktop/mobile cho01/02, xe offline, đơn closed/đã ẩn quá50 mục, giữ cargo, không dialog/command Core và restart DB/gateway riêng. Bằng chứng `.qa/warehouse-rollback-iV59LM`; log `.qa/ledger-undo-{unit,gateway,browser}.log`. Dùng SQLite/Core giả và cổng riêng; không thử xe thật hoặc sửa dữ liệu vận hành. Các kết quả xác nhận/Core đối soát cargo của luồng Hoàn tác cũ bên dưới là lịch sử trước ADR-098.
+
+## Xe khỏe tại S1/S2 không chọn hướng thủ công — 30/10/2026
+
+[ADR-097](../docs/decisions/ADR-097-healthy-home-without-heading-confirmation.md): Core `tests/home-heading.cpp` PASS01/02 gồm hướng bay_default/route, RFID anchor cũ, bảo dưỡng chưa ready, reconnect/restore và tự đồng bộ UNKNOWN với diagnostic xác nhận đúng lệnh. Các ca sai trạm/giữa đường/lỗi/motor/task/lift/sai boot giữ chốt; không đổi cargo hoặc tự cấp task. Binary nguồn cuối `.qa/home-heading-final-20261030/{agv_core,home-heading}.exe`. Hồi quy `maintenance_recovery.cpp` +21ca conflict PASS; Edge DOM `maintenance-recovery.browser.js` PASS01/02, gateway/security/restart29/29 PASS. `vehicle-cards.browser.integration.js` cũ dừng do còn dùng form hai bước đã thay bởi ADR-094, không phải bằng chứng PASS. Không build/test/nạp firmware.
+
+## Chẩn đoán kết nối và tải đồng bộ task — 30/10/2026
+
+Gateway/security/restart29/29, orders/inventory38/38 PASS. Ca mới kiểm Core delta lệch baseline đóng1002, lưu reason, reconnect khỏe và không gửi command; ca stale kiểm tuổi state và vẫn chặn điều khiển. Benchmark20lượt1000task trên bản sao DB: tái dùng prepared statement giảm trung bình41,8→3,9ms. Không benchmark hoặc ghi dữ liệu kiểm thử vào DB vận hành. Sau restart duy nhất gateway, Edge/health20s không đóng socket hoặc lỗiJS/stale; Core gap max360ms và health max74ms. Chưa tái hiện gián đoạn thực người dùng báo, log mới dùng bắt nguyên nhân khi tái diễn; [chi tiết](../docs/16-startup-troubleshooting.md).
+
+## Kết ca và bằng chứng đối soát bền vững — 30/10/2026
+
+Theo [ADR-096](../docs/decisions/ADR-096-durable-shift-closure-and-reconciliation.md): Node orders/inventory38/38 và gateway/restart24/24 PASS với DB/cổng riêng. `tests/shift-restart.integration.js` kiểm ngắt Core, đổi phiên và gateway/SQLite restart3lần; snapshot đầu sau lưu có proof mới và đơn ẩn đã đối soát không quay lại, không phát command. Chạy bằng `npm --prefix AGVwebserver run test:shift:restart`; fixture `.qa/shift-restart-AtGGqZ`.
+
+Build Core và `tests/shift-lifecycle.cpp` PASS:01/02 × ba pha lưu, CLOSED giữ qua lỗi/mutex/reload, can_start vẫn chặn thiếu proof và không tự phát hành trình. Bộ Core tổng hợp dừng ở assertion phục hồi giữa tuyến `after-mid-route-reset`; đối chứng với ShiftController gốc từ HEAD lỗi cùng chỗ, chưa coi toàn bộ suite PASS. Binary/test tại `.qa/durable-shift-20261030`. Các lần sandbox chặn socket/CIM đã chạy lại ngoài sandbox bằng fixture riêng. Không sửa hoặc kiểm thử firmware.
+
 ## Ghép main trước khi push — 30/10/2026
 
 Ghép `origin/main` tại `07e56ce` vào thay đổi phục hồi `6c4f833`. Giữ base-return mới của remote (không reverse_after_turn), chặn đi xuyên G1–G6, cửa sổ quét cargo3s, nút đối soát kệ và chốt dừng motor. Xung đột orders.js ưu tiên yêu cầu mới nhất: chỉ lượt xe lỗi bị gián đoạn; lượt khỏe vẫn hoàn thành. Config giữ LOW=có hàng và buildID01/02 `20261030-robot0x-lm393-active-low-v27`. AGVController giữ cả journal phục hồi và chốt motor dừng từ remote.

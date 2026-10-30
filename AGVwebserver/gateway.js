@@ -74,6 +74,11 @@ function createGateway(options = {}) {
     wss.on('error',error=>{if (server.listening) console.error('[WS]',error.message);});
     let latestState = emptyState(),socket = null,connected = false,stopped = false;
     let receivedAt = 0,session = null,reconnectTimer = null,wasFresh = false;
+    const coreLink = {connections:0,last_open_at:null,last_close:null,sequence_mismatches:0,
+        max_state_gap_ms:0,max_monitor_lag_ms:0};
+    const linkDiagnostics=()=>({...coreLink,state_age_ms:receivedAt?Math.max(0,Date.now()-receivedAt):null,
+        core_session_id:session,core_snapshot_seq:latestState.core_snapshot_seq??null});
+    const logLink=(event,detail={})=>console.error('[AGV-LINK]',JSON.stringify({at:new Date().toISOString(),event,...detail}));
     const requests = new Map();
     let broadcastTimer = null,lastBroadcastAt = 0,broadcastExtra = {};
     const broadcastIntervalMs = options.broadcastIntervalMs ?? 200;
@@ -100,7 +105,7 @@ function createGateway(options = {}) {
         const namesReason=locationNamesBlockReason();
         const fleetFault=latestState.fleet.agvs.some(r=>r.participating!==false&&
             (r.online===false||['ERROR','OFFLINE','UNLOCALIZED'].includes(r.state)||r.recovery_reset_pending));
-        const fleetHold=visibleOrders.some(o=>o.fleet_recovery_hold&&!o.closed_by_shift);
+        const fleetHold=orders.hasFleetRecoveryHold();
         const working=visibleOrders.some(o=>o.items.some(i=>!['queued','delivered','interrupted'].includes(i.status)));
         return {...latestState,fleet_recovery:{state:fleetFault||fleetHold?(working?'DEGRADED':'WAITING_FLEET'):'NORMAL'},agv_connected:connected,core_ready:ready(),protocol_supported:supported(),
         state_received_at:receivedAt ? new Date(receivedAt).toISOString() : null,stale_after_ms:staleMs,
@@ -153,7 +158,9 @@ function createGateway(options = {}) {
         latestState = {...state,map:{...state.map,obstacles:state.map.obstacles || []},
             fleet:{...state.fleet,pending_tasks:state.fleet.pending_tasks || [],tasks:state.fleet.tasks || []},
             mutex:state.mutex || {},logs:Array.isArray(state.logs) ? state.logs : []};
-        receivedAt = Date.now();
+        const now=Date.now();
+        if(receivedAt)coreLink.max_state_gap_ms=Math.max(coreLink.max_state_gap_ms,now-receivedAt);
+        receivedAt = now;
         db.enqueueState(latestState,session,INCIDENT_RE);
         if (latestState.mqtt_connected === false) {
             inventory.observationGap('Mất MQTT trong ca');
@@ -166,6 +173,7 @@ function createGateway(options = {}) {
         else if(['CLOSING','CLOSED'].includes(latestState.shift?.phase)) {orders.endShift();warehouseActions.endShift();}
         void Promise.all([orders.tick(),warehouseActions.tick()]).then(async()=>{
             for(const task of latestState.fleet.tasks) {
+                if(task.status!=='interrupted'||task.resume_available!==true)continue;
                 const r=latestState.fleet.agvs.find(r=>r.id===task.assigned_agv);
                 const managed=orders.list({includeDeleted:true}).some(o=>o.items.some(i=>i.task_id===task.task_id))||
                     warehouseActions.list().some(a=>a.task_id===task.task_id);
@@ -188,13 +196,20 @@ function createGateway(options = {}) {
         streamState = null;
         const coreToken = options.coreToken ?? process.env.AGV_CORE_TOKEN;
         const current = socket = new WebSocket(coreUrl,{maxPayload:8*1024*1024,headers:coreToken ? {Authorization:`Bearer ${coreToken}`} : undefined});
-        current.on('open',() => {connected = true;receivedAt = 0;broadcast();});
+        current.on('open',() => {
+            connected = true;receivedAt = 0;coreLink.connections++;
+            coreLink.last_open_at=new Date().toISOString();logLink('open',{connections:coreLink.connections});broadcast();
+        });
         current.on('message',raw => {
             if (current !== socket || stopped) return;
             try {
                 const payload = JSON.parse(raw.toString());
                 if (payload.type === 'state_delta') {
-                    if (!streamState || payload.base_state_seq !== streamState.state_seq) {current.close();return;}
+                    if (!streamState || payload.base_state_seq !== streamState.state_seq) {
+                        coreLink.sequence_mismatches++;
+                        logLink('sequence_mismatch',{expected:streamState?.state_seq??null,base:payload.base_state_seq,next:payload.state_seq});
+                        current.close(1002,'Core delta sequence mismatch');return;
+                    }
                     streamState = {...streamState,...payload.changes,state_seq:payload.state_seq};return onState(streamState);
                 }
                 if (payload.type !== 'command_result') {streamState = payload;return onState(payload);}
@@ -208,9 +223,11 @@ function createGateway(options = {}) {
             } catch (error) {console.error('[AGV-LINK]',error.message);}
         });
         current.on('error',error => {if (!stopped) console.error('[AGV-LINK]',error.message);});
-        current.on('close',() => {
+        current.on('close',(code,reason) => {
             if (current !== socket) return;
             const hadState = connected && receivedAt > 0;
+            coreLink.last_close={at:new Date().toISOString(),code,reason:reason.toString().slice(0,120),state_age_ms:receivedAt?Date.now()-receivedAt:null};
+            if(!stopped)logLink('close',coreLink.last_close);
             connected = false;failRequests('Mất kết nối core; kết quả lệnh chưa xác định, hãy đối chiếu trạng thái trước khi gửi lại');
             orders.interruptAll('Mất kết nối Core; đối soát xe và kiện hàng');
             inventory.observationGap('Mất kết nối Core trong ca; dữ liệu kho cần kiểm tra');
@@ -229,7 +246,7 @@ function createGateway(options = {}) {
         if (!allowMqttOffline && latestState.mqtt_connected === false) throw httpError(503,'Core đang mất kết nối MQTT broker');
     }
     function command(payload) {
-        requireCore(payload.cmd==='end_shift');const requestId = randomUUID();
+        requireCore(['end_shift','reconcile_test_cargo'].includes(payload.cmd));const requestId = randomUUID();
         if (requests.size >= 128) throw httpError(429,'Có quá nhiều lệnh đang chờ Core');
         const text = JSON.stringify({...payload,request_id:requestId});
         if (Buffer.byteLength(text) > 1024*1024) throw httpError(413,'Lệnh vượt giới hạn 1 MiB của core');
@@ -244,9 +261,9 @@ function createGateway(options = {}) {
     }
     const inventory=createWarehouseInventory({db,publish:()=>broadcast()});
     const orders = createOrderService({db,getState:()=>ready() && supported() ? latestState : null,
-        getSession:()=>session,send:command,publish:()=>broadcast(),inventory,getLocationNames:locationNames.snapshot,cargoScanTimeoutMs:3000});
+        getSession:()=>session,send:command,publish:()=>broadcast(),inventory,getLocationNames:locationNames.snapshot});
     const warehouseActions=createWarehouseActions({getState:()=>ready()&&supported()?latestState:null,
-      getSession:()=>session,send:command,publish:()=>broadcast(),inventory,cargoScanTimeoutMs:3000});
+      getSession:()=>session,send:command,publish:()=>broadcast(),inventory});
     const shiftReview=createShiftReview({db,getState:()=>latestState,getSession:()=>session,
       inventory,orders,actions:warehouseActions});
     const route = fn => (req,res,next) => Promise.resolve().then(()=>fn(req,res)).catch(next);
@@ -279,7 +296,8 @@ function createGateway(options = {}) {
     }
     app.get('/api/health',(req,res)=>res.json({ok:true,backend:'online',agv_connected:connected,core_ready:ready(),protocol_supported:supported(),mqtt_connected:latestState.mqtt_connected ?? null,storage_healthy:latestState.storage_healthy ?? null,
       warehouse_service_ms:SERVICE_MS,warehouse_order_lift_required:true,warehouse_lift_ready_timeout_ms:LIFT_READY_TIMEOUT_MS,
-      warehouse_lift_result_timeout_ms:LIFT_RESULT_TIMEOUT_MS,warehouse_test_actions:true,agv_ws_url:coreUrl,time:new Date().toISOString()}));
+      warehouse_lift_result_timeout_ms:LIFT_RESULT_TIMEOUT_MS,warehouse_test_actions:true,agv_ws_url:coreUrl,
+      core_link:linkDiagnostics(),time:new Date().toISOString()}));
     app.get('/api/state',(req,res)=>res.json(browserState()));
     app.get('/api/shift',(req,res)=>res.json(latestState.shift || {supported:false,phase:'UNAVAILABLE'}));
     app.post('/api/shift/start',route(async (req,res)=>{
@@ -378,12 +396,11 @@ function createGateway(options = {}) {
             expected_node:id(req.body.expected_node),physically_clear:true,repositioned:req.body.repositioned})});
     }));
     app.post('/api/agvs/:id/reconcile-cargo',route(async(req,res)=>{
-        if(req.body.physically_clear!==true)throw httpError(400,'Cần xác nhận xe đã trống và kệ an toàn');
         const agvId = id(req.params.id);
         const robot = latestState.fleet.agvs.find(r => r.id === agvId);
         if(!robot)throw httpError(404,'Không tìm thấy xe');
         const liftCmdId = robot.lift?.command_id || 0;
-        res.json({ok:true,...await command({cmd:'reconcile_test_cargo',robots:[{id:agvId,lift_command_id:liftCmdId}],physically_clear:true})});
+        res.json({ok:true,...await command({cmd:'reconcile_test_cargo',robots:[{id:agvId,lift_command_id:liftCmdId}]})});
     }));
     app.post('/api/agvs/:id/recovery-heading',route(async(req,res)=>{
         if(req.body.physically_confirmed!==true || !['N','E','S','W'].includes(req.body.heading))
@@ -452,14 +469,18 @@ function createGateway(options = {}) {
         if (res.headersSent) return next(error);
         res.status(error.status || 500).json({ok:false,error:error.message,unknown:!!error.unknown});
     });
+    let lastMonitorAt=Date.now();
     const monitor = setInterval(()=>{
+        const monitorAt=Date.now();coreLink.max_monitor_lag_ms=Math.max(coreLink.max_monitor_lag_ms,monitorAt-lastMonitorAt-1000);lastMonitorAt=monitorAt;
         const current = fresh();
         if (current !== wasFresh) {
             if (!current) {
+                logLink('stale',{connected,...linkDiagnostics()});
                 orders.interruptAll('Dữ liệu Core đã cũ; đối soát xe và kiện hàng');
                 inventory.observationGap('Dữ liệu Core đã cũ trong ca');
                 for (const a of latestState.fleet.agvs) db.logAgvEventIfChanged(a.id,a.node,batteryForDisplay(a),'UNKNOWN');
             }
+            if(current)logLink('fresh',linkDiagnostics());
             broadcast();wasFresh = current;
         }
     },1000);monitor.unref();

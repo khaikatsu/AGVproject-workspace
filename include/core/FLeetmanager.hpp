@@ -102,6 +102,9 @@ struct AGV {
     bool dropoffExitSupported=false,dropoffExitPending=false;
     bool liftRecoverySupported=false,liftWaitingRecovery=false;
     bool cargoSensorSupported=false,cargoSensorStable=false,cargoSensorPresent=false,cargoSensorStopped=false;
+    bool cargoMonitoringOnly=false;
+    bool liftDiagnosticSeen=false;
+    uint32_t liftDiagnosticUptime=0,liftDiagnosticBoot=0,liftDiagnosticConnection=0;
     uint32_t cargoSensorSeq=0,cargoSensorUptime=0,cargoSensorBoot=0,cargoSensorConnection=0,liftCargoUptime=0;
     std::string cargoSensorNode;
     Clock::time_point cargoSensorSeen{};
@@ -146,6 +149,7 @@ struct MotionDiagnostic {
     bool maintenanceRecoverySupported=false;
     bool maintenanceReady=false;
     bool cargoSensorSupported=false,cargoSensorStable=false,cargoSensorPresent=false;
+    bool cargoMonitoringOnly=false;
     uint32_t cargoSensorSeq=0,cargoSensorAge=UINT32_MAX,cargoSensorStableMs=0;
     long liftCommandId=0;
     uint32_t liftElapsedMs=0;
@@ -357,6 +361,8 @@ public:
             } else {
                 if (a.state == AGVState::CHARGING_EN_ROUTE && a.finalTarget == station) return "";
                 if (a.state == AGVState::CHARGING) return "Xe dang sac o tram khac";
+                const auto departureError=homeDepartureErrorNoLock(a);
+                if(!departureError.empty())return departureError;
                 auto route = computePathNoLock(a,station);
                 if (route.empty()) {
                     a.state = AGVState::BLOCKED; a.blockedResume = AGVState::CHARGING_EN_ROUTE;
@@ -635,6 +641,7 @@ public:
                 it->second.heading.clear();
                 it->second.virtualCargoKnown=false;it->second.liftSupported=false;
                 it->second.cargoSensorSeen={};it->second.cargoSensorSeq=0;it->second.cargoSensorSupported=false;
+                it->second.cargoMonitoringOnly=false;
                 lk.unlock();arbiter_.cancelWaiting(id);
             }
             return bound;
@@ -822,7 +829,7 @@ public:
                     if(!home)a.maintenanceArrival=false;
                     else if(parked)a.maintenanceArrival=true;
                     a.maintenanceNeedsReset=home && (diagnostic.liftState=="WAITING_LIFT_RECOVERY"||diagnostic.liftState=="INTERRUPTED");
-                    if(home && diagnostic.liftState=="IDLE" && diagnostic.error=="NONE" && cargoSensorReadyNoLock(a,false)) {
+                    if(home && parked && diagnostic.liftState=="IDLE" && diagnostic.error=="NONE" && diagnostic.cargoMonitoringOnly) {
                         a.virtualCargoKnown=true;a.virtualCargo=false;
                     }
                 }
@@ -1006,12 +1013,25 @@ public:
     void reportError(const std::string& id, const std::string& msg) {
         std::vector<std::string> toReplan;
         bool interrupted = false;
+        std::string commandContext;
         const bool staleCommand = msg == "STALE_COMMAND";
         {
             std::lock_guard<std::mutex> lk(mtx_);
             auto it = fleet_.find(id);
             if (it == fleet_.end()) return;
             AGV& agv = it->second;
+            if(msg=="INVALID_COMMAND" || msg=="STALE_COMMAND") {
+                // Capture Core's last known context before interrupt/STOP clears it.
+                // It is evidence for diagnosis, not proof of which MCU check failed.
+                json context={{"node",agv.currentNode},{"target",agv.finalTarget},{"task_id",agv.taskId},
+                    {"route_cmd_id",agv.routeCommandId},{"route_start",agv.routeStart},{"path",agv.commandPath},
+                    {"heading",agv.heading},{"heading_source",agv.headingSource}};
+                context["diagnostic_last_command_id"]=agv.nodeStopLastCommand;
+                context["stop_command_id"]=agv.stopCommandId;
+                const auto pending=pendingCmd_.find(id);
+                if(pending!=pendingCmd_.end())context["pending_command"]=pending->second.payload;
+                commandContext="; core_context="+context.dump();
+            }
             interrupted = interruptWorkNoLock(agv, msg);
             agv.nodeStopSeen={};
             agv.lastError = msg;
@@ -1033,15 +1053,17 @@ public:
         }
         arbiter_.cancelWaiting(id);
         appendMutexWaitersForFailedOwners({id},toReplan);
-        emit("AGV_" + id + " BAO LOI: " + msg + (interrupted ? " -> task bi gian doan, can xac minh" : ""));
+        emit("AGV_" + id + " BAO LOI: " + msg + (interrupted ? " -> task bi gian doan, can xac minh" : "")+commandContext);
         replanAffectedAgvs({id},toReplan);
         notify();
         dispatchPending();
     }
 
     void observeHeadingDiagnostic(const std::string& id, const MotionDiagnostic& d) {
+        const auto zones=arbiter_.toJson();
         bool changed = false;
         bool finished = false;
+        bool restoreBayHeading=false;std::string bayNode,bayHeading;
         {
             std::lock_guard<std::mutex> lk(mtx_);
             auto it = fleet_.find(id); if (it == fleet_.end()) return;
@@ -1057,11 +1079,45 @@ public:
                 a.recoveryHeadingRequired=true;changed=true;
             }
             a.headingConfirmationSupported=d.headingConfirmationSupported;
+            bool ownsZone=false;
+            for(const auto& zone:zones.items())if(zone.value().value("owner",std::string{})==id)ownsZone=true;
+            const bool reconnectOnly=a.state==AGVState::AGV_ERROR &&
+                a.lastError=="Ket noi lai: can xac minh robot va xoa loi thu cong";
+            // A healthy parked robot uses the agreed pose of its own bay.
+            // RFID anchor age and maintenance line/sonar checks are not a
+            // manual heading confirmation. Keep full recovery proof for
+            // faults, uncertain occupancy, active work and other nodes.
+            const bool parkedBayStop = supported && a.positionValid && a.hasTelemetry &&
+                Clock::now()-a.lastSeen<=offlineTimeout_ && a.currentNode==d.node && activeRobotNoLock(id) &&
+                PhysicalLayout::home(id)==a.currentNode &&
+                ((a.state==AGVState::IDLE && a.lastError.empty()) || reconnectOnly) &&
+                d.state=="AGV_IDLE" && d.error=="NONE" &&
+                d.motor=="STOP" && d.leftDuty==0 && d.rightDuty==0 && !d.taskActive && !d.liftBusy &&
+                d.encoderBoot && d.encoderBoot==a.encoder.boot && d.encoderConnection==a.encoder.connection &&
+                a.nodeStopSeen!=Clock::time_point{} && Clock::now()-a.nodeStopSeen<=std::chrono::milliseconds(1500) &&
+                a.nodeStopUptime==d.encoderUptime && d.rfidAgeMs!=UINT32_MAX &&
+                a.taskId.empty() && a.finalTarget.empty() && a.activePath.empty() && a.uncertainPath.empty() &&
+                a.stoppedNodes.empty() && !ownsZone && !a.dropoffExitPending && !a.liftWaitingRecovery &&
+                !a.cancelNeedsNodeProof && !a.replanNeedsNodeProof && !a.liftActive &&
+                !a.operatorNodeReset && !a.autoResetRequested && a.headingPendingId==0;
+            const bool parkedBayHeading=parkedBayStop && valid &&
+                d.heading==PhysicalLayout::outwardHeading(a.currentNode) &&
+                (d.headingSource=="bay_default" || (d.headingSource=="route" && d.stationReady));
+            if(parkedBayStop && reconnectOnly){a.state=AGVState::IDLE;a.lastError.clear();a.autoResetEligible=false;changed=true;}
+            if(parkedBayHeading && a.recoveryHeadingRequired) {
+                if(reconnectOnly){a.state=AGVState::IDLE;a.lastError.clear();a.autoResetEligible=false;}
+                a.recoveryHeadingRequired=false;a.headingConfirmedId=0;
+                a.recoveryChosenHeading.clear();a.recoveryAutoResume=false;changed=true;
+            }
+            if(parkedBayStop && a.recoveryHeadingRequired && d.headingSource=="unknown" &&
+                (d.heading.empty() || d.heading=="UNKNOWN") && d.rfidAgeMs<=250 && a.headingConfirmationSupported) {
+                restoreBayHeading=true;bayNode=a.currentNode;bayHeading=PhysicalLayout::outwardHeading(a.currentNode);
+            }
             const bool confirmation = valid && a.headingPendingId>0 && d.headingCommandId==a.headingPendingId &&
                 d.headingSource=="operator" && d.heading==a.headingRequested && d.node==a.headingRequestedNode &&
                 d.encoderBoot==a.headingRequestBoot && d.encoderConnection==a.headingRequestConnection &&
                 static_cast<int32_t>(d.encoderUptime-a.headingRequestUptime)>0 && d.lastCommandId>=a.headingPendingId &&
-                verifiedNodeStopNoLock(a) && a.nodeStopHealthy && a.state==AGVState::IDLE &&
+                (verifiedNodeStopNoLock(a) || healthyParkedHomeNoLock(a)) && a.nodeStopHealthy && a.state==AGVState::IDLE &&
                 !a.liftActive && a.taskId.empty() && a.activePath.empty() && a.finalTarget.empty();
             if(confirmation) {
                 const auto pending=pendingCmd_.find(id);
@@ -1094,6 +1150,7 @@ public:
                 a.stationArrivalRequired = true;
             finished = completeArrivalNoLock(a);
         }
+        if(restoreBayHeading)confirmRecoveryHeading(id,bayNode,bayHeading);
         if (changed || finished) notify();
         if (finished) dispatchPending();
     }
@@ -1293,9 +1350,9 @@ public:
                 !a.taskId.empty() || !a.finalTarget.empty() || !a.activePath.empty() || !a.uncertainPath.empty())
                 return "Servo can xe dung yen dung kho, khong task hoac loi";
             if(!a.liftSupported || !a.liftReady || a.liftObservedNode!=node || Clock::now()-a.liftSeen>std::chrono::seconds(3)) return "Firmware servo chua san sang";
-            if(!cargoSensorReadyNoLock(a,true))return "Cho LM393 moi, on dinh, xe STOP dung RFID va co hang truoc nang/ha";
+            if(!a.cargoMonitoringOnly)return "Can nap firmware cargo-monitor-v28 cho xe truoc khi nang/ha theo chu ky 5s";
             a.liftActive=true;a.liftWaitingRecovery=false;a.liftState="PENDING";a.liftNode=node;a.liftAction=up?"pickup":"dropoff";
-            a.liftCargoUptime=a.cargoSensorUptime;
+            a.liftCargoUptime=a.liftDiagnosticUptime;
             a.liftStarted=Clock::now();a.liftBoot=a.encoder.boot;a.liftConnection=a.encoder.connection;
             a.state=up?AGVState::LIFTING:AGVState::LOWERING;
             commandId=sendCommand(a,up?"LIFT_UP":"LIFT_DOWN",{{"node",node}});
@@ -1305,30 +1362,21 @@ public:
         notify();return "";
     }
 
-    // Test-only operator reconciliation changes bookkeeping, never actuators,
+    // Operator reconciliation changes only cargo bookkeeping, never actuators,
     // position, faults or mutex. Validate the whole batch before changing either robot.
-    std::string reconcileTestCargo(const std::vector<std::pair<std::string,long>>& robots) {
+    std::string reconcileTestCargo(const std::vector<std::pair<std::string,long>>& robots,bool /*homeRollback*/=false) {
         {
             std::lock_guard<std::mutex> lk(mtx_);
-            if(!networkAvailable_)return "Cho MQTT ket noi lai truoc khi hoan tac";
-            const auto now=Clock::now();
             for(const auto& entry:robots) {
-                const auto it=fleet_.find(entry.first);
-                if(it==fleet_.end() || !activeRobotNoLock(entry.first))return "Xe chua san sang doi soat";
+                const auto& id=entry.first;
+                const auto it=fleet_.find(id);
+                if(it==fleet_.end() || !activeRobotNoLock(id))return "Xe khong thuoc pham vi van hanh";
                 const auto& a=it->second;
-                if(a.dropoffExitPending && a.currentNode!=PhysicalLayout::gate(a.liftNode))
-                    return "Sau ha can xac minh xe da roi ke tai gate truoc doi soat cargo";
-                if(a.cargoSensorSupported && (!a.cargoSensorStable || a.cargoSensorPresent ||
-                    a.cargoSensorSeen==Clock::time_point{} || now-a.cargoSensorSeen>std::chrono::milliseconds(1500) ||
-                    a.cargoSensorNode!=a.currentNode || a.cargoSensorBoot!=a.encoder.boot || a.cargoSensorConnection!=a.encoder.connection))
-                    return "LM393 chua xac nhan xe trong; khong hoan tac cargo ao";
-                if(!a.hasTelemetry || !a.positionValid || now-a.lastSeen>offlineTimeout_ ||
-                    (a.state!=AGVState::IDLE && a.state!=AGVState::AGV_ERROR && a.state!=AGVState::CHARGING) ||
-                    !a.taskId.empty() || !a.finalTarget.empty() || !a.activePath.empty() || a.liftActive ||
-                    a.liftCommandId!=entry.second || a.cargoReconcileSeen==Clock::time_point{} ||
-                    now-a.cargoReconcileSeen>std::chrono::seconds(3) ||
-                    a.cargoReconcileBoot!=a.encoder.boot || a.cargoReconcileConnection!=a.encoder.connection)
-                    return "Can diagnostic moi xac nhan xe dung, het task/nang ha; tai lai truoc khi hoan tac";
+                if(!a.taskId.empty() || !a.finalTarget.empty() || !a.activePath.empty() || a.liftActive ||
+                    std::any_of(taskRecords_.begin(),taskRecords_.end(),[&](const auto& task){
+                        return task.second.value("assigned_agv",std::string{})==id &&
+                            (task.second.value("status",std::string{})=="pending" || task.second.value("status",std::string{})=="dispatched");}))
+                    return "Xe dang co nhiem vu/nang ha; dung hoac huy nhiem vu truoc khi doi soat";
             }
             for(const auto& entry:robots) {
                 auto& a=fleet_.at(entry.first);a.virtualCargoKnown=true;a.virtualCargo=false;
@@ -1374,7 +1422,13 @@ public:
             if((id!="01" && id!="02") || !activeRobotNoLock(id) ||
                 it==fleet_.end() || !d.liftPresent || !networkAvailable_) return;
             auto& a=it->second;
+            if(!d.encoderBoot || d.encoderBoot!=a.encoder.boot || d.encoderConnection!=a.encoder.connection)return;
+            if(a.liftDiagnosticSeen && a.liftDiagnosticBoot==d.encoderBoot && a.liftDiagnosticConnection==d.encoderConnection &&
+                static_cast<int32_t>(d.encoderUptime-a.liftDiagnosticUptime)<=0)return;
+            a.liftDiagnosticSeen=true;a.liftDiagnosticUptime=d.encoderUptime;
+            a.liftDiagnosticBoot=d.encoderBoot;a.liftDiagnosticConnection=d.encoderConnection;
             a.liftRecoverySupported=d.liftRecoverySupported;
+            a.cargoMonitoringOnly=d.cargoMonitoringOnly;
             if(a.liftActive && a.liftRecoverySupported && d.liftCommandId==a.liftCommandId && d.node==a.liftNode &&
                 (d.error=="NETWORK_UNAVAILABLE"||d.error=="WIFI_TIMEOUT"||d.error=="MQTT_TIMEOUT"||d.liftState=="WAITING_LIFT_RECOVERY")) {
                 a.liftWaitingRecovery=true;a.liftState="WAITING_LIFT_RECOVERY";return;
@@ -1415,17 +1469,16 @@ public:
                         changed=changed||a.liftState!=busyState;a.liftState=busyState;
                     } else if(!up && d.dropoffExitSupported && !d.liftBusy && !d.taskActive && d.state=="AGV_IDLE" &&
                         d.liftState=="LOWERED" && d.liftElapsedMs>=5000 && d.cargoKnown && d.virtualCargo &&
-                        (cargoSensorReadyNoLock(a,true) || cargoSensorReadyNoLock(a,false)) &&
-                        static_cast<int32_t>(a.cargoSensorUptime-a.liftCargoUptime)>0 &&
+                        d.cargoMonitoringOnly && static_cast<int32_t>(d.encoderUptime-a.liftCargoUptime)>0 &&
                         Clock::now()-a.liftStarted>=std::chrono::milliseconds(5000)) {
                         a.liftActive=false;a.liftState="LOWERED";a.dropoffExitPending=true;
-                        a.virtualCargoKnown=true;a.virtualCargo=true;a.liftCargoUptime=a.cargoSensorUptime;
+                        a.virtualCargoKnown=true;a.virtualCargo=true;a.liftCargoUptime=d.encoderUptime;
                         const auto pending=pendingCmd_.find(id);
                         if(pending!=pendingCmd_.end() && pending->second.cmdId==a.liftCommandId)pendingCmd_.erase(pending);
                         a.state=AGVState::IDLE;changed=true;
                     } else if(up && !d.liftBusy && !d.taskActive && d.state=="AGV_IDLE" && d.liftState==doneState &&
                         d.liftElapsedMs>=5000 && d.cargoKnown && d.virtualCargo==up &&
-                        cargoSensorReadyNoLock(a,up) && static_cast<int32_t>(a.cargoSensorUptime-a.liftCargoUptime)>0 &&
+                        d.cargoMonitoringOnly && static_cast<int32_t>(d.encoderUptime-a.liftCargoUptime)>0 &&
                         Clock::now()-a.liftStarted>=std::chrono::milliseconds(5000)) {
                         a.liftActive=false;a.liftState=doneState;a.virtualCargoKnown=true;a.virtualCargo=up;
                         const auto pending=pendingCmd_.find(id);
@@ -1437,15 +1490,15 @@ public:
             if(a.dropoffExitPending && a.liftRecoverySupported && healthy && d.encoderBoot==a.encoder.boot &&
                 d.encoderConnection==a.encoder.connection && d.liftCommandId==a.liftCommandId && d.lastCommandId>=a.liftCommandId &&
                 !d.liftBusy && !d.taskActive && d.liftElapsedMs>=5000 &&
-                ((d.node==a.liftNode && d.liftState=="LOWERED" && (cargoSensorReadyNoLock(a,true)||cargoSensorReadyNoLock(a,false))) ||
-                 (d.node==PhysicalLayout::gate(a.liftNode) && d.liftState=="DONE_DOWN" && cargoSensorReadyNoLock(a,false)))) {
+                d.cargoMonitoringOnly && ((d.node==a.liftNode && d.liftState=="LOWERED") ||
+                 (d.node==PhysicalLayout::gate(a.liftNode) && d.liftState=="DONE_DOWN"))) {
                 a.liftBoot=a.encoder.boot;a.liftConnection=a.encoder.connection;
             }
             if(a.dropoffExitPending && healthy && a.liftBoot==a.encoder.boot && a.liftConnection==a.encoder.connection &&
                 d.dropoffExitSupported && d.liftCommandId==a.liftCommandId && !d.liftBusy && !d.taskActive &&
                 d.state=="AGV_IDLE" && d.liftState=="DONE_DOWN" && d.liftElapsedMs>=5000 &&
                 d.cargoKnown && !d.virtualCargo && d.node==PhysicalLayout::gate(a.liftNode) &&
-                cargoSensorReadyNoLock(a,false) && static_cast<int32_t>(a.cargoSensorUptime-a.liftCargoUptime)>0) {
+                d.cargoMonitoringOnly && static_cast<int32_t>(d.encoderUptime-a.liftCargoUptime)>0) {
                 a.dropoffExitPending=false;a.liftState="DONE_DOWN";
                 a.virtualCargoKnown=true;a.virtualCargo=false;changed=true;
             }
@@ -1470,10 +1523,6 @@ public:
             if(agv.dropoffExitPending && (agv.currentNode!=agv.liftNode || targetNode!=PhysicalLayout::gate(agv.liftNode) ||
                 agv.liftBoot!=agv.encoder.boot || agv.liftConnection!=agv.encoder.connection))
                 return "Sau ha chi duoc lui tu kho giao ra gate cung kho; khac phien can doi soat";
-            if(agv.dropoffExitPending && !cargoSensorReadyNoLock(agv,true) && !cargoSensorReadyNoLock(agv,false))
-                return "Cho mau LM393 moi on dinh tai kho truoc khi lui";
-            if(agv.virtualCargo && !agv.dropoffExitPending && !cargoSensorReadyNoLock(agv,true))
-                return "Can LM393 xac nhan ke van tren xe truoc khi di tiep";
             if (!trialRobotId_.empty() && agvId != trialRobotId_) return "Che do thu chi cho phep xe " + trialRobotId_;
             if (twoRobotTrial_ && agvId != "01" && agvId != "02") return "Thu hai xe chi cho phep 01 va 02";
             if (!taskId.empty() && taskRecords_.count(taskId)) return "task_id da ton tai";
@@ -1483,7 +1532,8 @@ public:
                 return "Cho xac minh xe dung tai RFID moi sau WAIT";
             if (agv.stationArrivalRequired && agv.currentNode == agv.finalTarget && !agv.stationReady)
                 return "Xe dang quay dau tai tram; cho xe dung va huong ra cua truoc khi giao tuyen moi";
-            if (agv.nodeOrdersSupported && (agv.state == AGVState::WORKING || agv.state == AGVState::BLOCKED))
+            if (agv.state == AGVState::WORKING || agv.state == AGVState::BLOCKED ||
+                !agv.taskId.empty() || !agv.finalTarget.empty() || !agv.activePath.empty())
                 return "Xe dang thuc hien tuyen; khong giao GOTO moi khi xe dang re hoac bam line";
             if (singleRobotTrial_ && agvId != "01")
                 return "Thu mot xe chi cho phep xe 01";
@@ -1646,7 +1696,7 @@ public:
             auto& a=it->second;
             if(NodeManeuver::heading(heading)<0)return "Huong phai la N/E/S/W";
             if(a.currentNode!=node || a.state!=AGVState::IDLE || !a.lastError.empty() ||
-                !verifiedNodeStopNoLock(a) || !a.nodeStopHealthy || a.liftActive || !a.taskId.empty() ||
+                !(verifiedNodeStopNoLock(a) || healthyParkedHomeNoLock(a)) || !a.nodeStopHealthy || a.liftActive || !a.taskId.empty() ||
                 !a.activePath.empty() || !a.finalTarget.empty() || !a.uncertainPath.empty() ||
                 a.cancelNeedsNodeProof || a.replanNeedsNodeProof)
                 return "Can khoi phuc loi va RFID moi, xe dung yen, het task/nang ha truoc khi xac nhan huong";
@@ -1737,9 +1787,6 @@ public:
                 t->second.at("target").get<std::string>()!=PhysicalLayout::gate(a.liftNode) ||
                 a.liftBoot!=a.encoder.boot || a.liftConnection!=a.encoder.connection))
                 return "Chi tiep tuc chang lui ra gate cung kho sau ha";
-            if(a.dropoffExitPending && !cargoSensorReadyNoLock(a,true) && !cargoSensorReadyNoLock(a,false))
-                return "Cho mau LM393 moi on dinh tai kho truoc khi tiep tuc lui";
-            if(a.virtualCargo && !a.dropoffExitPending && !cargoSensorReadyNoLock(a,true))return "Can LM393 xac nhan ke truoc khi tiep tuc";
             if (a.currentNode!=expectedNode || expectedNode!=t->second.value("resume_node",std::string{}) ||
                 a.state!=AGVState::IDLE || !a.lastError.empty() || !verifiedNodeStopNoLock(a) || !a.nodeStopHealthy ||
                 !a.taskId.empty() || !a.finalTarget.empty() || a.liftActive || a.cancelNeedsNodeProof || a.replanNeedsNodeProof ||
@@ -1882,7 +1929,7 @@ public:
                     {"active",a.liftActive},{"state",a.liftState},{"command_id",a.liftCommandId},{"node",a.liftNode},
                     {"action",a.liftAction},{"fresh",networkAvailable_ && now-a.liftSeen<=std::chrono::seconds(3)}}},
                 {"virtual_cargo",a.virtualCargo}, {"virtual_cargo_known",a.virtualCargoKnown},
-                {"cargo_sensor",{{"required",a.id=="01" || a.id=="02"},{"supported",a.cargoSensorSupported},
+                {"cargo_sensor",{{"required",false},{"monitoring_only",true},{"supported",a.cargoSensorSupported},
                     {"fresh",networkAvailable_ && a.hasTelemetry && now-a.lastSeen<=std::chrono::milliseconds(1500) &&
                         a.cargoSensorSeen!=Clock::time_point{} && now-a.cargoSensorSeen<=std::chrono::milliseconds(1500)},
                     {"stable",a.cargoSensorStable},{"present",a.cargoSensorStable?json(a.cargoSensorPresent):json(nullptr)},
@@ -1980,7 +2027,7 @@ private:
             } else if(!a.operatorNodeReset) {
                 a.maintenanceResetAttempted=false;
                 if(a.headingConfirmationSupported && a.recoveryHeadingRequired &&
-                    cargoSensorReadyNoLock(a,false) && !a.dropoffExitPending)
+                    !a.dropoffExitPending)
                     {a.recoveryChosenHeading=recoveryExpectedHeadingNoLock(node);a.recoveryChosenNode=node;}
             }
         }
@@ -2025,6 +2072,18 @@ private:
             now-a.stoppedDiagnosticSeen<=std::chrono::milliseconds(1500) &&
             a.encoder.boot==a.stopCandidate.boot && a.encoder.connection==a.stopCandidate.connection;
     }
+    bool healthyParkedHomeNoLock(const AGV& a) const {
+        const auto now=Clock::now();
+        return PhysicalLayout::home(a.id)==a.currentNode && activeRobotNoLock(a.id) &&
+            networkAvailable_ && a.hasTelemetry && a.positionValid && a.state==AGVState::IDLE && a.lastError.empty() &&
+            now-a.lastSeen<=std::chrono::milliseconds(1000) && a.nodeStopHealthy &&
+            a.nodeStopSeen!=Clock::time_point{} && now-a.nodeStopSeen<=std::chrono::milliseconds(1500) &&
+            a.nodeStopNode==a.currentNode && a.nodeStopRfidAge!=UINT32_MAX && a.nodeStopBoot &&
+            a.nodeStopBoot==a.encoder.boot && a.nodeStopConnection==a.encoder.connection &&
+            a.taskId.empty() && a.finalTarget.empty() && a.activePath.empty() && a.uncertainPath.empty() && a.stoppedNodes.empty() &&
+            !a.cancelNeedsNodeProof && !a.replanNeedsNodeProof && !a.liftActive && !a.dropoffExitPending && !a.liftWaitingRecovery &&
+            !a.operatorNodeReset && !a.autoResetRequested;
+    }
     bool verifiedNodeStopNoLock(const AGV& a) const {
         const auto now=Clock::now();
         return networkAvailable_ && a.hasTelemetry && a.positionValid && a.state!=AGVState::OFFLINE &&
@@ -2032,6 +2091,24 @@ private:
             now-a.lastSeen<=std::chrono::milliseconds(1000) && a.nodeStopNode==a.currentNode &&
             a.nodeStopRfidAge<=250 && a.nodeStopBoot && a.nodeStopBoot==a.encoder.boot &&
             a.nodeStopConnection==a.encoder.connection;
+    }
+    std::string homeDepartureErrorNoLock(const AGV& a) const {
+        if(a.recoveryHeadingRequired || a.headingPendingId>0 || a.operatorNodeReset || a.autoResetRequested)
+            return "Cho hoan tat khoi phuc va xac nhan huong truoc khi ve tram";
+        if(a.liftActive || a.liftWaitingRecovery || a.dropoffExitPending)
+            return "Cho hoan tat nang/ha va chang ra gate truoc khi ve tram";
+        // Legacy fixtures have no motion diagnostic. A real bound MCU must
+        // prove physical STOP after its last route; RFID/ACK alone is not it.
+        if(a.encoder.boot || a.nodeOrdersSupported || a.headingSupported) {
+            if(!a.headingSupported || a.headingNode!=a.currentNode ||
+                (a.heading!="N" && a.heading!="E" && a.heading!="S" && a.heading!="W") ||
+                Clock::now()-a.diagnosticSeen>std::chrono::milliseconds(1500))
+                return "Cho diagnostic huong dau xe hop le truoc khi ve tram";
+            if(!verifiedNodeStopNoLock(a) || !a.nodeStopHealthy)
+                return "Cho diagnostic xac nhan xe dung va ket thuc tuyen cu truoc khi ve tram";
+            if(pendingCmd_.count(a.id))return "Cho ACK lenh truoc va diagnostic dung moi truoc khi ve tram";
+        }
+        return "";
     }
     std::string recoveryStopReasonNoLock(const AGV& a) const {
         if(verifiedNodeStopNoLock(a))return "";
@@ -2412,7 +2489,6 @@ private:
         return !a.recoveryHeadingRequired && a.headingPendingId==0 && activeRobotNoLock(a.id) && !monitorOnlyRobots_.count(a.id) && (trialRobotId_.empty() || a.id == trialRobotId_) &&
                (!twoRobotTrial_ || a.id == "01" || a.id == "02") &&
                acceptingTasks_ && networkAvailable_ && !a.liftActive && !a.dropoffExitPending && a.state == AGVState::IDLE &&
-               (!a.virtualCargo || cargoSensorReadyNoLock(a,true)) &&
                !a.cancelNeedsNodeProof && !a.replanNeedsNodeProof && a.uncertainPath.empty() &&
                // (supervisedTrialNoLock() || (a.batteryMeasured && a.battery >= resumeBattery_)) && a.hasTelemetry && a.positionValid &&
                (batteryTestBypass_ || supervisedTrialNoLock() || (a.batteryMeasured && a.battery >= resumeBattery_)) && a.hasTelemetry && a.positionValid &&
@@ -2688,6 +2764,7 @@ private:
                     }
                     continue;
                 }
+                if(agv.blockedResume==AGVState::CHARGING_EN_ROUTE && !homeDepartureErrorNoLock(agv).empty())continue;
                 auto path = computePathNoLock(agv, agv.finalTarget);
                 if (path.empty()) continue; // vẫn kẹt, thử lại tick sau (không gửi lại WAIT)
                 AGVState resume = (agv.blockedResume == AGVState::CHARGING_EN_ROUTE)

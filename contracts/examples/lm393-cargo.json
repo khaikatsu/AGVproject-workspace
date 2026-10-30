@@ -2,21 +2,21 @@
   "diagnostic_extension": {
     "version": 1, "agvId": "01", "session": 12, "uptimeMs": 12345,
     "encoderSupported": true, "encoderBootId": 789, "encoderCoreSessionId": "current-core-session",
-    "cargoSensorSupported": true, "cargoStable": true, "cargoPresent": true,
+    "cargoSensorSupported": true, "cargoMonitoringOnly": true, "cargoStable": true, "cargoPresent": true,
     "cargoSampleSeq": 1000, "cargoSampleAgeMs": 5, "cargoStableMs": 150,
     "cargoRawLevel": 0, "cargoActiveLevel": 0, "cargoPin": 2
   },
   "unstable_extension": {"cargoStable": false, "cargoPresent": null, "cargoStableMs": 0},
   "lowered_at_warehouse_extension": {
     "node": "K2", "state": "AGV_IDLE", "taskActive": false, "motor": "STOP", "leftDuty": 0, "rightDuty": 0,
-    "dropoffExitSupported": true, "liftSupported": true, "liftCommandId": 211,
+    "dropoffExitSupported": true, "cargoMonitoringOnly": true, "liftSupported": true, "liftCommandId": 211,
     "liftBusy": false, "liftState": "LOWERED", "liftElapsedMs": 5000, "virtualCargo": true,
     "cargoStable": true, "cargoPresent": true, "cargoRawLevel": 0, "cargoActiveLevel": 0
   },
   "exit_route": {"cmd": "GOTO", "cmd_id": 212, "path": ["G2"], "target": "G2"},
   "done_at_gate_extension": {
     "node": "G2", "state": "AGV_IDLE", "taskActive": false, "motor": "STOP", "leftDuty": 0, "rightDuty": 0,
-    "dropoffExitSupported": true, "liftSupported": true, "liftCommandId": 211,
+    "dropoffExitSupported": true, "cargoMonitoringOnly": true, "liftSupported": true, "liftCommandId": 211,
     "liftBusy": false, "liftState": "DONE_DOWN", "liftElapsedMs": 5000, "virtualCargo": false,
     "cargoStable": true, "cargoPresent": false, "cargoRawLevel": 1, "cargoActiveLevel": 0
   },
@@ -26,7 +26,7 @@
     "virtual_cargo_known": true, "virtual_cargo": true
   },
   "fleet_extension": {
-    "cargo_sensor": {"required": true, "supported": true, "fresh": true, "stable": true,
+    "cargo_sensor": {"required": false, "monitoring_only": true, "supported": true, "fresh": true, "stable": true,
       "present": true, "observed_node": "K1", "stopped_verified": true, "sample_seq": 1000}
   },
   "note": "Các object là phần mở rộng, ghép vào diagnostic/snapshot hiện có; áp dụng tương tự agvId02. Không publish fixture lên robot thật."

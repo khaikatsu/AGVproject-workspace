@@ -17,8 +17,9 @@ function vehicleParticipates(robot, state = lastState) {
 function vehicleCanSelect(robot) {
   return !!robot && vehicleParticipates(robot) && robot.online === true && robot.position_valid !== false &&
     !robot.heading_confirmation_required && !robot.heading_confirmation_pending &&
+    !robot.recovery_reset_pending && !robot.error && !robot.lift?.active &&
     !robot.cancel_waiting_for_node && !robot.replan_waiting_for_node &&
-    ['IDLE', 'WORKING', 'BLOCKED'].includes(robot.state);
+    !robot.task_id && !robot.target && !(robot.path || []).length && robot.state === 'IDLE';
 }
 
 function vehicleBattery(robot) {
@@ -68,7 +69,7 @@ function renderVehicleTelemetry(card, robot, state) {
   const home = state.shift?.home_stations?.[robot.id];
   if (home) operationText(card, `Trạm riêng: ${locationText(home)}`, 'p', 'transfer-metadata');
   const cargo=robot.cargo_sensor;
-  if(cargo?.required)operationText(card,`LM393: ${!cargo.supported?'Chưa có firmware cảm biến':
+  if(cargo)operationText(card,`LM393 (theo dõi): ${!cargo.supported?'Chưa có firmware cảm biến':
     !cargo.fresh||!cargo.stable?'Chưa xác định':cargo.present?'Có hàng':'Không có hàng'}`,'p','transfer-metadata');
   const age = operationText(card, '', 'p', 'transfer-metadata');
   age.dataset.robotAge = robot.id;
@@ -82,7 +83,8 @@ function renderVehicleTelemetry(card, robot, state) {
   if (!vehicleParticipates(robot, state)) operationText(card, 'Ngoài phạm vi vận hành', 'p', 'transfer-metadata');
   if(robot.recovery_reset_pending)operationText(card,'Đang chờ xe xác nhận hết lỗi.','p','transfer-alert');
   else if(robot.heading_confirmation_pending)operationText(card,'Đang chờ xe xác nhận hướng đầu xe.','p','transfer-alert');
-  else if(robot.heading_confirmation_required)operationText(card,'Cần xác nhận hướng trước khi chạy.','p','transfer-alert');
+  else if(robot.heading_confirmation_required)operationText(card,robot.node===state.shift?.home_stations?.[robot.id]
+    ?'Đang chờ tự khôi phục tại trạm; không cần chọn hướng.':'Cần xác nhận hướng trước khi chạy.','p','transfer-alert');
 }
 
 function renderVehicleActions(card, id, robot) {
@@ -98,13 +100,19 @@ function renderVehicleActions(card, id, robot) {
   const cargoUnresolved = (robot.virtual_cargo || (robot.lift?.command_id > 0 && !robot.virtual_cargo_known));
   if(cargoUnresolved) {
     actions.append(action('Đối soát kệ xe', async (button) => {
-      if(!confirm(`Xác nhận xe ${id} đã dừng tại trạm và trống hàng (kệ đã an toàn)?`)) return;
+      const linked=(lastState?.orders||[]).filter(order=>(order.status==='needs_attention'||order.warehouse_rollback_pending)&&
+        order.items?.some(item=>item.robot===id&&!['queued','delivered'].includes(item.status)));
       button.disabled = true;
       try {
-        const res = await api('POST', `/api/agvs/${encodeURIComponent(id)}/reconcile-cargo`, {physically_clear: true});
+        for(const order of linked) {
+          const warehouse=await api('GET','/api/warehouse');if(!warehouse)return;
+          const result=await api('POST',`/api/orders/${encodeURIComponent(order.id)}/resolve`,{expected_revision:warehouse.revision});
+          if(!result)return;
+        }
+        const res = await api('POST', `/api/agvs/${encodeURIComponent(id)}/reconcile-cargo`, {});
         if(res && res.ok) toast(`Đã đối soát xong kệ xe ${id}`);
       } finally { button.disabled = false; }
-    }));
+    },null));
   }
   for(const task of lastState?.warehouse_actions||[])if(task.robot===id&&task.status==='interrupted'&&
     !task.closed_by_shift&&['to_warehouse','to_gate'].includes(task.suspended_status))

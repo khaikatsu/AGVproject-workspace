@@ -485,6 +485,7 @@ void MQTTModule::sendTelemetry(const TelemetrySnapshot& s) {
     number(object, "batteryPercentage", s.batteryPercentage);
     object["cargoStable"] = s.cargoStable;
     object["cargoSensorSupported"] = Config::SERVO_SINGLE_TEST;
+    object["cargoMonitoringOnly"] = true;
     if(s.cargoStable)object["cargoPresent"]=s.cargoPresent;
     else object["cargoPresent"]=nullptr;
     object["cargoSampleSeq"]=s.cargoSampleSeq;

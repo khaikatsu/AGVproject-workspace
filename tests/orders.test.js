@@ -351,16 +351,37 @@ test('only dispatched unresolved cargo reserves a robot; operator resolution rel
   const commands=[],state={map:selectionMap,mqtt_connected:true,shift:{phase:'RUNNING',trial_robot_id:'01'},
     fleet:{accepting_tasks:true,tasks:[],agvs:[liftCapable({id:'01',node:'S1',state:'IDLE',online:true,position_valid:true})]}};
   const retained=[{id:'never-started',status:'needs_attention',created:new Date(0).toISOString(),items:[{status:'queued',robot:'01',task_id:null}]},
-    {id:'old-cargo',status:'needs_attention',created:new Date(1).toISOString(),items:[{status:'interrupted',robot:'01',task_id:'old-task'}]}];
+    {id:'old-cargo',status:'needs_attention',fleet_recovery_hold:true,created:new Date(1).toISOString(),items:[{status:'interrupted',robot:'01',task_id:'old-task'}]}];
   const service=createOrderService({db:{getOrders:()=>retained,saveOrder:()=>{}},getState:()=>state,getSession:()=> 'new-session',
     send:async payload=>{commands.push(payload);return {task_id:'new-task'};},publish:()=>{}});
   try {
     const order=service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]});await service.tick();
     assert.match(order.items[0].waiting_reason,/old-cargo/);assert.equal(commands.length,0);
+    assert.equal(service.hasFleetRecoveryHold(),true);
     await service.resolve('old-cargo',true);await service.tick();
-    assert.equal(commands.length,2);assert.equal(commands[0].cmd,'reconcile_test_cargo');assert.equal(order.items[0].status,'to_pickup');
+    assert.equal(retained[1].fleet_recovery_hold,false);assert.equal(service.hasFleetRecoveryHold(),false);
+    assert.equal(commands.length,1);assert.equal(commands[0].cmd,'direct_goto');assert.equal(order.items[0].status,'to_pickup');
     assert.equal(service.list()[0].id,order.id,'newest order stays first after reading history');
   } finally {await service.close();}
+});
+
+test('legacy closed recovery holds do not block either robot, but a real robot fault still does',async t=>{
+  for(const id of ['01','02'])await t.test(id,async t=>{
+    const commands=[],robot=liftCapable({id,node:'S1',state:'ERROR',error:'LINE_LOST',online:true,position_valid:true});
+    const state={map:selectionMap,mqtt_connected:true,shift:{phase:'RUNNING'},
+      fleet:{accepting_tasks:true,tasks:[],agvs:[robot]}};
+    const old={id:'closed-hold',status:'closed',resolution:'rollback_to_pickup',fleet_recovery_hold:true,
+      created:new Date(0).toISOString(),items:[{status:'interrupted',robot:id,task_id:'old-task'}]};
+    const service=createOrderService({db:{getOrders:()=>[old],saveOrder:()=>{}},getState:()=>state,getSession:()=> 'new-session',
+      publish:()=>{},send:async command=>{commands.push(command);return {task_id:'new-task'};}});
+    t.after(()=>service.close());
+    assert.equal(service.hasFleetRecoveryHold(),false);
+    const order=service.create({pickups:[{pickup:'K1',quantity:1}],deliveries:[{dropoff:'K2',quantity:1}]});
+    await service.tick();assert.equal(commands.length,0);assert.equal(order.items[0].status,'queued');
+    robot.state='IDLE';robot.error='';await service.tick();
+    assert.equal(commands.length,1);assert.equal(commands[0].agv_id,id);assert.equal(order.items[0].status,'to_pickup');
+    assert.equal(old.fleet_recovery_hold,true,'legacy audit data need not be rewritten');
+  });
 });
 
 test('robot01 warehouse test never dispatches stored orders or accepts a new order',async()=>{
@@ -402,9 +423,7 @@ test('offline robot interrupts lift and cannot mark cargo delivered',async()=>{
     await service.tick();await service.tick();assert.equal(order.items[0].status,'pickup_lift');
     robot.online = false;
     await service.tick();assert.equal(order.status,'needs_attention');assert.equal(order.items[0].status,'interrupted');
-    await assert.rejects(()=>service.resolve(order.id,false),/Cần xác nhận/);
-    await assert.rejects(()=>service.resolve(order.id,true),/Kết nối lại xe 01/);
-    robot.online=true;
-    assert.equal((await service.resolve(order.id,true)).status,'closed');
+    assert.equal((await service.resolve(order.id)).status,'closed');
+    assert.equal(robot.online,false,'ledger undo needs no online robot');
   } finally {await service.close();}
 });

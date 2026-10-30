@@ -615,6 +615,7 @@ static void on_message(mosquitto*, void*, const mosquitto_message* msg) {
                 }
                 motion.stationDockingSupported = diagnostic.value("stationDockingSupported",false);
                 motion.reverseHomeSupported = diagnostic.value("reverseHomeSupported",false);
+                motion.cargoMonitoringOnly = diagnostic.value("cargoMonitoringOnly",false);
                 if(encoderBound && diagnostic.contains("cargoSensorSupported") && diagnostic["cargoSensorSupported"].is_boolean() &&
                     diagnostic["cargoSensorSupported"].get<bool>() && diagnostic.contains("cargoStable") && diagnostic["cargoStable"].is_boolean() &&
                     diagnostic.contains("cargoPresent") && (diagnostic["cargoPresent"].is_boolean() || diagnostic["cargoPresent"].is_null())) {

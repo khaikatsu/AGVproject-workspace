@@ -399,14 +399,16 @@ function createDatabase(filename = process.env.AGV_DB_PATH || path.join(__dirnam
         status = excluded.status, assigned_agv = excluded.assigned_agv, reason = excluded.reason, priority = excluded.priority,
         dispatched_at = CASE WHEN excluded.status = 'dispatched' THEN COALESCE(task_log.dispatched_at, datetime('now')) ELSE task_log.dispatched_at END,
         completed_at = CASE WHEN @terminal THEN COALESCE(task_log.completed_at, datetime('now')) ELSE NULL END`);
+    const previousTask = db.prepare('SELECT status,assigned_agv,reason,priority FROM task_log WHERE core_session=? AND core_task_id=?');
+    const insertTaskStatus = db.prepare('INSERT INTO task_status_events (core_session,core_task_id,status) VALUES (?,?,?)');
     api.syncTasks = db.transaction((tasks, session) => {
       for (const t of tasks || []) {
         if (!t || typeof t.task_id !== 'string' || typeof t.target !== 'string' ||
             !['pending','dispatched','completed','cancelled','interrupted'].includes(t.status)) continue;
-        const previous = db.prepare("SELECT status,assigned_agv,reason,priority FROM task_log WHERE core_session=? AND core_task_id=?").get(session,t.task_id);
+        const previous = previousTask.get(session,t.task_id);
         if (previous && previous.status === t.status && previous.assigned_agv === (t.assigned_agv || null) &&
             previous.reason === (t.reason || '') && previous.priority === (t.priority || 0)) continue;
-        if (!previous || previous.status !== t.status) db.prepare("INSERT INTO task_status_events (core_session,core_task_id,status) VALUES (?,?,?)").run(session,t.task_id,t.status);
+        if (!previous || previous.status !== t.status) insertTaskStatus.run(session,t.task_id,t.status);
         syncOne.run({task_id:t.task_id, session, target:t.target, priority:t.priority || 0,
                      status:t.status, assigned_agv:t.assigned_agv || null, reason:t.reason || '',
                      location_names:JSON.stringify(api.loadLocationNames() || {revision:0,labels:{}}),

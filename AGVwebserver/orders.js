@@ -1,25 +1,30 @@
 const {randomUUID} = require('crypto');
 const {planOrder,shortestCost,shortestRoute} = require('./order-planner');
-const {cargoReading,cargoResult,loweredForExit,dropoffDoneAtGate}=require('./cargo-proof');
+const {loweredForExit,dropoffDoneAtGate}=require('./cargo-proof');
 
 const SERVICE_MS = 5000;
 const LIFT_READY_TIMEOUT_MS = 5000;
 const LIFT_RESULT_TIMEOUT_MS = 15000;
 const activeItem = item=>!['queued','delivered','interrupted'].includes(item.status);
 
-function createOrderService({db,getState,getSession,send,publish,inventory,getLocationNames,cargoScanTimeoutMs = 0}) {
+function createOrderService({db,getState,getSession,send,publish,inventory,getLocationNames}) {
   const orders = db.getOrders();
   let tickPromise = null,stopped = false,endingShift=false;
   const resolving=new Set();
-  const save = order=>{order.updated = new Date().toISOString();db.saveOrder(order);publish();};
+  const save = order=>{
+    // Pin the legacy closure boundary before later writes can move updated.
+    if(order.closed_by_shift&&!order.shift_closed_at)order.shift_closed_at=order.updated;
+    order.updated = new Date().toISOString();db.saveOrder(order);publish();
+  };
   const moveKey=(order,item)=>`order:${order.id}:${item.number}`;
   // A later explicit full warehouse reconciliation supersedes an ended order's
   // cargo hold. Keep the stored audit record; never infer this from deletion.
   const reconciliationFor=order=>inventory?.reconciliationFor?.(order)||null;
   const needsAttention=order=>order.status==='needs_attention'&&!reconciliationFor(order);
+  const hasFleetRecoveryHold=()=>orders.some(order=>order.fleet_recovery_hold&&!order.closed_by_shift&&
+    (order.status==='active'||needsAttention(order)));
   const holdsRobot=(order,item)=>order.status==='active'&&activeItem(item)||
-    order.status==='needs_attention'&&activeItem(item)||
-    needsAttention(order)&&item.robot&&!['queued','delivered'].includes(item.status);
+    needsAttention(order)&&(activeItem(item)||item.robot&&!['queued','delivered'].includes(item.status));
   function orderView(order) {
     const proof=reconciliationFor(order);
     return proof?{...order,status:'closed',resolution:'warehouse_reconciled',closed_at:proof.created_at,
@@ -31,7 +36,7 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
     order.status = 'needs_attention';order.reason = 'Gateway khởi động lại; đối soát vị trí xe và kiện hàng trước khi tạo đơn mới';
     save(order);
   }
-  for(const order of orders)if(order.status==='needs_attention'&&!order.restart_hold&&order.items.some(activeItem)) {
+  for(const order of orders)if(needsAttention(order)&&!order.closed_by_shift&&!order.restart_hold&&order.items.some(activeItem)) {
     order.restart_hold=true;save(order);
   }
   function interrupt(order,item,reason) {
@@ -49,7 +54,7 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
     order.status = 'needs_attention';order.reason = reason;save(order);
   }
   function interruptAll(reason) {
-    for (const order of orders) if (['active','needs_attention'].includes(order.status)) interrupt(order,null,reason);
+    for (const order of orders) if (order.status==='active'||needsAttention(order)&&!order.closed_by_shift) interrupt(order,null,reason);
   }
   function endShift() {
     for(const order of orders) if(['active','needs_attention'].includes(order.status)&&!order.closed_by_shift) {
@@ -97,44 +102,23 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
       throw error;
     } finally {resolving.delete(orderId);}
   }
-  async function resolve(orderId,physicallyClear,expectedRevision) {
+  async function resolve(orderId,_physicallyClear,expectedRevision) {
     const order = orders.find(candidate=>candidate.id === orderId);
     if (!order) throw Object.assign(new Error('Không tìm thấy đơn hàng'),{status:404});
     if(reconciliationFor(order))return orderView(order);
     if(order.status==='closed'&&order.resolution==='rollback_to_pickup')return order;
     const pendingKeys=new Set((inventory?.snapshot().moves||[]).filter(move=>move.status==='needs_attention').map(move=>move.key));
     const legacyClosed=order.status==='closed'&&order.items.some(item=>pendingKeys.has(moveKey(order,item)));
-    if (order.status !== 'needs_attention'&&!legacyClosed) throw Object.assign(new Error('Đơn chưa ở trạng thái cần đối soát'),{status:409});
-    if (physicallyClear !== true) throw Object.assign(new Error('Cần xác nhận kệ đã về kho lấy và xe đã trống'),{status:400});
+    if (order.status !== 'needs_attention'&&!legacyClosed) throw Object.assign(new Error('Đơn chưa ở trạng thái có thể hoàn tác'),{status:409});
     if(resolving.has(orderId))throw Object.assign(new Error('Đang hoàn tác đơn này'),{status:409});
     resolving.add(orderId);
     try {
       if(inventory?.snapshot().initialized&&expectedRevision!==inventory.snapshot().revision)
         throw Object.assign(new Error('Trạng thái kho đã thay đổi; tải lại trước khi hoàn tác'),{status:409});
-      const rollback=inventory?.rollbackPlan(order);
-      const affected=inventory?.snapshot().initialized ? rollback :
-        order.items.filter(item=>item.robot&&!['queued','delivered'].includes(item.status));
-      const robots=[...new Set(affected.map(item=>item.robot).filter(Boolean))];
-      if(orders.some(other=>other.id!==order.id&&(other.status==='active'||needsAttention(other))&&
-          other.items.some(item=>robots.includes(item.robot)&&!['queued','delivered'].includes(item.status))))
-        throw Object.assign(new Error('Xe đang gắn với lượt chuyển khác; xử lý lượt đó trước khi hoàn tác'),{status:409});
-      if(robots.length) {
-        const state=getState();
-        if(!state||state.mqtt_connected===false)throw Object.assign(new Error('Chờ kết nối Core và xe trước khi hoàn tác'),{status:503});
-        const checks=robots.map(id=>{
-          const robot=state.fleet.agvs.find(robot=>robot.id===id);
-          if(!robot||robot.online!==true||robot.position_valid!==true)
-            throw Object.assign(new Error(`Kết nối lại xe ${id} và xác nhận vị trí RFID trước khi hoàn tác`),{status:409});
-          if(!['IDLE','ERROR','CHARGING'].includes(robot.state)||
-              robot.task_id||robot.target||robot.path?.length||robot.lift?.active||
-              state.fleet.tasks?.some(task=>task.assigned_agv===id&&['pending','dispatched'].includes(task.status)))
-            throw Object.assign(new Error(`Dừng xe ${id} và xử lý nhiệm vụ đang chạy trước khi hoàn tác`),{status:409});
-          return {id,lift_command_id:robot.lift?.command_id||0};
-        });
-        await send({cmd:'reconcile_test_cargo',robots:checks,physically_clear:true});
-      }
-      const updated={...order,status:'closed',resolution:'rollback_to_pickup',closed_at:new Date().toISOString(),
-        updated:new Date().toISOString(),reason:'Đã hoàn tác lượt dang dở về kho lấy; xác nhận xe trống'};
+      // Ledger-only undo: sensor observations and robot control remain independent.
+      const updated={...order,status:'closed',fleet_recovery_hold:false,resolution:'rollback_to_pickup',closed_at:new Date().toISOString(),
+        updated:new Date().toISOString(),rollback_scope:'inventory_only',physical_completion_verified:false,
+        reason:'Đã hoàn tác hàng dang dở về kho lấy trên sổ kho'};
       if(inventory)inventory.rollbackOrder(order,expectedRevision,moves=>{updated.rolled_back=moves;db.saveOrder(updated);});
       else db.saveOrder(updated);
       Object.assign(order,updated);publish();return order;
@@ -270,8 +254,8 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
     }
     if (lift?.fresh===true && lift.command_id===item.lift_command_id &&
         lift.state===(pickup?'DONE_UP':'DONE_DOWN') && lift.active===false &&
-        (pickup||robot.lift.dropoff_exit_supported!==true&&robot.cargo_sensor?.required!==true) &&
-        robot.virtual_cargo_known===true && robot.virtual_cargo===expected && cargoResult(robot,node,expected) && robotAt(state,item,node)) {
+        (pickup||robot.lift.dropoff_exit_supported!==true) &&
+        robot.virtual_cargo_known===true && robot.virtual_cargo===expected && robotAt(state,item,node)) {
       inventory?.confirmLift(moveKey(order,item),pickup?'pickup':'dropoff',robot,item.lift_command_id,order.core_session_id);
       item.lift_completed_at=new Date().toISOString();
       if (pickup) item.status='ready_dropoff';
@@ -445,13 +429,6 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
             const pickup=item.status==='waiting_pickup_lift',node=pickup?item.pickup:item.dropoff;
             const robot=state.fleet.agvs.find(candidate=>candidate.id===item.robot);
             if (!robot || !robotAt(state,item,node)) {interrupt(order,item,`Xe không còn đứng tại ${node} trước khi nâng/hạ`);break;}
-            const cargo=cargoReading(robot,node);
-            if(cargo.required&&!cargo.known)continue;
-            if(cargo.required&&!cargo.present) {
-              if(pickup && (Date.now() - (item.lift_wait_started_at || 0) < cargoScanTimeoutMs)) continue;
-              if(pickup)inventory?.confirmMissing(moveKey(order,item),robot,order.core_session_id);
-              interrupt(order,item,pickup?`${node} thực tế không có hàng; không nâng kệ`:`Xe ${robot.id} không còn hàng trước khi hạ`);break;
-            }
             if (pickup && robot.virtual_cargo_known===true && robot.virtual_cargo===true) {
               interrupt(order,item,`Xe ${robot.id} đã có kệ trước lệnh nâng`);break;
             }
@@ -467,7 +444,7 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
             planQueued(order,item,state,used);
             const blocked=state.fleet.agvs.some(robot=>robot.participating!==false&&
               (robot.online===false||['ERROR','OFFLINE','UNLOCALIZED'].includes(robot.state)||robot.recovery_reset_pending)) ||
-              orders.some(other=>other.fleet_recovery_hold&&!other.closed_by_shift);
+              hasFleetRecoveryHold();
             if(blocked) {item.waiting_reason=`Chờ đội xe phục hồi; ${item.waiting_reason||'các lượt đang chạy vẫn hoàn thành và ra gate'}`;save(order);continue;}
             const owner = order.destinationOwners[item.dropoff];
             const robots = eligible(state,used).filter(robot=>(!owner || robot.id === owner) &&
@@ -503,7 +480,7 @@ function createOrderService({db,getState,getSession,send,publish,inventory,getLo
     orders.push(order);save(order);void tick();return order;
   }
   const timer = setInterval(()=>{void tick();},500);timer.unref();
-  return {create,resolve,resume,remove,linkTaskHistory,endShift,
+  return {create,resolve,resume,remove,linkTaskHistory,endShift,hasFleetRecoveryHold,
     pauseForShiftEnd:async()=>{endingShift=true;if(tickPromise)await tickPromise;},unpause:()=>{endingShift=false;},
     list:({includeDeleted=false}={})=>orders.filter(order=>includeDeleted||!order.deleted_at)
     .sort((a,b)=>Date.parse(b.created)-Date.parse(a.created)).map(orderView),tick,interruptAll,close:async()=>{

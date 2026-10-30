@@ -323,7 +323,6 @@ bool ControlLogic::authorizeLift(const AGVCommand& command, const ControlInput& 
         command.pathIndex != pathIndex_ ||
         (state_ == AGV_LOADING && command.type != CommandType::LiftUp) ||
         (state_ == AGV_UNLOADING && command.type != CommandType::LiftDown)) return false;
-    if (!in.cargoStable || !in.cargoPresent) { reason = ErrorCode::CargoMissing; return false; }
     if (in.servoBusy || !in.liftConfigured) { reason = ErrorCode::ServoConfiguration; return false; }
     if (!motionClear(in, reason)) return false;
     liftAuthorized_ = true;
@@ -407,8 +406,6 @@ void ControlLogic::checkSafety(const ControlInput& in) {
         ErrorCode reason;
         if (!motionClear(in, reason)) safeStop(reason);
     }
-    if (state_ == AGV_MOVING && pickupDone_ && in.cargoStable && !in.cargoPresent)
-        safeStop(ErrorCode::CargoLost);
 }
 ControlOutput ControlLogic::update(const ControlInput& in) {
     ControlOutput out;
@@ -427,11 +424,9 @@ ControlOutput ControlLogic::update(const ControlInput& in) {
             servoIssued_ = true;
             phaseStartedMs_ = in.now;
         } else if (!in.servoBusy && static_cast<uint32_t>(in.now - phaseStartedMs_) >= settings_.servoMoveMs) {
-            if (settings_.requireLiftCommands && !in.cargoStable) return out;
             if (state_ == AGV_LOADING) {
-                if (settings_.requireLiftCommands && !in.cargoPresent) { safeStop(ErrorCode::CargoMissing); return out; }
                 pickupDone_ = true; beginSegment(in.now);
-            } else if (!settings_.requireLiftCommands || !in.cargoPresent) { task_.active = false; state_ = AGV_COMPLETED; }
+            } else { task_.active = false; state_ = AGV_COMPLETED; }
         }
         return out;
     }

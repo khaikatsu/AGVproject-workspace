@@ -618,7 +618,7 @@
         <div class="operations-section-heading"><h3 id="warehouseStatusTitle">Trạng thái kho</h3><span id="warehouseShiftSummary" aria-live="polite">Chưa nhập kho</span></div>
         <div id="warehouseSlotCards" class="warehouse-slot-grid"></div>
         <div id="warehouseCarriedRacks" class="warehouse-carried-racks" aria-label="Kệ trên xe"></div>
-        <p class="operations-footnote">Vị trí theo chu kỳ nâng/hạ đã xác nhận, chưa có cảm biến nhận biết kệ thật. “Đầu ca” là trạng thái lúc mở ca.</p>
+        <p class="operations-footnote">Vị trí kệ theo sổ kho và chu kỳ nâng/hạ 5 giây. LM393 chỉ theo dõi có hàng/không hàng, không quyết định nâng/hạ. “Đầu ca” là trạng thái lúc mở ca.</p>
         <details id="warehouseConfig" ontoggle="if(this.open) editWarehouseLayout()">
           <summary>Nhập / đối soát vị trí kệ khi ca đã đóng</summary>
           <p class="card-help">Nhập mã riêng cho từng kệ (ví dụ R01). Để trống ô không có kệ. Kiểm tra các xe đã hết kệ trước khi lưu.</p>
@@ -879,11 +879,11 @@
   <script src="/mission-model.js?v=20261026-location-names"></script>
   <script src="/dashboard-missions.js?v=20261028-resume"></script>
   <script src="/warehouse-ui.js?v=20261028-lm393"></script>
-  <script src="/dashboard-vehicles.js?v=20261029-recovery-heading"></script>
+  <script src="/dashboard-vehicles.js?v=20261030-home-heading"></script>
   <script src="/warehouse-operations.js?v=20261028-lm393"></script>
   <script src="/dashboard-map.js?v=20261026-location-names"></script>
-  <script src="/dashboard-recovery.js?v=20261030-maintenance-recovery"></script>
-  <script src="/dashboard.js?v=20261029-recovery-heading"></script>
+  <script src="/dashboard-recovery.js?v=20261030-home-heading"></script>
+  <script src="/dashboard.js?v=20261030-home-heading"></script>
 </body>
 
 </html>

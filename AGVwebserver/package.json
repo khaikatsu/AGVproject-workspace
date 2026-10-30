@@ -16,6 +16,7 @@
     "test:vehicles:browser": "node ../tests/vehicle-cards.browser.integration.js",
     "test:records:browser": "node ../tests/record-delete.browser.integration.js",
     "test:shift:browser": "node ../tests/shift-start.browser.integration.js",
+    "test:shift:restart": "node --test ../tests/shift-restart.integration.js",
     "test:hardening": "node ../tests/hardening.integration.js",
     "test:tls": "node ../tests/tls.integration.js",
     "test:system": "node ../tests/system.integration.js",

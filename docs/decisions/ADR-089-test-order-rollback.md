@@ -1,6 +1,16 @@
 # ADR-089 — Hoàn tác kệ về kho lấy khi đối soát lượt thử
 
+Thay thế30/10/2026: [ADR-098](ADR-098-one-click-inventory-rollback.md) áp dụng hoàn tác sổ kho ngay khi bấm, không xác nhận/form/Core/cargo. Các quy trình đối soát bên dưới giữ làm lịch sử, không còn là điều kiện của nút Hoàn tác.
+
 Ngày 26/10/2026. Trạng thái: IMPLEMENTED phần mềm; nghiệm thu xe thật OPEN.
+
+## Bổ sung 30/10/2026 — Đơn cũ không còn dữ liệu lượt chuyển
+
+OBSERVED: đơn đã xóa/kết ca `order-1793092345595-0f930f56` còn mã kệ1 nhưng snapshot kho không còn move; nút Đối soát gọi hoàn tác bị từ chối vì thiếu dữ liệu. Lúc đọc trạng thái, Core/MQTT khỏe, ca CLOSED, xe01 IDLE tại S1; không xác nhận vị trí kệ vật lý từ snapshot này.
+
+IMPLEMENTED: giao diện nhận diện đơn đã kết ca có mã kệ chưa giao và không còn move tương ứng, đổi nút thành Đối soát kho và mở form đối soát toàn kho hiện có. Thiếu kết nối mới hoặc ca chưa đóng thì hướng dẫn xử lý, không gọi API ghi. Giữ xác nhận kiểm tra kho/xe trống và mọi chốt API configure; chỉ lần lưu hợp lệ mới tạo bằng chứng đối soát theo ADR-090. Không tự hoàn tất đơn, sửa kho/cargo hay gửi lệnh xe khi mở form. Đơn còn move giữ nguyên quy trình hoàn tác.
+
+VERIFIED: JavaScript parse và kiểm tra hành vi bằng Node VM PASS: đơn thiếu move mở form không gọi API/xác nhận hoàn tác; Core cũ và ca RUNNING không mở; lượt còn move giữ xác nhận hoàn tác; không đổi nhánh cho đơn chưa kết ca hoặc đã giao hết. Diff không có lỗi khoảng trắng. Chưa kiểm tra trình duyệt trực tiếp hoặc lưu đối soát kho vận hành; không sửa firmware hay dữ liệu thật.
 
 ## Bổ sung 27/10/2026 — Đơn cũ đã đóng/xóa nhưng còn kệ treo
 

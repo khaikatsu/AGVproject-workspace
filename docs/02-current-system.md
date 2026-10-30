@@ -1,5 +1,15 @@
 # Hiện trạng mã và khoảng trống tích hợp
 
+CURRENT30/10/2026: [ADR-101](decisions/ADR-101-shift-home-departure-readiness.md) bổ sung chốt trước tuyến về trạm khi kết ca: chờ hướng và diagnostic STOP/RFID mới đúng phiên, ACK lệnh cũ; thiếu proof giữ chờ thay vì GOTO rồi lỗi. Áp dụng cả01/02 và retry tuyến về bị BLOCKED; STALE_COMMAND có ngữ cảnh log. Build Core riêng thành công, chưa thay Core vận hành; không sửa/nạp firmware.
+
+CURRENT30/10/2026 v28: [ADR-099](decisions/ADR-099-cargo-monitoring-and-direct-reconciliation.md) đổi LM393 thành theo dõi cho01/02, không chặn nâng/hạ đủ5s, di chuyển hoặc hoàn tất tại gate. Đối soát kệ xe bỏ xác nhận/cargo/gate/diagnostic, chỉ sửa cargo ảo, giữ task/tuyến/lift active. Cần Core/gateway mới và nạp hai profile cargo-monitor-v28; chỉ sửa source, chưa build/test/nạp/áp dụng. Các chốt cargo ở mốc cũ bên dưới đã được thay.
+
+CURRENT30/10/2026: [ADR-098](decisions/ADR-098-one-click-inventory-rollback.md) đổi Hoàn tác thành sửa sổ kho một lần bấm, không cần đối soát/cargo/Core; hàng chưa giao về nguồn và đơn đóng cùng transaction. Không thay giá trị cargo hoặc điều khiển xe. Đơn thiếu move dùng dữ liệu kệ/nguồn còn hợp lệ; giữ xung đột kho và kết quả giao đã xác nhận. Source gateway/web mới; không cần build Core/firmware.
+
+CURRENT30/10/2026: [ADR-097](decisions/ADR-097-healthy-home-without-heading-confirmation.md) nhận hướng quy ước cho xe khỏe/rảnh đỗ đúng S1/S2; MCU UNKNOWN được Core tự đồng bộ lúc RFID mới, không yêu cầu người dùng chọn hướng. Giữa đường/lỗi/vùng chưa xác minh giữ chốt. Firmware không sửa; kết quả và phiên áp dụng tại ADR.
+
+CURRENT30/10/2026: [ADR-096](decisions/ADR-096-durable-shift-closure-and-reconciliation.md) giữ ca đã CLOSED qua restart/mất trạng thái sẵn sàng; `can_start` vẫn kiểm proof mới. Gateway không dời mốc đơn đã kết ca khi ngắt Core, giữ bằng chứng đối soát qua restart và publish ngay bằng chứng mới khi lưu kho. Web phân biệt Đang kết ca/Ca đã đóng và lý do hướng/lỗi xe. Kết quả kiểm chứng/áp dụng tại ADR; không sửa firmware hoặc tự xác nhận kho thực tế.
+
 CURRENT30/10/2026 v27: cực tính LM393 theo ảnh người dùng là Active-LOW, LOW/raw0=có hàng và HIGH/raw1=trống, dùng chung01/02. Firmware chỉ đổi cấu hình và buildID, server giữ boolean có/không hàng. [ADR-095](decisions/ADR-095-lm393-active-low.md) thay mọi mô tả HIGH=có hàng trong các mốc lịch sử dưới đây; chưa build/test/nạp v27.
 
 CURRENT30/10/2026: source Core/gateway/web/firmware01/02 v26 có trạm bảo dưỡngS1/S2, một lần xác nhận hướng→reset→tiếp tục chặng, tách lượt khỏe/lỗi cùng đơn và journal nâng/hạ NVS gắn phiênCore. Kiểm chứng server và giới hạn firmware tại [ADR-094](decisions/ADR-094-maintenance-and-coordinated-recovery.md). Chưa build/test/nạp firmware hoặc thay dịch vụ vận hành; các mô tả phục hồi cũ bên dưới giữ mốc lịch sử.

@@ -1,6 +1,6 @@
 const {randomUUID} = require('node:crypto');
 const {warehouseNodes} = require('./public/warehouse-rules');
-const {cargoReading,cargoResult}=require('./cargo-proof');
+const {cargoReading}=require('./cargo-proof');
 
 const conflict = message=>Object.assign(new Error(message),{status:409});
 const invalid = message=>Object.assign(new Error(message),{status:400});
@@ -117,8 +117,10 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       state.moves=[];state.initialized=true;
       event(`configure:${randomUUID()}`,{type:previous.initialized?'reconciled':'initialized',evidence:'operator_verified',
         previous,slots,message:previous.initialized?'Đã đối soát lại vị trí kệ và xác nhận xe trống':'Đã nhập trạng thái kho ban đầu'});
+      // Publish the committed proof, not the cached result from before saving.
+      reconciliationEvent=undefined;
     });
-    reconciliationEvent=undefined;return result;
+    return result;
   }
   function checkMove(state,{key,pickup,dropoff,robot,standalone}) {
     if(!state.initialized)throw conflict('Nhập trạng thái kệ ban đầu trước khi tạo đơn hàng kho');
@@ -169,18 +171,15 @@ function createWarehouseInventory({db,publish=()=>{}}) {
     if(move.status==='placed'||move.status==='completed'&&move.standalone) {
       const rack=state.racks.find(rack=>rack.id===move.rack_id),onRobot=move.status==='completed'&&!!move.pickup;
       if(!rack||(onRobot? rack.location.type!=='robot'||rack.location.id!==robot.id||
-          robot.virtual_cargo_known!==true||robot.virtual_cargo!==true||!cargoResult(robot,robot.node,true) :
+          robot.virtual_cargo_known!==true||robot.virtual_cargo!==true :
           rack.location.type!=='slot'||rack.location.id!==move.dropoff))throw conflict('Kệ đã đổi vị trí sau nâng/hạ; cần đối soát');
       return move; // Only the gate-exit task remains; never replay the servo.
     }
     if(move.status!=='needs_attention'||!['reserved','carrying'].includes(move.interrupted_from))
       throw conflict('Lượt chuyển không có trạng thái an toàn để tiếp tục');
     const rack=state.racks.find(rack=>rack.id===move.rack_id),up=move.interrupted_from==='carrying';
-    const backingAfterLowering=up&&robot.lift?.dropoff_exit_pending===true&&robot.lift.dropoff_exit_supported===true&&
-      robot.lift.node===move.dropoff&&robot.node===move.dropoff&&robot.lift.fresh===true&&
-      robot.lift.state==='LOWERED'&&cargoReading(robot,robot.node).known;
     if(!rack || (up ? rack.location.type!=='robot'||rack.location.id!==robot.id||
-      robot.virtual_cargo_known!==true||robot.virtual_cargo!==true||!backingAfterLowering&&!cargoResult(robot,robot.node,true) :
+      robot.virtual_cargo_known!==true||robot.virtual_cargo!==true :
       rack.location.type!=='slot'||rack.location.id!==move.pickup||robot.virtual_cargo===true))
       throw conflict('Vị trí hoặc trạng thái kệ chưa khớp để tiếp tục');
     return move;
@@ -210,18 +209,18 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       const node=up?move.pickup:move.dropoff,lift=robot.lift;
       const exitProof=!up&&lift?.dropoff_exit_supported===true;
       const observedNode=exitProof?node.replace(/^K/,'G'):node;
-      if(!up&&robot.cargo_sensor?.required===true&&!exitProof)throw conflict('Cần firmware xác nhận hạ rồi lùi ra gate');
+      if(!up&&lift.dropoff_exit_supported===true&&!exitProof)throw conflict('Chờ xe hạ đủ chu kỳ rồi dừng tại gate');
       if(!Number.isSafeInteger(commandId)||commandId<=0||robot.id!==move.robot||robot.node!==observedNode||robot.state!=='IDLE'||robot.error||
         robot.online!==true||robot.position_valid===false||robot.task_id||lift?.fresh!==true||lift.command_id!==commandId||
         lift.observed_node!==observedNode||exitProof&&(lift.node!==node||lift.dropoff_exit_pending!==false)||
-        lift.state!==(up?'DONE_UP':'DONE_DOWN')||lift.active!==false||robot.virtual_cargo_known!==true||robot.virtual_cargo!==up||!cargoResult(robot,observedNode,up))
+        lift.state!==(up?'DONE_UP':'DONE_DOWN')||lift.active!==false||robot.virtual_cargo_known!==true||robot.virtual_cargo!==up)
         throw conflict('Chưa có kết quả servo tương quan tại đúng vị trí');
       const slot=state.slots.find(slot=>slot.node===node),rack=state.racks.find(rack=>rack.id===move.rack_id);
       if(!slot||!rack||(up?slot.rack_id!==rack.id:slot.rack_id!==null))throw conflict('Vị trí kệ không khớp sổ kho');
       slot.rack_id=up?null:rack.id;rack.location={type:up?'robot':'slot',id:up?robot.id:node};
       rack.status=up?'on_robot':'stored';move.status=up?(move.standalone?'completed':'carrying'):'placed';
       move[up?'pickup_command_id':'dropoff_command_id']=commandId;
-      event(eventKey,{type:action,evidence:robot.cargo_sensor?.required?'servo_and_cargo_sensor':'servo_cycle',rack_id:rack.id,robot:robot.id,move_key:key,source:up?node:`xe ${robot.id}`,
+      event(eventKey,{type:action,evidence:'servo_cycle',rack_id:rack.id,robot:robot.id,move_key:key,source:up?node:`xe ${robot.id}`,
         target:up?`xe ${robot.id}`:node,command_id:commandId,core_session_id:session,
         message:up?`Xe ${robot.id} đã nâng kệ ${rack.id} tại ${node}`:`Xe ${robot.id} đã đặt kệ ${rack.id} tại ${node}`});
     });
@@ -251,14 +250,17 @@ function createWarehouseInventory({db,publish=()=>{}}) {
     const moves=[];
     for(const item of order.items) {
       if(item.status==='delivered')continue;
-      const move=state.moves.find(move=>move.key===`order:${order.id}:${item.number}`);
+      let move=state.moves.find(move=>move.key===`order:${order.id}:${item.number}`);
       // A confirmed dropoff remains at its destination, even if exiting failed.
       if(move?.status==='placed'||move?.status==='rolled_back'||move?.status==='missing')continue;
       if(!move) {
-        if(sql.prepare("SELECT 1 FROM warehouse_events WHERE json_extract(event_json,'$.move_key')=? AND json_extract(event_json,'$.type')='dropoff' LIMIT 1")
+        if(sql.prepare("SELECT 1 FROM warehouse_events WHERE json_extract(event_json,'$.move_key')=? AND json_extract(event_json,'$.type') IN ('dropoff','missing','rollback') LIMIT 1")
           .get(`order:${order.id}:${item.number}`))continue;
-        if(item.rack_id)throw conflict('Không còn dữ liệu lượt chuyển kệ; kiểm tra lại kho trước khi hoàn tác');
-        continue; // Legacy/never-dispatched order has no inventory change to undo.
+        if(!item.rack_id)continue; // Never-dispatched legacy item changed no stock.
+        const rack=state.racks.find(rack=>rack.id===item.rack_id);
+        // A missing rack is not recreated by a bookkeeping undo.
+        if(rack?.location.type==='unknown')continue;
+        move={key:`order:${order.id}:${item.number}`,pickup:item.pickup,robot:item.robot,rack_id:item.rack_id,status:'needs_attention'};
       }
       if(!['reserved','carrying','needs_attention'].includes(move.status)||!move.pickup)
         throw conflict('Lượt chuyển kệ không thể hoàn tác');
@@ -273,6 +275,8 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       if(state.moves.some(other=>other.key!==move.key&&openMove(other)&&
           (other.rack_id===rack.id||other.robot===move.robot||[other.pickup,other.dropoff].includes(move.pickup))))
         throw conflict('Kệ, xe hoặc kho lấy đang thuộc lượt chuyển khác');
+      if(moves.some(entry=>entry.rack_id===rack.id||entry.pickup===move.pickup))
+        throw conflict('Các lượt hoàn tác trùng kệ hoặc kho lấy');
       moves.push({key:move.key,rack_id:rack.id,robot:move.robot,pickup:move.pickup});
     }
     return moves;
@@ -282,14 +286,17 @@ function createWarehouseInventory({db,publish=()=>{}}) {
       if(state.initialized&&expectedRevision!==state.revision)throw conflict('Trạng thái kho đã thay đổi; tải lại trước khi hoàn tác');
       const moves=rollbackPlan(order,state);
       for(const entry of moves) {
-        const move=state.moves.find(move=>move.key===entry.key),rack=state.racks.find(rack=>rack.id===entry.rack_id);
+        let move=state.moves.find(move=>move.key===entry.key);
+        if(!move) {move={...entry,legacy_reconstructed:true};state.moves.push(move);}
+        const rack=state.racks.find(rack=>rack.id===entry.rack_id);
         const previous={...rack.location};
         state.slots.find(slot=>slot.node===entry.pickup).rack_id=rack.id;
         rack.location={type:'slot',id:entry.pickup};rack.status='stored';
         move.status='rolled_back';move.resolved_at=now();
-        event(`rollback:${move.key}`,{type:'rollback',evidence:'operator_verified',order_id:order.id,
+        event(`rollback:${move.key}`,{type:'rollback',evidence:'operator_requested',scope:'inventory_only',
+          physical_completion_verified:false,order_id:order.id,
           rack_id:rack.id,robot:move.robot,move_key:move.key,previous,target:entry.pickup,
-          message:`Đã hoàn tác kệ ${rack.id} về ${entry.pickup}; xác nhận xe ${move.robot} trống`});
+          message:`Đã hoàn tác kệ ${rack.id} về ${entry.pickup} trên sổ kho`});
       }
       // The order and ledger commit together; a failed save rolls back both.
       commitOrder(moves);return moves;
